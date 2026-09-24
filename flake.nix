@@ -1,157 +1,90 @@
 {
-  description = "DOF-MODEL-CIV — Виртуальная песочница для проверки DOF-Core в 4X-стратегии";
+  description = "DOF-MODEL-CIV — Virtual sandbox for testing DOF-Core on 4X strategy";
 
   inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
-    utils.url = "github:numtide/flake-utils";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    flake-utils.url = "github:numtide/flake-utils";
   };
 
-  outputs = { self, nixpkgs, utils }:
-    utils.lib.eachDefaultSystem (system:
+  outputs = { self, nixpkgs, flake-utils, ... }:
+    flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs {
           inherit system;
           config.allowUnfree = true;
         };
 
-        pythonEnv = pkgs.python312;
-
-        # Python-зависимости для разработки
-        pythonPackages = pkgs.python312Packages;
-
-        # Rust toolchain для сборки PyO3 core
-        rustToolchain = pkgs.rustPlatform.rust.rustc.override {
-          extensions = [ "rust-src" "rust-analyzer" ];
-        };
+        python312 = pkgs.python312;
       in
       {
         devShells.default = pkgs.mkShell {
           name = "dof-model-civ";
 
           buildInputs = [
-            # Python
-            pythonEnv
-            pythonPackages.virtualenv
-            pythonPackages.pip
-            pythonPackages.setuptools
-            pythonPackages.wheel
-            pythonPackages.matplotlib
-            pythonPackages.numpy
-            pythonPackages.pandas
-            pythonPackages.pydantic
-            pythonPackages.pytest
-            pythonPackages.ruff
-            pythonPackages.ray
-
-            # Rust (для brain/core PyO3)
-            pkgs.rustc
+            python312
+            python312.pkgs.pip
+            python312.pkgs.virtualenv
             pkgs.cargo
+            pkgs.rustc
             pkgs.maturin
-            pkgs.rustfmt
-            pkgs.clippy
-            pkgs.rust-analyzer
-
-            # Сборка
-            pkgs.gcc
             pkgs.pkg-config
             pkgs.openssl
             pkgs.libffi
-
-            # Docker (уже в системе, но для полноты)
-            pkgs.docker
-            pkgs.docker-compose
-
-            # Утилиты
-            pkgs.git
-            pkgs.jq
-            pkgs.just
-            pkgs.sqlite
-            pkgs.bun            # Для возможной интеграции с CivAgent (Node.js)
-            pkgs.nodejs
+            pkgs.libxcrypt
           ];
 
-          shellHook = ''
-            echo "╔══════════════════════════════════════════════════════════╗"
-            echo "║  DOF-MODEL-CIV — Dev Shell                              ║"
-            echo "║  Python: $(python --version 2>&1)                       ║"
-            echo "║  Rust:   $(rustc --version 2>&1)                        ║"
-            echo "╚══════════════════════════════════════════════════════════╝"
-            echo ""
+          WHEEL_FILE = "brain/core/dist/dof_core-0.1.0-cp312-cp312-linux_x86_64.whl";
 
-            # Создаём venv, если его нет или если он повреждён
+          shellHook = ''
+            set -uo pipefail
+
+            echo "==> DOF-MODEL-CIV"
+
+            # --- 1. Fix venv ownership and permissions ---
+            if [ -d ".venv" ]; then
+              if [ ! -w ".venv" ]; then
+                echo "==> Fixing venv permissions..."
+                chmod -R u+w .venv
+              fi
+            fi
+
+            # --- 2. Create venv if needed ---
             if [ ! -f ".venv/bin/python" ]; then
-              echo "==> Создаю Python venv..."
+              echo "==> Creating venv..."
               rm -rf .venv
               python -m venv .venv
             fi
+
             source .venv/bin/activate
 
-            # Устанавливаем Python-зависимости из pyproject.toml, если он есть
-            if [ -f "pyproject.toml" ]; then
-              echo "==> Устанавливаю Python-зависимости..."
-              pip install -e ".[dev]" 2>/dev/null || pip install -e . 2>/dev/null || echo "==> [WARN] pyproject.toml не настроен, пропускаю pip install"
+            # --- 3. Install dependencies if needed ---
+            if ! python -c "import pydantic, numpy, pytest, ray, env, dof_core" 2>/dev/null; then
+              echo "==> Installing dependencies..."
+              pip install --quiet --upgrade pip
+              pip install --quiet pydantic numpy matplotlib pytest ray 2>/dev/null || true
+              pip install --quiet -e . 2>/dev/null || true
+
+              if [ -f "$WHEEL_FILE" ]; then
+                pip install --quiet --force-reinstall --no-deps "$WHEEL_FILE" 2>/dev/null || true
+              fi
             fi
 
-            # Устанавливаем CivRealm из локального клона
-            if [ -d "civrealm" ] && [ -f "civrealm/pyproject.toml" ]; then
-              echo "==> Устанавливаю CivRealm..."
-              pip install -e civrealm 2>/dev/null || echo "==> [WARN] CivRealm не удалось установить"
-            fi
-
-            # Проверяем CivRealm Docker
-            if command -v docker >/dev/null 2>&1 && docker ps 2>/dev/null | grep -q freeciv-web; then
-              echo "==> ✅ Freeciv-web Docker запущен"
-            else
-              echo "==> ⚠️  Freeciv-web Docker НЕ запущен"
-              echo "      Запустите: bash scripts/setup.sh"
-            fi
-
-            echo ""
-            echo "Доступные команды:"
-            echo "  python - \"Python REPL\""
-            echo "  pytest - \"Запуск тестов\""
-            echo "  bash scripts/setup.sh - \"Запуск CivRealm Docker\""
-            echo "  bash scripts/run_match.sh - \"Один матч\""
-            echo ""
-          '';
-        };
-
-        # Опционально: shell только для работы с Rust core
-        devShells.rust = pkgs.mkShell {
-          name = "dof-model-civ-rust";
-
-          buildInputs = [
-            pkgs.rustc
-            pkgs.cargo
-            pkgs.maturin
-            pkgs.rustfmt
-            pkgs.clippy
-            pkgs.gcc
-            pkgs.pkg-config
-          ];
-
-          shellHook = ''
-            echo "Rust-only shell для brain/core разработки"
-            cd brain/core 2>/dev/null || echo "[WARN] brain/core не найден"
-          '';
-        };
-
-        # Опционально: shell только для Python-разработки (без Rust)
-        devShells.python = pkgs.mkShell {
-          name = "dof-model-civ-python";
-
-          buildInputs = [
-            pythonEnv
-            pythonPackages.virtualenv
-            pkgs.gcc
-          ];
-
-          shellHook = ''
-            if [ ! -d ".venv" ]; then
-              virtualenv .venv
-            fi
-            source .venv/bin/activate
-            pip install -e ".[dev]" 2>/dev/null || echo "[WARN] pyproject.toml не настроен"
+            # --- 4. Verify ---
+            python -c "
+            import sys
+            mods = ['env', 'dof_core', 'pydantic', 'numpy', 'pytest']
+            missing = []
+            for m in mods:
+              try:
+                __import__(m)
+              except ImportError:
+                missing.append(m)
+            if missing:
+              print(f'⚠️  Missing: {missing}')
+              sys.exit(1)
+            else:
+              print('✅ All ready')
+            "
           '';
         };
       });

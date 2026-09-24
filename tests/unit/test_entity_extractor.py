@@ -295,8 +295,8 @@ class TestTotalDofIndex:
         assert index < 0
         assert math.isfinite(index)
 
-    def test_more_entities_higher_index(self, extractor, sample_observation, sample_info):
-        """Adding entities should increase (less negative) the index."""
+    def test_more_entities_changes_index(self, extractor, sample_observation, sample_info):
+        """Adding entities should change (increase magnitude of) the index."""
         result1 = extractor.extract(sample_observation, sample_info, turn=10)
         index1 = compute_total_dof_index(result1.state)
 
@@ -317,7 +317,8 @@ class TestTotalDofIndex:
         result2 = extractor.extract(sample_observation, sample_info, turn=10)
         index2 = compute_total_dof_index(result2.state)
 
-        assert index2 > index1  # more entities = higher (less negative) index
+        # Adding an entity with DoF in (0, 1) makes ln(DoF) negative → index more negative
+        assert index2 < index1  # more entities = more negative (lower) index
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
