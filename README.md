@@ -5,7 +5,7 @@
 
 ## Что это такое
 
-DOF-MODEL-CIV — это экспериментальная среда для тестирования принципов [DOF-Core](https://github.com/NousResearch/DOF) на задаче управления виртуальным государством в классической 4X-стратегии.
+DOF-MODEL-CIV — это экспериментальная среда для тестирования принципов [DOF-Core](https://github.com/UncleAndy/dof-core) на задаче управления виртуальным государством в классической 4X-стратегии.
 
 Мы берём [CivRealm](https://github.com/bigai-ai/civrealm) (обёртку над Freeciv-web с Gymnasium API) и подключаем к ней «мозг» на базе DOFCalculusCore — детерминированный математический аппарат, который оценивает каждое решение через призму **Degrees of Freedom**: сколько будущих возможностей сохраняет или уничтожает данное действие.
 
@@ -66,8 +66,8 @@ DOF-Core — это формальный фреймворк для принят�
 
 | Проект | Роль |
 |---|---|
-| [DOF](https://github.com/NousResearch/DOF) | Математическая спецификация DOF-Core (DOF-SPEC v0.9.1) |
-| [DOF-MODEL-1](https://github.com/NousResearch/DOF-MODEL-1) | Прототип на критической инфраструктуре (Hospital/Factory/Relay) — source of truth для core |
+| [DOF](https://github.com/UncleAndy/dof-core) | Математическая спецификация DOF-Core (DOF-SPEC v0.9.1) |
+| [DOF-MODEL-1](https://github.com/UncleAndy/dof-model-1) | Прототип на критической инфраструктуре (Hospital/Factory/Relay) — source of truth для core |
 | [CivRealm](https://github.com/bigai-ai/civrealm) | Игровая среда (Freeciv-web + Gymnasium API) |
 | [CivAgent](https://github.com/LeoLin990405/civagent) | Оркестрация 57 исторических режимов (вдохновение для генератора) |
 | [Unciv](https://github.com/yairm210/Unciv) | Базовая игра (используется в CivAgent, не в нашем проекте) |
@@ -143,7 +143,7 @@ bash scripts/run_tournament.sh --games 30 --baselines random,greedy,freeciv_buil
 
 ## Лицензия
 
-CC BY-SA 4.0 — см. [DOF-SPEC §2](https://github.com/NousResearch/DOF/blob/main/DOF-SPEC.md).
+CC BY-SA 4.0 — см. [DOF-SPEC §2](https://github.com/UncleAndy/dof-core/blob/main/DOF-SPEC.md).
 
 ---
 
