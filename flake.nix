@@ -41,6 +41,7 @@
             pythonPackages.pydantic
             pythonPackages.pytest
             pythonPackages.ruff
+            pythonPackages.ray
 
             # Rust (для brain/core PyO3)
             pkgs.rustc
@@ -77,10 +78,11 @@
             echo "╚══════════════════════════════════════════════════════════╝"
             echo ""
 
-            # Создаём virtualenv, если его нет
-            if [ ! -d ".venv" ]; then
-              echo "==> Создаю Python virtualenv..."
-              virtualenv .venv
+            # Создаём venv, если его нет или если он повреждён
+            if [ ! -f ".venv/bin/python" ]; then
+              echo "==> Создаю Python venv..."
+              rm -rf .venv
+              python -m venv .venv
             fi
             source .venv/bin/activate
 
@@ -90,8 +92,14 @@
               pip install -e ".[dev]" 2>/dev/null || pip install -e . 2>/dev/null || echo "==> [WARN] pyproject.toml не настроен, пропускаю pip install"
             fi
 
+            # Устанавливаем CivRealm из локального клона
+            if [ -d "civrealm" ] && [ -f "civrealm/pyproject.toml" ]; then
+              echo "==> Устанавливаю CivRealm..."
+              pip install -e civrealm 2>/dev/null || echo "==> [WARN] CivRealm не удалось установить"
+            fi
+
             # Проверяем CivRealm Docker
-            if docker ps 2>/dev/null | grep -q freeciv-web; then
+            if command -v docker >/dev/null 2>&1 && docker ps 2>/dev/null | grep -q freeciv-web; then
               echo "==> ✅ Freeciv-web Docker запущен"
             else
               echo "==> ⚠️  Freeciv-web Docker НЕ запущен"
