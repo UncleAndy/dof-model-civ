@@ -175,12 +175,12 @@ class TestAxiom3Veto:
             CoreEntity("city_1", 0.5, is_collapse_source=False),
             CoreEntity("aggressor_1", 0.6, is_collapse_source=True),
         ]
-        # Action that reduces aggressor (not vetoed)
+        # Action that reduces aggressor but is reversible (no context switch penalty)
         action = CoreAction(
             "contain_aggressor",
             "Contain aggressor",
             [("aggressor_1", -0.2)],
-            is_reversible=False,
+            is_reversible=True,  # reversible = no penalty
         )
         result = core.select_best(state, [action])
         assert result.chosen_action_id == "contain_aggressor"
