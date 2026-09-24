@@ -21,8 +21,8 @@ from brain.generator.heuristics import ALL_STRATEGIES, HeuristicGenerator
 @dataclass
 class MatchResult:
     """Results from a single match."""
-    agent_name: str
-    turns_played: int
+    agent_name: str = ""
+    turns_played: int = 0
     total_dof_index_series: list[float] = field(default_factory=list)
     entity_count_series: list[int] = field(default_factory=list)
     collapse_count: int = 0
@@ -50,10 +50,10 @@ class MatchResult:
         return self.irreversible_actions / self.total_actions
 
 
-def run_synthetic_match(agent_type: str, turns: int = 50, seed: int = 42) -> MatchResult:
+def run_synthetic_match(agent_type: str, turns: int = 100, seed: int = 42) -> MatchResult:
     """
     Run a synthetic match without CivRealm.
-    Simulates agent decisions on random observations.
+    Each episode uses a different seed for variability.
     """
     import random
     random.seed(seed)
@@ -62,24 +62,20 @@ def run_synthetic_match(agent_type: str, turns: int = 50, seed: int = 42) -> Mat
     action_gen = ActionOptionGenerator()
 
     if agent_type == "random":
-        agent = None  # random choices
-        strategy_name = "random"
-    elif agent_type.startswith("dof_"):
-        strategy_name = agent_type[4:]
-        gen = HeuristicGenerator()
-        agent = gen
+        agent = None
     else:
-        gen = HeuristicGenerator()
-        agent = gen
-        strategy_name = "defensive"
+        strategy_name = agent_type.replace("dof_", "") if agent_type.startswith("dof_") else "defensive"
+        strategy_map = {s.name: s for s in ALL_STRATEGIES}
+        strategy = strategy_map.get(strategy_name, DEFENSIVE)
+        agent = HeuristicGenerator(strategy=strategy)
 
     result = MatchResult(agent_name=agent_type)
+    current_seed = seed
 
-    # Simulate turns
     for turn in range(turns):
-        # Generate synthetic observation
-        obs = _generate_synthetic_obs(turn, seed)
-        info = _generate_synthetic_info(turn, seed)
+        # Generate unique observation per turn with variability
+        obs = _generate_synthetic_obs(turn, current_seed)
+        info = _generate_synthetic_info(turn, current_seed)
 
         # Extract state
         dof_result = extractor.extract(obs, info, turn)
@@ -87,34 +83,32 @@ def run_synthetic_match(agent_type: str, turns: int = 50, seed: int = 42) -> Mat
 
         # Generate candidates
         candidates = action_gen.generate_from_state(state, info.get("available_actions", {}))
-
         if not candidates:
             break
 
         # Select action
         if agent_type == "random":
-            import random
             action = random.choice(candidates)
         else:
-            # Filter by strategy
             candidates = agent.generate_candidates(state, info.get("available_actions", {}))
-            if candidates:
-                action = agent.select_best(candidates, state)
-            else:
+            if not candidates:
+                break
+            action = agent.select_best(candidates, state)
+            if action is None:
                 break
 
-        if action is None:
-            break
-
         # Track metrics
-        result.total_dof_index_series.append(
-            sum(e.current_dof for e in state.entities.values() if not e.is_collapse_source) / max(len(state.entities), 1)
-        )
+        dof_sum = sum(e.current_dof for e in state.entities.values() if not e.is_collapse_source)
+        entity_count = len([e for e in state.entities.values() if not e.is_collapse_source])
+        result.total_dof_index_series.append(dof_sum / max(entity_count, 1))
         result.entity_count_series.append(len(state.entities))
         result.total_actions += 1
 
         if not action.get("is_reversible", True):
             result.irreversible_actions += 1
+
+        # Increment seed for next turn
+        current_seed += 1
 
     result.turns_played = len(result.total_dof_index_series)
     return result
@@ -208,8 +202,8 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(description="Run tournament")
-    parser.add_argument("--episodes", type=int, default=5, help="Number of episodes per agent")
-    parser.add_argument("--turns", type=int, default=50, help="Max turns per episode")
+    parser.add_argument("--episodes", type=int, default=10, help="Number of episodes per agent")
+    parser.add_argument("--turns", type=int, default=100, help="Max turns per episode")
     parser.add_argument("--output", type=str, help="Output JSON file")
     args = parser.parse_args()
 
@@ -241,8 +235,8 @@ def main():
         print(f"{agent:<20} {avg_turns:>6.1f} {avg_dof:>8.3f} {min_ent:>7} {max_ent:>7} {irr_ratio:>7.2f}")
 
     if args.output:
-        with open(args.output, "w") as f:
-            json.dump({
+        try:
+            output_data = {
                 agent: [
                     {
                         "turns": r.turns_played,
@@ -254,8 +248,12 @@ def main():
                     for r in results[agent]
                 ]
                 for agent in agents
-            }, f, indent=2)
-        print(f"\nSaved to {args.output}")
+            }
+            with open(args.output, "w") as f:
+                json.dump(output_data, f, indent=2)
+            print(f"\nSaved to {args.output} ({Path(args.output).absolute()})")
+        except Exception as e:
+            print(f"\nError saving to {args.output}: {e}", file=sys.stderr)
 
 
 if __name__ == "__main__":

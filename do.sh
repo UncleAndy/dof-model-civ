@@ -42,16 +42,16 @@ setup() {
     echo "==> Run tests: bash do.sh test"
 }
 
-test() {
+run_tests() {
     if [ ! -f "$VENV/bin/python" ]; then
         echo "==> No venv found. Run: bash do.sh setup"
         exit 1
     fi
     source "$VENV/bin/activate"
-    python -m pytest tests/ -v
+    python -m pytest tests/ -v "$@"
 }
 
-match() {
+run_match() {
     if [ ! -f "$VENV/bin/python" ]; then
         echo "==> No venv found. Run: bash do.sh setup"
         exit 1
@@ -60,7 +60,7 @@ match() {
     python baselines/random_agent.py "$@"
 }
 
-dof_match() {
+run_dof_match() {
     if [ ! -f "$VENV/bin/python" ]; then
         echo "==> No venv found. Run: bash do.sh setup"
         exit 1
@@ -69,7 +69,7 @@ dof_match() {
     python baselines/dof_agent.py "$@"
 }
 
-tournament() {
+run_tournament() {
     if [ ! -f "$VENV/bin/python" ]; then
         echo "==> No venv found. Run: bash do.sh setup"
         exit 1
@@ -78,7 +78,20 @@ tournament() {
     python baselines/run_tournament.py "$@"
 }
 
-clean() {
+run_analyze() {
+    if [ ! -f "$VENV/bin/python" ]; then
+        echo "==> No venv found. Run: bash do.sh setup"
+        exit 1
+    fi
+    source "$VENV/bin/activate"
+    if [ -f "tournament_results.json" ]; then
+        python baselines/analyze.py tournament_results.json
+    else
+        echo "==> No results file. Run: bash do.sh tournament"
+    fi
+}
+
+do_clean() {
     echo "==> Cleaning..."
     rm -rf "$VENV"
     rm -rf brain/core/dist
@@ -88,23 +101,25 @@ clean() {
 
 case "${1:-help}" in
     setup)      setup ;;
-    test)       test ;;
-    match)      match ;;
-    dof-match)  dof_match ;;
-    tournament) tournament ;;
-    clean)      clean ;;
+    test)       shift; run_tests "$@" ;;
+    match)      shift; run_match "$@" ;;
+    dof-match)  shift; run_dof_match "$@" ;;
+    tournament) shift; run_tournament "$@" ;;
+    analyze)    shift; run_analyze "$@" ;;
+    clean)      do_clean ;;
     help|--help|-h)
         echo "DOF-MODEL-CIV"
         echo ""
         echo "Usage: bash do.sh <command>"
         echo ""
         echo "Commands:"
-        echo "  setup     Create venv, install deps, build Rust core"
-        echo "  test      Run all tests"
-        echo "  match     Run random baseline"
-        echo "  dof-match Run DOF agent"
+        echo "  setup      Create venv, install deps, build Rust core"
+        echo "  test       Run all tests"
+        echo "  match      Run random baseline"
+        echo "  dof-match  Run DOF agent"
         echo "  tournament Run validation tournament"
-        echo "  clean     Remove venv and artifacts"
+        echo "  analyze    Analyze tournament results"
+        echo "  clean      Remove venv and artifacts"
         ;;
     *)
         echo "Unknown: $1"
