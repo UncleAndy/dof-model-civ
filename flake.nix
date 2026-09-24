@@ -24,6 +24,11 @@
             python312
             python312.pkgs.pip
             python312.pkgs.virtualenv
+            python312.pkgs.pydantic
+            python312.pkgs.numpy
+            python312.pkgs.pandas
+            python312.pkgs.matplotlib
+            python312.pkgs.pytest
             pkgs.cargo
             pkgs.rustc
             pkgs.maturin
@@ -33,52 +38,44 @@
             pkgs.libxcrypt
           ];
 
-          WHEEL_FILE = "brain/core/dist/dof_core-0.1.0-cp312-cp312-linux_x86_64.whl";
-
           shellHook = ''
             set -uo pipefail
 
             echo "==> DOF-MODEL-CIV"
 
-            # --- 1. Fix venv ownership and permissions ---
+            # --- 1. Create venv fresh (handles ownership) ---
             if [ -d ".venv" ]; then
               if [ ! -w ".venv" ]; then
-                echo "==> Fixing venv permissions..."
-                chmod -R u+w .venv
+                echo "==> Removing old venv (wrong owner)..."
+                rm -rf .venv
               fi
             fi
 
-            # --- 2. Create venv if needed ---
             if [ ! -f ".venv/bin/python" ]; then
               echo "==> Creating venv..."
-              rm -rf .venv
-              python -m venv .venv
+              python -m venv .venv --system-site-packages
             fi
 
             source .venv/bin/activate
 
-            # --- 3. Install dependencies if needed ---
-            if ! python -c "import pydantic, numpy, pytest, ray, env, dof_core" 2>/dev/null; then
-              echo "==> Installing dependencies..."
-              pip install --quiet --upgrade pip
-              pip install --quiet pydantic numpy matplotlib pytest ray 2>/dev/null || true
-              pip install --quiet -e . 2>/dev/null || true
+            # --- 2. Install project if needed ---
+            if ! python -c "import env" 2>/dev/null; then
+              echo "==> Installing project..."
+              pip install --break-system-packages --quiet -e . 2>/dev/null || true
+            fi
 
-              if [ -f "$WHEEL_FILE" ]; then
-                pip install --quiet --force-reinstall --no-deps "$WHEEL_FILE" 2>/dev/null || true
-              fi
+            # --- 3. Install Rust core wheel ---
+            if ! python -c "import dof_core" 2>/dev/null; then
+              echo "==> Installing Rust core..."
+              pip install --break-system-packages --quiet --force-reinstall --no-deps \
+                brain/core/dist/dof_core-0.1.0-cp312-cp312-linux_x86_64.whl 2>/dev/null || true
             fi
 
             # --- 4. Verify ---
             python -c "
             import sys
             mods = ['env', 'dof_core', 'pydantic', 'numpy', 'pytest']
-            missing = []
-            for m in mods:
-              try:
-                __import__(m)
-              except ImportError:
-                missing.append(m)
+            missing = [m for m in mods if not __import__(m, fromlist=['_'])]
             if missing:
               print(f'⚠️  Missing: {missing}')
               sys.exit(1)
