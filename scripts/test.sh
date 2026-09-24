@@ -1,13 +1,18 @@
 #!/usr/bin/env bash
+# DOF-MODEL-CIV — Test runner script
+# Usage: bash scripts/test.sh
+
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-echo "==> Activating venv..."
-source .venv/bin/activate
-
-echo "==> Installing dependencies..."
-pip install -e ".[dev]" 2>/dev/null || pip install -e .
-
 echo "==> Running tests..."
-pytest tests/unit/test_entity_extractor.py -v "$@"
+
+# Check if venv exists
+if [ ! -f ".venv/bin/python" ]; then
+    echo "==> venv not found. Run: bash scripts/setup.sh"
+    exit 1
+fi
+
+# Use venv's pytest
+.venv/bin/python -m pytest tests/ -v "$@"
