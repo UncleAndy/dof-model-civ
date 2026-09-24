@@ -14,10 +14,10 @@
           config.allowUnfree = true;
         };
 
-        pythonEnv = pkgs.python311;
+        pythonEnv = pkgs.python312;
 
         # Python-зависимости для разработки
-        pythonPackages = pkgs.python311Packages;
+        pythonPackages = pkgs.python312Packages;
 
         # Rust toolchain для сборки PyO3 core
         rustToolchain = pkgs.rustPlatform.rust.rustc.override {
@@ -40,8 +40,6 @@
             pythonPackages.pandas
             pythonPackages.pydantic
             pythonPackages.pytest
-            pythonPackages.ipython
-            pythonPackages.jupyter
             pythonPackages.ruff
 
             # Rust (для brain/core PyO3)
