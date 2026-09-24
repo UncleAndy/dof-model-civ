@@ -69,6 +69,15 @@ dof_match() {
     python baselines/dof_agent.py "$@"
 }
 
+tournament() {
+    if [ ! -f "$VENV/bin/python" ]; then
+        echo "==> No venv found. Run: bash do.sh setup"
+        exit 1
+    fi
+    source "$VENV/bin/activate"
+    python baselines/run_tournament.py "$@"
+}
+
 clean() {
     echo "==> Cleaning..."
     rm -rf "$VENV"
@@ -82,6 +91,7 @@ case "${1:-help}" in
     test)       test ;;
     match)      match ;;
     dof-match)  dof_match ;;
+    tournament) tournament ;;
     clean)      clean ;;
     help|--help|-h)
         echo "DOF-MODEL-CIV"
@@ -93,6 +103,7 @@ case "${1:-help}" in
         echo "  test      Run all tests"
         echo "  match     Run random baseline"
         echo "  dof-match Run DOF agent"
+        echo "  tournament Run validation tournament"
         echo "  clean     Remove venv and artifacts"
         ;;
     *)
