@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from env.entity_extractor import GameStateExtractor
 from env.action_mapper import ActionOptionGenerator
-from brain.generator.heuristics import ALL_STRATEGIES, HeuristicGenerator
+from brain.generator.heuristics import ALL_STRATEGIES, DEFENSIVE, HeuristicGenerator
 
 
 @dataclass
