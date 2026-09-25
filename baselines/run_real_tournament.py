@@ -11,7 +11,7 @@ import warnings
 from pathlib import Path
 from dataclasses import dataclass, field
 
-# Suppress all gymnasium warnings
+# Suppress ALL warnings
 warnings.filterwarnings("ignore")
 os.environ["PYTHONWARNINGS"] = "ignore"
 
@@ -64,17 +64,9 @@ class MatchResult:
         return self.irreversible_actions / self.total_actions
 
 
-def run_real_match(agent_type: str, turns: int = 100, port: int = 6001, show_progress: bool = False, timeout: int = 120) -> MatchResult:
-    """Run a real match against CivRealm with progress and timeout."""
-    import signal
-
-    result = MatchResult(agent_name=agent_type)
-
-    def timeout_handler(signum, frame):
-        raise TimeoutError(f"Match exceeded {timeout}s")
-
-    signal.signal(signal.SIGALRM, timeout_handler)
-    signal.alarm(timeout)
+def run_real_match(agent_type: str, turns: int = 100, port: int = 6001) -> MatchResult:
+    """Run a real match against CivRealm."""
+    result = MatchResult(agent_type=agent_type)
 
     try:
         # Create agent
@@ -200,7 +192,8 @@ def run_real_match(agent_type: str, turns: int = 100, port: int = 6001, show_pro
                 done = terminated or truncated
                 step += 1
 
-                if show_progress and step % 10 == 0:
+                # Print progress
+                if step % 5 == 0:
                     print(f" [{step}/{turns}]", end="", flush=True)
 
             except Exception as e:
@@ -211,12 +204,9 @@ def run_real_match(agent_type: str, turns: int = 100, port: int = 6001, show_pro
         result.turns_played = step
         result.final_turn = info.get("turn", step)
 
-    except TimeoutError as e:
-        result.error = str(e)
     except Exception as e:
         result.error = str(e)
 
-    signal.alarm(0)  # Cancel alarm
     return result
 
 
@@ -226,30 +216,25 @@ def main():
     parser = argparse.ArgumentParser(description="Run real CivRealm tournament")
     parser.add_argument("--episodes", type=int, default=3, help="Episodes per agent")
     parser.add_argument("--turns", type=int, default=100, help="Max turns per episode")
-    parser.add_argument("--port", type=int, default=6001, help="CivRealm port")
+    parser.add_argument("--port", type=int, default=6001, help="Base CivRealm port")
     parser.add_argument("--output", type=str, help="Output JSON file")
-    parser.add_argument("--progress", action="store_true", help="Show turn progress")
     args = parser.parse_args()
 
     agents = ["random", "no-op"] + [f"dof_{s.name}" for s in ALL_STRATEGIES]
     results = {agent: [] for agent in agents}
 
     print(f"Running REAL tournament: {len(agents)} agents × {args.episodes} episodes × {args.turns} turns")
-    print(f"Port range: {args.port} ~ {args.port + args.episodes * 2 - 1}")
+    print(f"Port range: {args.port} ~ {args.port + args.episodes - 1}")
     print("")
-
-    total_matches = len(agents) * args.episodes
-    match_count = 0
 
     for agent in agents:
         print(f"  {agent:<20}", end="", flush=True)
         for ep in range(args.episodes):
-            port = args.port + (hash(agent) % 10) + ep
-            match_count += 1
-            result = run_real_match(agent, turns=args.turns, port=port, show_progress=args.progress)
+            port = args.port + ep
+            result = run_real_match(agent, turns=args.turns, port=port)
             results[agent].append(result)
             if result.error:
-                print(f" ERR({result.error[:30]})", end="")
+                print(f" ERR({result.error[:30]})", end="", flush=True)
             else:
                 print(f" ✓", end="", flush=True)
         print("")
