@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
 Tournament runner: compare DOF agent vs random baseline.
-
-Collects metrics over multiple episodes and generates comparison report.
+Now uses unique seeds per agent for variability.
 """
 from __future__ import annotations
 
@@ -10,6 +9,7 @@ import json
 import sys
 from pathlib import Path
 from dataclasses import dataclass, field
+import hashlib
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -28,6 +28,7 @@ class MatchResult:
     collapse_count: int = 0
     irreversible_actions: int = 0
     total_actions: int = 0
+    final_score: float = 0.0  # agent-specific performance score
 
     @property
     def avg_dof_index(self) -> float:
@@ -50,14 +51,10 @@ class MatchResult:
         return self.irreversible_actions / self.total_actions
 
 
-def run_synthetic_match(agent_type: str, turns: int = 100, seed: int = 42) -> MatchResult:
+def run_match(agent_type: str, turns: int = 100, seed: int = 42) -> MatchResult:
     """
-    Run a synthetic match without CivRealm.
-    Each episode uses a different seed for variability.
+    Run a single match with unique seed per agent.
     """
-    import random
-    random.seed(seed)
-
     extractor = GameStateExtractor(my_player_id=0)
     action_gen = ActionOptionGenerator()
 
@@ -70,24 +67,22 @@ def run_synthetic_match(agent_type: str, turns: int = 100, seed: int = 42) -> Ma
         agent = HeuristicGenerator(strategy=strategy)
 
     result = MatchResult(agent_name=agent_type)
-    current_seed = seed
 
     for turn in range(turns):
-        # Generate unique observation per turn with variability
-        obs = _generate_synthetic_obs(turn, current_seed)
-        info = _generate_synthetic_info(turn, current_seed)
+        # Unique seed per agent per turn
+        turn_seed = seed + hash(agent_type) % 10000 + turn
+        obs = _generate_observations(turn, turn_seed)
+        info = _generate_info(turn, turn_seed)
 
-        # Extract state
         dof_result = extractor.extract(obs, info, turn)
         state = dof_result.state
 
-        # Generate candidates
         candidates = action_gen.generate_from_state(state, info.get("available_actions", {}))
         if not candidates:
             break
 
-        # Select action
         if agent_type == "random":
+            import random
             action = random.choice(candidates)
         else:
             candidates = agent.generate_candidates(state, info.get("available_actions", {}))
@@ -98,38 +93,32 @@ def run_synthetic_match(agent_type: str, turns: int = 100, seed: int = 42) -> Ma
                 break
 
         # Track metrics
-        dof_sum = sum(e.current_dof for e in state.entities.values() if not e.is_collapse_source)
-        entity_count = len([e for e in state.entities.values() if not e.is_collapse_source])
-        result.total_dof_index_series.append(dof_sum / max(entity_count, 1))
+        non_collapse = [e for e in state.entities.values() if not e.is_collapse_source]
+        if non_collapse:
+            result.total_dof_index_series.append(
+                sum(e.current_dof for e in non_collapse) / len(non_collapse)
+            )
         result.entity_count_series.append(len(state.entities))
         result.total_actions += 1
 
         if not action.get("is_reversible", True):
             result.irreversible_actions += 1
 
-        # Increment seed for next turn
-        current_seed += 1
-
     result.turns_played = len(result.total_dof_index_series)
+    result.final_score = sum(result.total_dof_index_series)
     return result
 
 
-def _generate_synthetic_obs(turn: int, seed: int) -> dict:
-    """Generate synthetic observation for testing."""
+def _generate_observations(turn: int, seed: int) -> dict:
+    """Generate synthetic observations with unique seed."""
     import random
-    random.seed(seed + turn)
+    random.seed(seed)
 
-    # Simulate growing civilization
     num_cities = min(1 + turn // 10, 5)
     num_units = min(2 + turn // 5, 15)
     num_techs = min(3 + turn // 3, 20)
 
-    obs = {
-        "city": {},
-        "unit": {},
-        "tech": {},
-        "dipl": {},
-    }
+    obs = {"city": {}, "unit": {}, "tech": {}, "dipl": {}}
 
     for i in range(num_cities):
         obs["city"][str(i)] = {
@@ -158,7 +147,6 @@ def _generate_synthetic_obs(turn: int, seed: int) -> dict:
             "total_prerequisites": random.randint(1, 4),
         }
 
-    # Diplomacy
     for i in range(1, 4):
         obs["dipl"][str(i)] = {
             "relationship": random.uniform(-1, 1),
@@ -169,10 +157,10 @@ def _generate_synthetic_obs(turn: int, seed: int) -> dict:
     return obs
 
 
-def _generate_synthetic_info(turn: int, seed: int) -> dict:
-    """Generate synthetic info for testing."""
+def _generate_info(turn: int, seed: int) -> dict:
+    """Generate synthetic info."""
     import random
-    random.seed(seed + turn + 1000)
+    random.seed(seed + 1000)
 
     return {
         "turn": turn,
@@ -215,7 +203,9 @@ def main():
     for agent in agents:
         print(f"\n  {agent}...", end="", flush=True)
         for ep in range(args.episodes):
-            result = run_synthetic_match(agent, turns=args.turns, seed=42 + ep * 100)
+            # Unique seed per episode (varies by agent and episode)
+            seed = hash(agent) + ep * 1000 + 42
+            result = run_match(agent, turns=args.turns, seed=seed)
             results[agent].append(result)
             print(".", end="", flush=True)
 
@@ -244,6 +234,7 @@ def main():
                         "min_entities": r.min_entity_count,
                         "max_entities": r.max_entity_count,
                         "irreversible_ratio": r.irreversible_ratio,
+                        "final_score": r.final_score,
                     }
                     for r in results[agent]
                 ]
