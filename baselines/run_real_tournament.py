@@ -1,280 +1,386 @@
 #!/usr/bin/env python3
 """
-Real CivRealm tournament runner with progress and suppressed warnings.
+Real CivRealm tournament runner.
+
+Plays actual games against a running Freeciv-web server (docker compose),
+so agent actions genuinely affect the game state. Compares the DOF agent
+strategies against random / no-op baselines.
+
+Usage:
+    bash do.sh real-tournament --episodes 3 --turns 50 --port 6001
+
+Notes
+-----
+* CivRealm agent ports live in 6000-6009; keep ``port + episodes - 1 <= 6009``.
+* Gymnasium's passive env checker emits noisy warnings for CivRealm's
+  non-standard observation space - they are silenced here on purpose.
+* Each match is guarded by a wall-clock alarm so a stuck server connection
+  cannot hang the whole tournament.
 """
 from __future__ import annotations
 
+import argparse
 import json
-import sys
 import os
+import signal
+import sys
+import time
 import warnings
-from pathlib import Path
-from dataclasses import dataclass, field
 
-# Suppress ALL warnings
 warnings.filterwarnings("ignore")
 os.environ["PYTHONWARNINGS"] = "ignore"
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+
+# CivRealm's config module runs its own argparse over sys.argv at import time,
+# so our CLI has to be resolved *before* civrealm is imported and the leftover
+# arguments handed back to it untouched.
+def _parse_cli(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="run_real_tournament.py",
+        description="Real CivRealm tournament (agents play actual games).",
+    )
+    parser.add_argument("--episodes", type=int, default=3)
+    parser.add_argument("--turns", type=int, default=50)
+    parser.add_argument("--timeout", type=int, default=240,
+                        help="per-match wall-clock budget in seconds")
+    parser.add_argument("--port", type=int, default=6001,
+                        help="base port; used for the first match when --no-auto-port")
+    parser.add_argument("--auto-port", dest="auto_port", action="store_true",
+                        default=True,
+                        help="pick a free multiplayer port via civrealm Ports.get() "
+                             "(default)")
+    parser.add_argument("--no-auto-port", dest="auto_port", action="store_false",
+                        help="use --port + episode index instead of auto-allocation")
+    parser.add_argument("--port-wait", type=int, default=30,
+                        help="seconds to wait for a free port before falling back")
+    parser.add_argument("--retries", type=int, default=1,
+                        help="extra attempts per match when the server times out")
+    parser.add_argument("--only", type=str, default="",
+                        help="comma-separated agent subset, e.g. random,dof_defensive")
+    parser.add_argument("--output", type=str)
+    args, rest = parser.parse_known_args(argv)
+    # Let civrealm's parser see only the arguments it knows about.
+    sys.argv = [sys.argv[0]] + rest
+    return args
+
+
+ARGS = _parse_cli(sys.argv[1:])
 
 import gymnasium
 from civrealm.configs import fc_args
 from civrealm.agents import RandomAgent, BaseAgent
 
 from env.entity_extractor import GameStateExtractor
-from env.action_mapper import ActionOptionGenerator
 from brain.generator.heuristics import ALL_STRATEGIES, DEFENSIVE, HeuristicGenerator
+
+MIN_PORT = 6000
+MAX_PORT = 6009
+
+
+class MatchTimeout(Exception):
+    """Raised when a single match exceeds its wall-clock budget."""
+
+
+def _on_alarm(signum, frame):  # pragma: no cover - signal path
+    raise MatchTimeout("match exceeded wall-clock budget")
 
 
 class NoOpAgent(BaseAgent):
+    """Baseline that never issues an action."""
+
     def act(self, observations, info):
         return None
 
 
-@dataclass
 class MatchResult:
-    """Results from a single real match."""
-    agent_name: str = ""
-    turns_played: int = 0
-    total_dof_index_series: list[float] = field(default_factory=list)
-    entity_count_series: list[int] = field(default_factory=list)
-    irreversible_actions: int = 0
-    total_actions: int = 0
-    final_turn: int = 0
-    error: str = ""
+    def __init__(self, name: str = ""):
+        self.agent_name = name
+        self.turns_played = 0
+        self.dof_series: list[float] = []
+        self.entity_series: list[int] = []
+        self.irr_actions = 0
+        self.total_actions = 0
+        self.error = ""
 
     @property
-    def avg_dof_index(self) -> float:
-        if not self.total_dof_index_series:
-            return 0.0
-        return sum(self.total_dof_index_series) / len(self.total_dof_index_series)
+    def avg_dof(self) -> float:
+        return sum(self.dof_series) / len(self.dof_series) if self.dof_series else 0.0
 
     @property
-    def min_entity_count(self) -> int:
-        return min(self.entity_count_series) if self.entity_count_series else 0
+    def min_ent(self) -> int:
+        return min(self.entity_series) if self.entity_series else 0
 
     @property
-    def max_entity_count(self) -> int:
-        return max(self.entity_count_series) if self.entity_count_series else 0
+    def max_ent(self) -> int:
+        return max(self.entity_series) if self.entity_series else 0
 
     @property
-    def irreversible_ratio(self) -> float:
-        if self.total_actions == 0:
-            return 0.0
-        return self.irreversible_actions / self.total_actions
+    def irr_ratio(self) -> float:
+        return self.irr_actions / self.total_actions if self.total_actions else 0.0
 
 
-def run_real_match(agent_type: str, turns: int = 100, port: int = 6001) -> MatchResult:
-    """Run a real match against CivRealm."""
-    result = MatchResult(agent_type=agent_type)
+def _valid_actions(actions: dict) -> dict:
+    """CivRealm treats an action with an empty param dict as invalid
+    (see civrealm.agents.base_agent.BaseAgent.get_next_valid_actor)."""
+    return {name: params for name, params in actions.items() if params}
 
+
+def _map_option(option_id: str, avail: dict):
+    """Map a DOF option_id to a CivRealm (ctrl_type, actor_id, action_name)."""
+    parts = str(option_id).split("_", 2)
+    if len(parts) < 3:
+        return None
+    ctrl_type, actor_id, action_name = parts
+
+    actors = avail.get(ctrl_type) or {}
+    if not actors:
+        return None
+    if actor_id not in actors:
+        actor_id = next(iter(actors))
+    actions = _valid_actions(actors[actor_id])
+    if not actions:
+        return None
+    if action_name not in actions:
+        action_name = next(iter(actions))
     try:
-        # Create agent
-        if agent_type == "random":
-            agent = RandomAgent()
-        elif agent_type == "no-op":
-            agent = NoOpAgent()
-        elif agent_type.startswith("dof_"):
-            strategy_name = agent_type.replace("dof_", "")
-            strategy_map = {s.name: s for s in ALL_STRATEGIES}
-            strategy = strategy_map.get(strategy_name, DEFENSIVE)
-            gen = HeuristicGenerator(strategy=strategy)
+        return (ctrl_type, int(actor_id), action_name)
+    except (TypeError, ValueError):
+        return None
 
-            class RealDOFAgent(BaseAgent):
-                def __init__(self, gen):
-                    super().__init__()
-                    self.extractor = GameStateExtractor(my_player_id=0)
-                    self.action_gen = ActionOptionGenerator()
-                    self.gen = gen
-                    self.use_rust = False
-                    try:
-                        from dof_core import DOFCalculusCore, CoreEntity, CoreAction
-                        self.core = DOFCalculusCore(lookahead_horizon=3, context_switch_penalty=0.5)
-                        self.use_rust = True
-                    except ImportError:
-                        pass
 
-                def act(self, observations, info):
-                    turn = info.get("turn", 0)
-                    dof_result = self.extractor.extract(observations, info, turn)
-                    state = dof_result.state
-                    available = info.get("available_actions", {})
-                    candidates = self.action_gen.generate_from_state(state, available)
-                    if not candidates:
-                        return None
-                    candidates = self.gen.generate_candidates(state, available)
-                    if not candidates:
-                        return None
+def _first_valid_action(avail: dict):
+    """Fallback: first actor that actually has a valid (param-carrying) action."""
+    for ctrl_type, actors in avail.items():
+        for actor_id, actions in actors.items():
+            valid = _valid_actions(actions)
+            if valid:
+                try:
+                    return (ctrl_type, int(actor_id), next(iter(valid)))
+                except (TypeError, ValueError):
+                    continue
+    return None
 
-                    if self.use_rust:
-                        from dof_core import CoreEntity, CoreAction
-                        core_entities = [
-                            CoreEntity(e.entity_id, e.current_dof, e.is_collapse_source, e.time_to_collapse_mks < 1e14)
-                            for e in state.entities.values()
-                        ]
-                        core_actions = [
-                            CoreAction(c["option_id"], c.get("description", ""),
-                                       list(c.get("projected_dof_delta", {}).items()),
-                                       c.get("is_reversible", True),
-                                       c.get("estimated_duration_mks", 5_000_000) / 5_000_000)
-                            for c in candidates
-                        ]
-                        decision = self.core.select_best(core_entities, core_actions)
-                        if decision.chosen_action_id is None:
-                            return None
-                        for c in candidates:
-                            if c["option_id"] == decision.chosen_action_id:
-                                best = c
-                                break
-                        else:
-                            return None
-                    else:
-                        best = self.gen.select_best(candidates, state)
-                        if best is None:
-                            return None
 
-                    # Map to CivRealm action
-                    action_id = best["option_id"]
-                    parts = action_id.split("_", 2)
-                    if len(parts) < 3:
-                        return None
-                    ctrl_type, actor_id, action_name = parts
-                    if ctrl_type not in available:
-                        return None
-                    actors = available[ctrl_type]
-                    if actor_id not in actors:
-                        if actors:
-                            actor_id = next(iter(actors))
-                        else:
-                            return None
-                    actions = actors[actor_id]
-                    if action_name not in actions:
-                        if actions:
-                            action_name = next(iter(actions))
-                        else:
-                            return None
+def _build_agent(agent_type: str, result: MatchResult, extractor: GameStateExtractor):
+    """Create the agent for a given agent_type; returns (label, agent)."""
+    if agent_type == "random":
+        return "random", RandomAgent()
+    if agent_type == "no-op":
+        return "no-op", NoOpAgent()
 
-                    if not best.get("is_reversible", True):
-                        result.irreversible_actions += 1
-                    result.total_actions += 1
+    if agent_type.startswith("dof_"):
+        strategy_name = agent_type[len("dof_"):]
+        strategy = next(
+            (s for s in ALL_STRATEGIES if s.name == strategy_name), DEFENSIVE
+        )
+        gen = HeuristicGenerator(strategy=strategy)
 
-                    return (ctrl_type, int(actor_id), action_name)
+        class DofAgent(BaseAgent):
+            def act(self, obs, info):
+                dof = extractor.extract(obs, info, info.get("turn", 0))
+                state = dof.state
+                avail = info.get("available_actions", {})
 
-            agent = RealDOFAgent(gen)
-        else:
-            agent = RandomAgent()
+                best = None
+                cands = gen.generate_candidates(state, avail)
+                if cands:
+                    best = gen.select_best(cands, state)
 
-        # Connect
-        fc_args['client_port'] = port
-        env = gymnasium.make('civrealm/FreecivBase-v0')
-        observations, info = env.reset(client_port=port)
+                action = None
+                if best is not None:
+                    action = _map_option(best.get("option_id", ""), avail)
+                if action is None:
+                    # Our preferred candidate had no valid action for any actor;
+                    # fall back so the turn is not wasted (or the game aborted).
+                    action = _first_valid_action(avail)
 
-        done = False
+                if action is None:
+                    return None
+
+                if best is not None and not best.get("is_reversible", True):
+                    result.irr_actions += 1
+                result.total_actions += 1
+                return action
+
+        return agent_type, DofAgent()
+
+    return "random", RandomAgent()
+
+
+def allocate_port(wait: int = 30):
+    """Ask civrealm for a free multiplayer port, or None if none appears.
+
+    ``Ports.get()`` loops forever when the server has no idle slot, so it is
+    wrapped in a wall-clock alarm to keep the tournament responsive.
+    """
+    try:
+        from civrealm.freeciv.utils.port_utils import Ports
+    except Exception:  # noqa: BLE001 - server status unreachable
+        return None
+
+    def _alarm(signum, frame):
+        raise MatchTimeout("no free port")
+
+    previous = signal.signal(signal.SIGALRM, _alarm)
+    signal.alarm(max(1, wait))
+    try:
+        return Ports.get()
+    except MatchTimeout:
+        return None
+    except Exception:  # noqa: BLE001
+        return None
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, previous)
+
+
+def run_match(agent_type: str, turns: int = 50, port: int = 6001,
+              timeout: int = 240) -> MatchResult:
+    """Play one game on ``port`` and return its metrics."""
+    result = MatchResult(agent_type)
+    extractor = GameStateExtractor(my_player_id=0)
+    env = None
+
+    signal.signal(signal.SIGALRM, _on_alarm)
+    signal.alarm(timeout)
+    try:
+        _, agent = _build_agent(agent_type, result, extractor)
+
+        fc_args["client_port"] = port
+        env = gymnasium.make("civrealm/FreecivBase-v0")
+        obs, info = env.reset(client_port=port)
+
         step = 0
-
+        done = False
         while not done and step < turns:
-            try:
-                action = agent.act(observations, info)
+            action = agent.act(obs, info)
 
-                # Track DoF state
-                extractor = GameStateExtractor(my_player_id=0)
-                dof_result = extractor.extract(observations, info, info.get("turn", step))
-                state = dof_result.state
+            dr = extractor.extract(obs, info, info.get("turn", step))
+            non_collapse = [e for e in dr.state.entities.values()
+                            if not e.is_collapse_source]
+            if non_collapse:
+                result.dof_series.append(
+                    sum(e.current_dof for e in non_collapse) / len(non_collapse)
+                )
+            result.entity_series.append(len(dr.state.entities))
 
-                non_collapse = [e for e in state.entities.values() if not e.is_collapse_source]
-                if non_collapse:
-                    result.total_dof_index_series.append(
-                        sum(e.current_dof for e in non_collapse) / len(non_collapse)
-                    )
-                result.entity_count_series.append(len(state.entities))
+            obs, _reward, terminated, truncated, info = env.step(action)
+            done = bool(terminated or truncated)
+            step += 1
+            if step % 10 == 0:
+                print(f" [{step}/{turns}]", end="", flush=True)
 
-                observations, reward, terminated, truncated, info = env.step(action)
-                done = terminated or truncated
-                step += 1
-
-                # Print progress
-                if step % 5 == 0:
-                    print(f" [{step}/{turns}]", end="", flush=True)
-
-            except Exception as e:
-                result.error = str(e)
-                break
-
-        env.close()
         result.turns_played = step
-        result.final_turn = info.get("turn", step)
-
-    except Exception as e:
-        result.error = str(e)
+    except MatchTimeout as exc:
+        result.error = f"timeout: {exc}"
+    except Exception as exc:  # noqa: BLE001 - report, never crash the tournament
+        result.error = f"{type(exc).__name__}: {exc}"
+    finally:
+        signal.alarm(0)
+        if env is not None:
+            try:
+                env.close()
+            except Exception:  # noqa: BLE001
+                pass
 
     return result
 
 
 def main():
-    import argparse
+    args = ARGS
 
-    parser = argparse.ArgumentParser(description="Run real CivRealm tournament")
-    parser.add_argument("--episodes", type=int, default=3, help="Episodes per agent")
-    parser.add_argument("--turns", type=int, default=100, help="Max turns per episode")
-    parser.add_argument("--port", type=int, default=6001, help="Base CivRealm port")
-    parser.add_argument("--output", type=str, help="Output JSON file")
-    args = parser.parse_args()
+    last_port = args.port + args.episodes - 1
+    if not args.auto_port and (args.port < MIN_PORT or last_port > MAX_PORT):
+        print(f"ERROR: ports {args.port}-{last_port} outside the published range "
+              f"{MIN_PORT}-{MAX_PORT}. Lower --episodes, shift --port, or use "
+              f"auto-allocation (default).")
+        sys.exit(2)
 
     agents = ["random", "no-op"] + [f"dof_{s.name}" for s in ALL_STRATEGIES]
-    results = {agent: [] for agent in agents}
+    if args.only.strip():
+        wanted = [a.strip() for a in args.only.split(",") if a.strip()]
+        unknown = [a for a in wanted if a not in agents]
+        if unknown:
+            print(f"ERROR: unknown agent(s): {', '.join(unknown)}")
+            print(f"Available: {', '.join(agents)}")
+            sys.exit(2)
+        agents = wanted
+    results: dict[str, list[MatchResult]] = {}
 
-    print(f"Running REAL tournament: {len(agents)} agents × {args.episodes} episodes × {args.turns} turns")
-    print(f"Port range: {args.port} ~ {args.port + args.episodes - 1}")
-    print("")
+    mode = "auto port allocation" if args.auto_port else f"ports {args.port}-{last_port}"
+    print(f"REAL tournament: {len(agents)} agents x {args.episodes} eps x "
+          f"{args.turns} turns")
+    print(f"Port mode: {mode}")
+    print(f"Per-match timeout: {args.timeout}s, retries: {args.retries}\n")
 
     for agent in agents:
         print(f"  {agent:<20}", end="", flush=True)
+        results[agent] = []
         for ep in range(args.episodes):
-            port = args.port + ep
-            result = run_real_match(agent, turns=args.turns, port=port)
-            results[agent].append(result)
-            if result.error:
-                print(f" ERR({result.error[:30]})", end="", flush=True)
-            else:
-                print(f" ✓", end="", flush=True)
+            attempts = args.retries + 1
+            r = None
+            for attempt in range(attempts):
+                port = None
+                if args.auto_port:
+                    port = allocate_port(args.port_wait)
+                if port is None:
+                    port = args.port + (ep % max(1, MAX_PORT - MIN_PORT + 1))
+                r = run_match(agent, args.turns, port, args.timeout)
+                if not r.error:
+                    break
+                # A dead/already-used port raises a begin-turn timeout: try a
+                # different port instead of burning the whole episode.
+                time.sleep(2)
+            results[agent].append(r)
+            tag = "ok" if not r.error else "ERR"
+            print(f" {tag}@{port}", end="", flush=True)
+            time.sleep(2)  # let the freeciv server release the previous session
         print("")
 
-    print("\n" + "=" * 70)
+    print("\n" + "=" * 72)
     print("RESULTS")
-    print("=" * 70)
-    print(f"{'Agent':<20} {'Turns':>6} {'AvgDoF':>8} {'MinEnt':>7} {'MaxEnt':>7} {'IrrRat':>7}")
-    print("-" * 70)
+    print("=" * 72)
+    print(f"{'Agent':<20}{'Turns':>7}{'AvgDoF':>9}{'MinEnt':>8}"
+          f"{'MaxEnt':>8}{'IrrRat':>8}{'Errs':>6}")
+    print("-" * 72)
 
     for agent in agents:
-        avg_turns = sum(r.turns_played for r in results[agent]) / max(len(results[agent]), 1)
-        avg_dof = sum(r.avg_dof_index for r in results[agent]) / max(len(results[agent]), 1)
-        min_ent = min((r.min_entity_count for r in results[agent]), default=0)
-        max_ent = max((r.max_entity_count for r in results[agent]), default=0)
-        irr_ratio = sum(r.irreversible_ratio for r in results[agent]) / max(len(results[agent]), 1)
+        rs = results[agent]
+        n = max(len(rs), 1)
+        avg_t = sum(r.turns_played for r in rs) / n
+        avg_d = sum(r.avg_dof for r in rs) / n
+        min_e = min((r.min_ent for r in rs), default=0)
+        max_e = max((r.max_ent for r in rs), default=0)
+        avg_i = sum(r.irr_ratio for r in rs) / n
+        errs = sum(1 for r in rs if r.error)
+        print(f"{agent:<20}{avg_t:>7.1f}{avg_d:>9.3f}{min_e:>8}"
+              f"{max_e:>8}{avg_i:>8.2f}{errs:>6}")
 
-        print(f"{agent:<20} {avg_turns:>6.1f} {avg_dof:>8.3f} {min_ent:>7} {max_ent:>7} {irr_ratio:>7.2f}")
+    # Surface the first error of each failing agent so problems are visible.
+    for agent in agents:
+        for r in results[agent]:
+            if r.error:
+                print(f"  [error] {agent}: {r.error}")
+                break
 
     if args.output:
-        try:
-            output_data = {
-                agent: [
-                    {
-                        "turns": r.turns_played,
-                        "avg_dof": r.avg_dof_index,
-                        "min_entities": r.min_entity_count,
-                        "max_entities": r.max_entity_count,
-                        "irreversible_ratio": r.irreversible_ratio,
-                        "error": r.error,
-                    }
-                    for r in results[agent]
-                ]
-                for agent in agents
-            }
-            with open(args.output, "w") as f:
-                json.dump(output_data, f, indent=2)
-            print(f"\nSaved to {args.output}")
-        except Exception as e:
-            print(f"\nError saving: {e}")
+        data = {
+            agent: [
+                {
+                    "turns": r.turns_played,
+                    "avg_dof": r.avg_dof,
+                    "min_entities": r.min_ent,
+                    "max_entities": r.max_ent,
+                    "irreversible_ratio": r.irr_ratio,
+                    "error": r.error,
+                }
+                for r in results[agent]
+            ]
+            for agent in agents
+        }
+        with open(args.output, "w") as fh:
+            json.dump(data, fh, indent=2)
+        print(f"\nSaved to {args.output}")
 
 
 if __name__ == "__main__":

@@ -1,102 +1,111 @@
 #!/usr/bin/env bash
-# DOF-MODEL-CIV — Development helper
+# DOF-MODEL-CIV — unified development helper.
+#
+# Usage: bash do.sh <command> [args...]
+#
+# Commands:
+#   setup            create .venv, install deps, install project (editable)
+#   test [pytest…]   run the test suite through the venv interpreter
+#   match            run the random baseline against CivRealm
+#   dof-match        run the DOF agent against CivRealm
+#   real-tournament  run the real CivRealm tournament (all agents)
+#   tournament       run the offline synthetic tournament
+#   analyze          plot/analyse the last tournament results
+#   clean            remove .venv and build artefacts
+#   help             show this message
 set -euo pipefail
 
 cd "$(dirname "$0")"
 
 VENV=".venv"
+PY="$VENV/bin/python"
+
+die_no_venv() {
+    echo "==> No venv found. Run: bash do.sh setup"
+    exit 1
+}
 
 setup() {
     echo "==> Setting up DOF-MODEL-CIV..."
-    if [ ! -f "$VENV/bin/python" ]; then
-        python -m venv "$VENV"
+    ROOT="$PWD"
+    if [ ! -x "$PY" ]; then
+        python3.12 -m venv "$VENV" --system-site-packages
     fi
-    "$VENV/bin/python" -m pip install --break-system-packages --upgrade pip
-    "$VENV/bin/python" -m pip install --break-system-packages pydantic numpy matplotlib pytest gymnasium ray
-    "$VENV/bin/python" -m pip install --break-system-packages -e . 2>/dev/null || true
-    "$VENV/bin/python" -m pip install --break-system-packages -e civrealm 2>/dev/null || true
-
-    if ! "$VENV/bin/python" -c "import dof_core" 2>/dev/null; then
-        cd brain/core
-        export PYO3_PYTHON="$("$VENV/bin/python" -c 'import sys; print(sys.executable)')"
-        [ -d dist ] && rm -rf dist
-        maturin build --release --out dist
-        cd ../..
-        "$VENV/bin/python" -m pip install --break-system-packages --force-reinstall --no-deps brain/core/dist/dof_core-*.whl
+    "$PY" -m pip install --upgrade pip
+    "$PY" -m pip install numpy gymnasium pydantic matplotlib
+    "$PY" -m pip install -e .
+    if [ -d civrealm ]; then
+        (cd civrealm && "$ROOT/$VENV/bin/python" -m pip install -e .)
     fi
-    echo "==> Setup complete! Run: bash do.sh test"
+    echo "==> Setup complete."
+    echo "    py:      $PY"
+    echo "    tests:   bash do.sh test"
+    echo "    tourney: bash do.sh real-tournament --episodes 3 --turns 50 --port 6001"
 }
 
 run_tests() {
-    [ ! -f "$VENV/bin/python" ] && { echo "==> No venv. Run: bash do.sh setup"; exit 1; }
-    "$VENV/bin/python" -m pytest tests/ -v "$@"
-}
-
-run_tournament() {
-    [ ! -f "$VENV/bin/python" ] && { echo "==> No venv. Run: bash do.sh setup"; exit 1; }
-    "$VENV/bin/python" baselines/run_tournament.py "$@"
-}
-
-run_real_tournament() {
-    [ ! -f "$VENV/bin/python" ] && { echo "==> No venv. Run: bash do.sh setup"; exit 1; }
-    "$VENV/bin/python" baselines/run_real_tournament.py "$@"
-}
-
-run_analyze() {
-    [ ! -f "$VENV/bin/python" ] && { echo "==> No venv. Run: bash do.sh setup"; exit 1; }
-    "$VENV/bin/python" baselines/analyze.py tournament_results.json 2>/dev/null || echo "==> No results file. Run: bash do.sh tournament"
+    [ -x "$PY" ] || die_no_venv
+    "$PY" -m pytest tests/ -v "$@"
 }
 
 run_match() {
-    [ ! -f "$VENV/bin/python" ] && { echo "==> No venv. Run: bash do.sh setup"; exit 1; }
-    "$VENV/bin/python" baselines/random_agent.py "$@"
-}
-
-run_no_op() {
-    [ ! -f "$VENV/bin/python" ] && { echo "==> No venv. Run: bash do.sh setup"; exit 1; }
-    "$VENV/bin/python" baselines/no_op_agent.py "$@"
+    [ -x "$PY" ] || die_no_venv
+    "$PY" baselines/random_agent.py "$@"
 }
 
 run_dof_match() {
-    [ ! -f "$VENV/bin/python" ] && { echo "==> No venv. Run: bash do.sh setup"; exit 1; }
-    "$VENV/bin/python" baselines/dof_agent.py "$@"
+    [ -x "$PY" ] || die_no_venv
+    "$PY" baselines/dof_agent.py "$@"
+}
+
+run_real_tournament() {
+    [ -x "$PY" ] || die_no_venv
+    "$PY" baselines/run_real_tournament.py "$@"
+}
+
+run_tournament() {
+    [ -x "$PY" ] || die_no_venv
+    "$PY" baselines/run_tournament.py "$@"
+}
+
+run_analyze() {
+    [ -x "$PY" ] || die_no_venv
+    "$PY" baselines/analyze.py "$@"
 }
 
 do_clean() {
-    echo "==> Cleaning..."
-    rm -rf "$VENV" brain/core/dist
-    find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
-    echo "==> Cleaned!"
+    echo "==> Removing $VENV and caches..."
+    rm -rf "$VENV" .pytest_cache
+    find . -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
+    echo "==> Clean."
 }
 
 case "${1:-help}" in
-    setup)          setup ;;
-    test)           shift; run_tests "$@" ;;
-    match)          shift; run_match "$@" ;;
-    no-op)          shift; run_no_op "$@" ;;
-    dof-match)      shift; run_dof_match "$@" ;;
-    tournament)     shift; run_tournament "$@" ;;
-    real-tournament) shift; run_real_tournament "$@" ;;
-    analyze)        shift; run_analyze "$@" ;;
-    clean)          do_clean ;;
+    setup)            setup ;;
+    test)             shift; run_tests "$@" ;;
+    match)            shift; run_match "$@" ;;
+    dof-match)        shift; run_dof_match "$@" ;;
+    real-tournament)  shift; run_real_tournament "$@" ;;
+    tournament)       shift; run_tournament "$@" ;;
+    analyze)          shift; run_analyze "$@" ;;
+    clean)            do_clean ;;
     help|--help|-h)
         echo "DOF-MODEL-CIV"
         echo ""
-        echo "Usage: bash do.sh <command>"
+        echo "Usage: bash do.sh <command> [args...]"
         echo ""
-        echo "Commands:"
-        echo "  setup            Create venv, install deps, build Rust core"
-        echo "  test             Run all tests"
-        echo "  match            Run random baseline"
-        echo "  no-op            Run no-op baseline"
-        echo "  dof-match        Run DOF agent"
-        echo "  tournament       Run synthetic tournament"
-        echo "  real-tournament  Run real CivRealm tournament (needs Docker)"
-        echo "  analyze          Analyze tournament results"
-        echo "  clean            Remove venv and artifacts"
+        echo "  setup            create venv, install deps, install project"
+        echo "  test [args]      run pytest via the venv"
+        echo "  match            random baseline vs CivRealm"
+        echo "  dof-match        DOF agent vs CivRealm"
+        echo "  real-tournament  real CivRealm tournament (all agents)"
+        echo "  tournament       offline synthetic tournament"
+        echo "  analyze          analyse/plot tournament results"
+        echo "  clean            remove venv and caches"
         ;;
     *)
-        echo "Unknown: $1"
+        echo "Unknown command: $1"
+        echo "Run: bash do.sh help"
         exit 1
         ;;
 esac
