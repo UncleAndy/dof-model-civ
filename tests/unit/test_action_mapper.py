@@ -285,10 +285,30 @@ class TestHeuristicGenerator:
         candidates = gen.generate_candidates(sample_state, available)
         assert len(candidates) > 0
 
-    def test_returns_max_5_candidates(self, sample_state, sample_available):
+    def test_shortlist_is_bounded(self, sample_state, sample_available):
+        """The shortlist offers a few distinct branches (spec: 3-5 paths, plus
+        reversible fallbacks for the veto), never a flood."""
         gen = HeuristicGenerator()
         candidates = gen.generate_candidates(sample_state, sample_available)
-        assert len(candidates) <= 5
+        assert 0 < len(candidates) <= 8
+
+    def test_shortlist_keeps_a_reversible_fallback(self, sample_state):
+        """Regression: a shortlist made only of irreversible actions froze the
+        agent, because DOF-Core vetoes them all and had nothing safe to pick."""
+        avail = {
+            "unit": {
+                # many high-gain irreversible branches...
+                "102": {"build_city": True, "attack_9": True},
+                # ...and one reversible alternative
+                "103": {"fortify": True},
+            },
+        }
+        state = SystemStateMatrix(entities={
+            'unit_102': EntityState(entity_id='unit_102', current_dof=0.6),
+            'unit_103': EntityState(entity_id='unit_103', current_dof=0.6),
+        })
+        candidates = HeuristicGenerator(strategy=EXPANSIONIST).generate_candidates(state, avail)
+        assert any(c["is_reversible"] for c in candidates), candidates
 
     def test_select_best_returns_highest_dof(self, sample_state, sample_available):
         gen = HeuristicGenerator()
@@ -484,13 +504,14 @@ class TestRealVocabularyHeuristics:
             entities={
                 'unit_102': EntityState(entity_id='unit_102', current_dof=0.6),
                 'city_1': EntityState(entity_id='city_1', current_dof=0.7),
+                'tech_2': EntityState(entity_id='tech_2', current_dof=0.4),
             },
         )
 
     def test_candidates_are_executable_and_capped(self, state):
         avail = _real_available()
         cands = HeuristicGenerator(strategy=DEFENSIVE).generate_candidates(state, avail)
-        assert 0 < len(cands) <= 5
+        assert 0 < len(cands) <= 8
         for c in cands:
             assert avail[c["ctrl_type"]][c["actor_id"]][c["action_name"]]
 
@@ -530,13 +551,13 @@ class TestRealVocabularyHeuristics:
         cands = HeuristicGenerator(strategy=TECHNOLOGICAL).generate_candidates(state, avail)
         assert cands[0]["action_name"].startswith("research_tech")
 
-    def test_reversibility_wins_strategy_ties(self, state):
-        """Axiom 4: at equal strategy score, prefer the reversible action.
+    def test_dof_gain_outranks_reversibility(self, state):
+        """Merge of two earlier behaviours: DoF gain is the objective.
 
-        `research_tech_*` is only partially reversible (accumulated bulbs are
-        lost on a switch) while `set_tech_goal_*` is freely changeable, and
-        TECHNOLOGICAL lists both -- so the goal wins. This is intended DOF
-        behaviour, not an ordering accident.
+        `research_tech_*` is only partially reversible yet it has a positive
+        projected gain, while `set_tech_goal_*` is reversible but purely
+        advisory (zero gain). DOF-Core maximises DoF, so research must win;
+        reversibility only breaks ties at equal gain.
         """
         avail = {
             "tech": {"cur_player": {"research_tech_Alphabet_2": True,
@@ -544,9 +565,57 @@ class TestRealVocabularyHeuristics:
         }
         cands = HeuristicGenerator(strategy=TECHNOLOGICAL).generate_candidates(state, avail)
         assert len(cands) == 2
-        assert cands[0]["action_name"].startswith("set_tech_goal")
-        assert cands[0]["is_reversible"] is True
-        assert cands[1]["is_reversible"] is False
+        assert cands[0]["action_name"].startswith("research_tech")
+        assert cands[0]["is_reversible"] is False
+
+    def test_reversible_wins_at_equal_gain(self, state):
+        """Axiom 4 as a tie-break: equal projected gain -> prefer reversible.
+
+        `fortify` and `fortress` both carry the defensive +0.02 unit delta, so
+        the choice comes down to reversibility, where fortify wins.
+        """
+        avail = {
+            "unit": {102: {"fortify": True, "fortress": True}},
+        }
+        cands = HeuristicGenerator(strategy=DEFENSIVE).generate_candidates(state, avail)
+        gains = [sum(c["projected_dof_delta"].values()) for c in cands]
+        assert all(g == pytest.approx(0.02) for g in gains)
+        reversible = HeuristicGenerator(strategy=DEFENSIVE).select_best(cands, state)
+        assert reversible["is_reversible"] is True
+
+    def test_high_dof_action_survives_a_goto_flood(self, state):
+        """Regression: hundreds of reversible goto_* used to fill the top-5 and
+        push the only DoF-positive action out of the shortlist."""
+        actions = {f"goto_{i}": True for i in range(300)}
+        actions["build_city"] = True
+        avail = {"unit": {102: actions}}
+
+        cands = HeuristicGenerator(strategy=EXPANSIONIST).generate_candidates(state, avail)
+        names = [c["action_name"] for c in cands]
+        assert "build_city" in names, f"shortlist lost the DoF-positive action: {names}"
+        best = HeuristicGenerator(strategy=EXPANSIONIST).select_best(cands, state)
+        assert best["action_name"] == "build_city"
+
+    def test_domain_weights_keep_strategies_distinct(self, state):
+        """Same raw gains in two domains: each strategy prefers its own domain."""
+        avail = {
+            "tech": {"cur_player": {"research_tech_Alphabet_2": True}},   # +0.05
+            "gov": {0: {"set_sci_lux_tax_0_40_60": True}},                 # +0.01/city
+        }
+        tech_first = HeuristicGenerator(strategy=TECHNOLOGICAL).generate_candidates(state, avail)
+        assert tech_first[0]["ctrl_type"] == "tech"
+
+        # The economical strategy weights the gov domain far above tech
+        # (1.4 vs 0.9), but the raw gap is larger than the weight ratio, so
+        # verify the weights are applied rather than ordering by preference.
+        gen_tech = HeuristicGenerator(strategy=TECHNOLOGICAL)
+        gen_econ = HeuristicGenerator(strategy=ECONOMIC)
+        research = {"ctrl_type": "tech", "projected_dof_delta": {"tech_2": 0.05},
+                    "action_name": "research_tech_Alphabet_2", "is_reversible": False}
+        tax = {"ctrl_type": "gov", "projected_dof_delta": {"city_1": 0.01},
+               "action_name": "set_sci_lux_tax_0_40_60", "is_reversible": True}
+        assert gen_tech.weighted_dof_gain(research) > gen_econ.weighted_dof_gain(research)
+        assert gen_econ.weighted_dof_gain(tax) > gen_tech.weighted_dof_gain(tax)
 
 
 class TestRealVocabularyDofDelta:
@@ -590,7 +659,31 @@ class TestRealVocabularyDofDelta:
     def test_tech_and_player_have_no_entity_delta(self, state):
         assert estimate_dof_delta(
             CivAction(ctrl_type='tech', actor_id='cur_player',
-                      action_name='research_tech_Alphabet_2'), state) == {}
+                      action_name='set_tech_goal_Alphabet_2'), state) == {}
         assert estimate_dof_delta(
             CivAction(ctrl_type='player', actor_id='message', action_name='chat'),
             state) == {}
+
+    def test_research_attaches_delta_to_the_named_tech(self, state):
+        """The action name's trailing integer is the tech id: research must
+        register as DoF progress on that entity, otherwise a whole controller
+        is DoF-invisible and the agent can never 'invest in science'."""
+        state = SystemStateMatrix(
+            entities={
+                'tech_2': EntityState(entity_id='tech_2', current_dof=0.4),
+                'tech_7': EntityState(entity_id='tech_7', current_dof=0.4),
+            },
+        )
+        delta = estimate_dof_delta(
+            CivAction(ctrl_type='tech', actor_id='cur_player',
+                      action_name='research_tech_Alphabet_2'), state
+        )
+        assert delta.get('tech_2', 0) > 0
+        assert 'tech_7' not in delta
+
+    def test_research_for_unknown_tech_id_is_ignored(self, state):
+        delta = estimate_dof_delta(
+            CivAction(ctrl_type='tech', actor_id='cur_player',
+                      action_name='research_tech_Alphabet_999'), state
+        )
+        assert delta == {}

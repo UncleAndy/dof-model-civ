@@ -382,7 +382,12 @@ class TestEdgeCases:
         assert index == 0.0  # no entities = 0
 
     def test_unit_no_moves(self, extractor):
-        """Unit with no moves left should have lower mobility DoF."""
+        """Spending this turn's moves must NOT lower a unit's DoF.
+
+        Mobility is structural (max_moves), so a unit that has already used its
+        movement retains the same future state space as a fresh one — otherwise a
+        DoF-maximising agent would be forbidden from ever acting.
+        """
         obs = {
             'unit': {
                 '1': {
@@ -408,9 +413,24 @@ class TestEdgeCases:
             },
         }
         result = extractor.extract(obs, {}, turn=5)
-        immobile = result.state.entities['unit_1'].current_dof
-        mobile = result.state.entities['unit_2'].current_dof
-        assert mobile > immobile
+        spent = result.state.entities['unit_1'].current_dof
+        fresh = result.state.entities['unit_2'].current_dof
+        assert spent == pytest.approx(fresh)
+
+    def test_fewer_max_moves_lower_dof(self, extractor):
+        """Structural movement capacity is what counts."""
+        obs = {
+            'unit': {
+                '1': {'type_rule_name': 'Warrior', 'health': 100, 'moves_left': 1,
+                      'max_moves': 1, 'x': 0, 'y': 0, 'owner': 0, 'activity': 0},
+                '2': {'type_rule_name': 'Warrior', 'health': 100, 'moves_left': 1,
+                      'max_moves': 3, 'x': 0, 'y': 0, 'owner': 0, 'activity': 0},
+            },
+        }
+        result = extractor.extract(obs, {}, turn=5)
+        slow = result.state.entities['unit_1'].current_dof
+        fast = result.state.entities['unit_2'].current_dof
+        assert fast > slow
 
     def test_entity_dof_clamped(self, extractor):
         """DoF values must be clamped to [0, 1]."""
@@ -431,3 +451,56 @@ class TestEdgeCases:
         result = extractor.extract(obs, {}, turn=1)
         dof = result.state.entities['unit_1'].current_dof
         assert 0.0 <= dof <= 1.0
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# DoF must not be consumed by acting
+#
+# Regression: mobility was computed as moves_left / max_moves and can_retreat as
+# moves_left > 0, so every action that spent a turn's movement lowered the unit's
+# DoF. A DoF-maximising agent then refused to act at all, and when forced to act
+# it strictly degraded the system index (-212.6 vs -205.1 for doing nothing in a
+# 15-episode real tournament). Spending a renewable per-turn budget is not an
+# irreversible loss of future state space.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestUnitDofIsNotConsumedByActing:
+
+    @staticmethod
+    def _unit(moves_left: int, max_moves: int = 3, health: int = 100):
+        return {
+            'unit': {
+                '7': {
+                    'type_rule_name': 'Warrior',
+                    'health': health,
+                    'moves_left': moves_left,
+                    'max_moves': max_moves,
+                    'x': 1, 'y': 1, 'owner': 0, 'activity': 0,
+                },
+            },
+        }
+
+    def test_spending_moves_does_not_change_unit_dof(self, extractor):
+        """Fresh unit and spent unit must score identically: the option to move
+        next turn is intact either way."""
+        fresh = extractor.extract(self._unit(moves_left=3), {}, turn=1)
+        spent = extractor.extract(self._unit(moves_left=0), {}, turn=1)
+
+        assert (fresh.state.entities['unit_7'].current_dof
+                == pytest.approx(spent.state.entities['unit_7'].current_dof))
+
+    def test_mobility_uses_structural_capacity(self, extractor):
+        """A unit with more maximum moves keeps more DoF, regardless of what is
+        left this turn."""
+        fast = extractor.extract(self._unit(moves_left=0, max_moves=3), {}, turn=1)
+        slow = extractor.extract(self._unit(moves_left=3, max_moves=1), {}, turn=1)
+
+        assert (fast.state.entities['unit_7'].current_dof
+                > slow.state.entities['unit_7'].current_dof)
+
+    def test_zero_capacity_unit_keeps_health_component(self, extractor):
+        """A unit with no movement capacity still has DoF from health/value; it
+        must not be driven to zero by the mobility term."""
+        immobile = extractor.extract(self._unit(moves_left=0, max_moves=0), {}, turn=1)
+        dof = immobile.state.entities['unit_7'].current_dof
+        assert dof > 0.5  # 0.40 health + 0.20 retreat? + 0.25 value, mobility 0
