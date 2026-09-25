@@ -1,0 +1,107 @@
+{
+  "player": {
+    "message": {
+      "chat": true
+    }
+  },
+  "tech": {
+    "cur_player": {
+      "set_tech_goal_Advanced Flight_1": true,
+      "research_tech_Alphabet_2": true,
+      "set_tech_goal_Amphibious Warfare_3": true,
+      "set_tech_goal_Astronomy_4": true,
+      "set_tech_goal_Atomic Theory_5": true,
+      "set_tech_goal_Automobile_6": true,
+      "set_tech_goal_Banking_7": true,
+      "set_tech_goal_Bridge Building_8": true,
+      "research_tech_Advanced Flight_1": false,
+      "set_tech_goal_Alphabet_2": false,
+      "research_tech_Amphibious Warfare_3": false,
+      "research_tech_Astronomy_4": false,
+      "research_tech_Atomic Theory_5": false,
+      "research_tech_Automobile_6": false,
+      "research_tech_Banking_7": false,
+      "research_tech_Bridge Building_8": false
+    }
+  },
+  "unit": {
+    "102": {
+      "plant": true,
+      "keep_activity": true,
+      "build_city": true,
+      "build_road": true,
+      "goto_0": true,
+      "goto_1": true,
+      "goto_2": true,
+      "goto_3": true,
+      "transform_terrain": false,
+      "mine": false,
+      "cultivate": false,
+      "fortress": false,
+      "airbase": false,
+      "irrigation": false,
+      "paradrop": false,
+      "join_city": false
+    },
+    "109": {
+      "plant": true,
+      "keep_activity": true,
+      "build_city": true,
+      "build_road": true,
+      "goto_0": true,
+      "goto_1": true,
+      "goto_2": true,
+      "goto_3": true,
+      "transform_terrain": false,
+      "mine": false,
+      "cultivate": false,
+      "fortress": false,
+      "airbase": false,
+      "irrigation": false,
+      "paradrop": false,
+      "join_city": false
+    }
+  },
+  "dipl": {
+    "1": {
+      "stop_negotiation_1": false,
+      "accept_treaty_1": false,
+      "cancel_treaty_1": false,
+      "cancel_vision_1": false,
+      "add_clause_ShareMap_1_0_1": false,
+      "remove_clause_ShareMap_1_0_1": false,
+      "add_clause_ShareSeaMap_1_0_1": false,
+      "remove_clause_ShareSeaMap_1_0_1": false
+    },
+    "2": {
+      "stop_negotiation_2": false,
+      "accept_treaty_2": false,
+      "cancel_treaty_2": false,
+      "cancel_vision_2": false,
+      "add_clause_ShareMap_1_0_2": false,
+      "remove_clause_ShareMap_1_0_2": false,
+      "add_clause_ShareSeaMap_1_0_2": false,
+      "remove_clause_ShareSeaMap_1_0_2": false
+    }
+  },
+  "gov": {
+    "0": {
+      "change_gov_Anarchy": true,
+      "set_sci_lux_tax_0_40_60": true,
+      "set_sci_lux_tax_0_50_50": true,
+      "set_sci_lux_tax_0_60_40": true,
+      "set_sci_lux_tax_10_30_60": true,
+      "set_sci_lux_tax_10_40_50": true,
+      "set_sci_lux_tax_10_50_40": true,
+      "set_sci_lux_tax_10_60_30": true,
+      "change_gov_Despotism": false,
+      "change_gov_Monarchy": false,
+      "change_gov_Communism": false,
+      "change_gov_Republic": false,
+      "change_gov_Democracy": false,
+      "set_sci_lux_tax_0_0_100": false,
+      "set_sci_lux_tax_0_10_90": false,
+      "set_sci_lux_tax_0_20_80": false
+    }
+  }
+}

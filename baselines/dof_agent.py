@@ -139,41 +139,25 @@ class DOFAgent(BaseAgent):
         return None
 
     def _map_to_civrealm(self, dof_action: dict, available_actions: dict):
-        """Convert DOF action dict to CivRealm action tuple."""
-        action_id = dof_action["option_id"]
+        """Convert a DOF candidate into the CivRealm action tuple.
 
-        # Parse action_id: "{ctrl_type}_{actor_id}_{action_name}"
-        parts = action_id.split("_", 2)
-        if len(parts) < 3:
-            return None
+        The candidate carries ``ctrl_type`` / ``actor_id`` / ``action_name`` as
+        structured fields, so nothing is parsed out of ``option_id``: real actor
+        ids and action names contain underscores (``cur_player``,
+        ``set_sci_lux_tax_0_40_60``) and actor ids may be ints or strings.
+        """
+        ctrl_type = dof_action.get("ctrl_type")
+        actor_id = dof_action.get("actor_id")
+        action_name = dof_action.get("action_name")
 
-        ctrl_type = parts[0]
-        actor_id = parts[1]
-        action_name = parts[2]
-
-        # Check if action is available
-        if ctrl_type not in available_actions:
-            return None
-
-        # Find actor
-        actors = available_actions[ctrl_type]
-        if actor_id not in actors:
-            # Try first available actor
-            if actors:
-                actor_id = next(iter(actors))
-            else:
+        if ctrl_type is None or actor_id is None or action_name is None:
+            # Fallback for callers that still pass a hand-built DOF-SPEC dict.
+            parts = str(dof_action.get("option_id", "")).split("_", 2)
+            if len(parts) < 3:
                 return None
+            ctrl_type, actor_id, action_name = parts
 
-        # Check if action exists for this actor
-        actions = actors[actor_id]
-        if action_name not in actions:
-            # Try first available action
-            if actions:
-                action_name = next(iter(actions))
-            else:
-                return None
-
-        return (ctrl_type, int(actor_id), action_name)
+        return (ctrl_type, actor_id, action_name)
 
 
 def main():

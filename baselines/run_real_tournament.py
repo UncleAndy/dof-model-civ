@@ -119,46 +119,19 @@ class MatchResult:
         return self.irr_actions / self.total_actions if self.total_actions else 0.0
 
 
-def _valid_actions(actions: dict) -> dict:
-    """CivRealm treats an action with an empty param dict as invalid
-    (see civrealm.agents.base_agent.BaseAgent.get_next_valid_actor)."""
-    return {name: params for name, params in actions.items() if params}
+def _to_action(candidate: dict):
+    """Convert a DOF candidate into the (ctrl_type, actor_id, action_name) tuple.
 
-
-def _map_option(option_id: str, avail: dict):
-    """Map a DOF option_id to a CivRealm (ctrl_type, actor_id, action_name)."""
-    parts = str(option_id).split("_", 2)
-    if len(parts) < 3:
+    The candidate carries its origin as structured fields, so nothing has to be
+    parsed back out of ``option_id`` (actor ids and action names may contain
+    underscores, and actor ids may be ints or strings).
+    """
+    ctrl_type = candidate.get('ctrl_type')
+    actor_id = candidate.get('actor_id')
+    action_name = candidate.get('action_name')
+    if ctrl_type is None or actor_id is None or action_name is None:
         return None
-    ctrl_type, actor_id, action_name = parts
-
-    actors = avail.get(ctrl_type) or {}
-    if not actors:
-        return None
-    if actor_id not in actors:
-        actor_id = next(iter(actors))
-    actions = _valid_actions(actors[actor_id])
-    if not actions:
-        return None
-    if action_name not in actions:
-        action_name = next(iter(actions))
-    try:
-        return (ctrl_type, int(actor_id), action_name)
-    except (TypeError, ValueError):
-        return None
-
-
-def _first_valid_action(avail: dict):
-    """Fallback: first actor that actually has a valid (param-carrying) action."""
-    for ctrl_type, actors in avail.items():
-        for actor_id, actions in actors.items():
-            valid = _valid_actions(actions)
-            if valid:
-                try:
-                    return (ctrl_type, int(actor_id), next(iter(valid)))
-                except (TypeError, ValueError):
-                    continue
-    return None
+    return (ctrl_type, actor_id, action_name)
 
 
 def _build_agent(agent_type: str, result: MatchResult, extractor: GameStateExtractor):
@@ -186,18 +159,14 @@ def _build_agent(agent_type: str, result: MatchResult, extractor: GameStateExtra
                 if cands:
                     best = gen.select_best(cands, state)
 
-                action = None
-                if best is not None:
-                    action = _map_option(best.get("option_id", ""), avail)
-                if action is None:
-                    # Our preferred candidate had no valid action for any actor;
-                    # fall back so the turn is not wasted (or the game aborted).
-                    action = _first_valid_action(avail)
+                if best is None:
+                    return None
 
+                action = _to_action(best)
                 if action is None:
                     return None
 
-                if best is not None and not best.get("is_reversible", True):
+                if not best.get("is_reversible", True):
                     result.irr_actions += 1
                 result.total_actions += 1
                 return action

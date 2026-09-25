@@ -1,0 +1,158 @@
+[
+  {
+    "turn": 1,
+    "controllers": {
+      "player": {
+        "actor_key_types": [
+          "str"
+        ],
+        "n_actors": 1,
+        "n_actions": 1,
+        "n_valid": 1,
+        "param_keys": {},
+        "valid_samples": {
+          "chat": true
+        }
+      },
+      "tech": {
+        "actor_key_types": [
+          "str"
+        ],
+        "n_actors": 1,
+        "n_actions": 174,
+        "n_valid": 87,
+        "param_keys": {},
+        "valid_samples": {
+          "set_tech_goal_Advanced Flight_1": true,
+          "research_tech_Alphabet_2": true,
+          "set_tech_goal_Amphibious Warfare_3": true,
+          "set_tech_goal_Astronomy_4": true,
+          "set_tech_goal_Atomic Theory_5": true,
+          "set_tech_goal_Automobile_6": true
+        }
+      },
+      "unit": {
+        "actor_key_types": [
+          "int"
+        ],
+        "n_actors": 5,
+        "n_actions": 600,
+        "n_valid": 56,
+        "param_keys": {},
+        "valid_samples": {
+          "plant": true,
+          "keep_activity": true,
+          "build_city": true,
+          "build_road": true,
+          "goto_0": true,
+          "goto_1": true
+        }
+      },
+      "dipl": {
+        "actor_key_types": [
+          "int"
+        ],
+        "n_actors": 3,
+        "n_actions": 1320,
+        "n_valid": 0,
+        "param_keys": {},
+        "valid_samples": {}
+      },
+      "gov": {
+        "actor_key_types": [
+          "int"
+        ],
+        "n_actors": 1,
+        "n_actions": 72,
+        "n_valid": 37,
+        "param_keys": {},
+        "valid_samples": {
+          "change_gov_Anarchy": true,
+          "set_sci_lux_tax_0_40_60": true,
+          "set_sci_lux_tax_0_50_50": true,
+          "set_sci_lux_tax_0_60_40": true,
+          "set_sci_lux_tax_10_30_60": true,
+          "set_sci_lux_tax_10_40_50": true
+        }
+      }
+    }
+  },
+  {
+    "turn": 1,
+    "controllers": {
+      "player": {
+        "actor_key_types": [
+          "str"
+        ],
+        "n_actors": 1,
+        "n_actions": 1,
+        "n_valid": 1,
+        "param_keys": {},
+        "valid_samples": {
+          "chat": true
+        }
+      },
+      "tech": {
+        "actor_key_types": [
+          "str"
+        ],
+        "n_actors": 1,
+        "n_actions": 174,
+        "n_valid": 87,
+        "param_keys": {},
+        "valid_samples": {
+          "set_tech_goal_Advanced Flight_1": true,
+          "research_tech_Alphabet_2": true,
+          "set_tech_goal_Amphibious Warfare_3": true,
+          "set_tech_goal_Astronomy_4": true,
+          "set_tech_goal_Atomic Theory_5": true,
+          "set_tech_goal_Automobile_6": true
+        }
+      },
+      "unit": {
+        "actor_key_types": [
+          "int"
+        ],
+        "n_actors": 5,
+        "n_actions": 600,
+        "n_valid": 56,
+        "param_keys": {},
+        "valid_samples": {
+          "plant": true,
+          "keep_activity": true,
+          "build_city": true,
+          "build_road": true,
+          "goto_0": true,
+          "goto_1": true
+        }
+      },
+      "dipl": {
+        "actor_key_types": [
+          "int"
+        ],
+        "n_actors": 3,
+        "n_actions": 1320,
+        "n_valid": 0,
+        "param_keys": {},
+        "valid_samples": {}
+      },
+      "gov": {
+        "actor_key_types": [
+          "int"
+        ],
+        "n_actors": 1,
+        "n_actions": 72,
+        "n_valid": 37,
+        "param_keys": {},
+        "valid_samples": {
+          "change_gov_Anarchy": true,
+          "set_sci_lux_tax_0_40_60": true,
+          "set_sci_lux_tax_0_50_50": true,
+          "set_sci_lux_tax_0_60_40": true,
+          "set_sci_lux_tax_10_30_60": true,
+          "set_sci_lux_tax_10_40_50": true
+        }
+      }
+    }
+  }
+]

@@ -1,0 +1,128 @@
+{
+  "random": [
+    {
+      "turns": 20,
+      "avg_dof": 0.12820937500000001,
+      "min_entities": 95,
+      "max_entities": 96,
+      "irreversible_ratio": 0.0,
+      "error": ""
+    },
+    {
+      "turns": 20,
+      "avg_dof": 0.1262105263157895,
+      "min_entities": 95,
+      "max_entities": 95,
+      "irreversible_ratio": 0.0,
+      "error": ""
+    }
+  ],
+  "no-op": [
+    {
+      "turns": 20,
+      "avg_dof": 0.1406842105263158,
+      "min_entities": 95,
+      "max_entities": 95,
+      "irreversible_ratio": 0.0,
+      "error": ""
+    },
+    {
+      "turns": 20,
+      "avg_dof": 0.1406842105263158,
+      "min_entities": 95,
+      "max_entities": 95,
+      "irreversible_ratio": 0.0,
+      "error": ""
+    }
+  ],
+  "dof_defensive": [
+    {
+      "turns": 20,
+      "avg_dof": 0.1406842105263158,
+      "min_entities": 95,
+      "max_entities": 95,
+      "irreversible_ratio": 0.0,
+      "error": ""
+    },
+    {
+      "turns": 20,
+      "avg_dof": 0.1406842105263158,
+      "min_entities": 95,
+      "max_entities": 95,
+      "irreversible_ratio": 0.0,
+      "error": ""
+    }
+  ],
+  "dof_expansionist": [
+    {
+      "turns": 20,
+      "avg_dof": 0.11205263157894738,
+      "min_entities": 95,
+      "max_entities": 95,
+      "irreversible_ratio": 0.0,
+      "error": ""
+    },
+    {
+      "turns": 20,
+      "avg_dof": 0.11205263157894738,
+      "min_entities": 95,
+      "max_entities": 95,
+      "irreversible_ratio": 0.0,
+      "error": ""
+    }
+  ],
+  "dof_economic": [
+    {
+      "turns": 20,
+      "avg_dof": 0.11205263157894738,
+      "min_entities": 95,
+      "max_entities": 95,
+      "irreversible_ratio": 0.0,
+      "error": ""
+    },
+    {
+      "turns": 20,
+      "avg_dof": 0.11205263157894738,
+      "min_entities": 95,
+      "max_entities": 95,
+      "irreversible_ratio": 0.0,
+      "error": ""
+    }
+  ],
+  "dof_technological": [
+    {
+      "turns": 20,
+      "avg_dof": 0.1406842105263158,
+      "min_entities": 95,
+      "max_entities": 95,
+      "irreversible_ratio": 0.0,
+      "error": ""
+    },
+    {
+      "turns": 20,
+      "avg_dof": 0.1406842105263158,
+      "min_entities": 95,
+      "max_entities": 95,
+      "irreversible_ratio": 0.0,
+      "error": ""
+    }
+  ],
+  "dof_diplomatic": [
+    {
+      "turns": 20,
+      "avg_dof": 0.1406842105263158,
+      "min_entities": 95,
+      "max_entities": 95,
+      "irreversible_ratio": 0.0,
+      "error": ""
+    },
+    {
+      "turns": 20,
+      "avg_dof": 0.1406842105263158,
+      "min_entities": 95,
+      "max_entities": 95,
+      "irreversible_ratio": 0.0,
+      "error": ""
+    }
+  ]
+}

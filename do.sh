@@ -73,6 +73,16 @@ run_analyze() {
     "$PY" baselines/analyze.py "$@"
 }
 
+run_inspect_actions() {
+    [ -x "$PY" ] || die_no_venv
+    "$PY" scripts/inspect_actions.py "$@"
+}
+
+run_inspect_bridge() {
+    [ -x "$PY" ] || die_no_venv
+    "$PY" scripts/inspect_bridge.py "$@"
+}
+
 do_clean() {
     echo "==> Removing $VENV and caches..."
     rm -rf "$VENV" .pytest_cache
@@ -88,6 +98,8 @@ case "${1:-help}" in
     real-tournament)  shift; run_real_tournament "$@" ;;
     tournament)       shift; run_tournament "$@" ;;
     analyze)          shift; run_analyze "$@" ;;
+    inspect-actions)  shift; run_inspect_actions "$@" ;;
+    inspect-bridge)   shift; run_inspect_bridge "$@" ;;
     clean)            do_clean ;;
     help|--help|-h)
         echo "DOF-MODEL-CIV"
@@ -101,6 +113,8 @@ case "${1:-help}" in
         echo "  real-tournament  real CivRealm tournament (all agents)"
         echo "  tournament       offline synthetic tournament"
         echo "  analyze          analyse/plot tournament results"
+        echo "  inspect-actions  dump the live action space (civrealm)"
+        echo "  inspect-bridge   check which DOF candidates are executable"
         echo "  clean            remove venv and caches"
         ;;
     *)
