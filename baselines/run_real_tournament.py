@@ -75,6 +75,15 @@ def _parse_cli(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--max-decisions-per-turn", type=int, default=20,
                         help="cap decisions issued inside one turn before the turn "
                              "is ended explicitly")
+    parser.add_argument("--duel", action="store_true",
+                        help="this match is one side of a duel: several players in "
+                             "one game, so a turn ends only when EVERY player's "
+                             "phase has ended. Count turns by the GLOBAL turn "
+                             "counter instead of by our own phase endings.")
+    parser.add_argument("--duel-wait", type=float, default=0.5,
+                        help="seconds to wait while the other player takes its "
+                             "phase (duel mode); without it we would hammer the "
+                             "server with end-turn steps in the same turn")
     parser.add_argument("--lookahead", type=int, default=3,
                         help="DOF-Core lookahead horizon in turns (core default 3). "
                              "Cost grows ~ candidates**horizon, so raise it together "
@@ -530,6 +539,12 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
         decisions_this_turn = 0
         used_actors: set = set()
         done = False
+        # ДУЭЛЬ: в одной игре несколько игроков, поэтому ход завершается не нашим
+        # `None`, а суммой фаз. Наш `None` закрывает только свою фазу, и считать
+        # его ходом значит раздуть счётчик и пересчитывать метрики по устаревшему
+        # наблюдению. Поэтому в дуэли ход считается по ГЛОБАЛЬНОМУ счётчику.
+        duel = bool(ARGS.duel)
+        last_global_turn = info.get("turn")
 
         while not done and turns_played < turns:
             if pace:
@@ -593,8 +608,16 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
                 note_choice(extractor.model, str(action[0]), str(action[2]),
                             turn=turns_played + 1)
 
-            if end_turn:
+            global_turn = info.get("turn")
+            turn_advanced = global_turn != last_global_turn
+            if end_turn and duel and not turn_advanced:
+                # Наша фаза закрыта, но ход двигает пара фаз. Ждём соперника: не
+                # считаем это ходом и не пересчитываем метрики по устаревшему
+                # наблюдению (иначе счётчик ходов и индекс растут «на пустом месте»).
+                time.sleep(max(0.0, ARGS.duel_wait))
+            elif end_turn:
                 turns_played += 1
+                last_global_turn = global_turn
                 extraction = extractor.extract(obs, info, info.get("turn", turns_played))
                 if not metrics.start_fingerprint:
                     # Captured on the first turn. Not "the map": at turn 1 only a
