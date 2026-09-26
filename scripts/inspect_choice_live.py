@@ -61,7 +61,7 @@ def describe(ex, obs, info, turn):
 def decide(env, gen, heuristic_gen, core, state, avail, obs, info, model, turn):
     """Выбрать действие ядром и сделать шаг."""
     from dof_core import CoreAction, CoreEntity
-    from env.experiments import note_choice
+    from env.experiments import family_of, note_choice
 
     candidates = (heuristic_gen.generate_candidates(state, avail)
                   or gen.generate_from_state(state, avail))
@@ -93,11 +93,13 @@ def decide(env, gen, heuristic_gen, core, state, avail, obs, info, model, turn):
     print(f"  ВЫБОР: {ctrl} {actor} {name} "
           f"(дельта {chosen.get('projected_dof_delta')}, "
           f"обратимо {chosen.get('is_reversible')})")
-    # Считаем попытку, если действие было экспериментом: так надбавка за незнание
-    # убывает по семейству, а не платится вечно.
-    if note_choice(model, str(ctrl or ''), str(name or ''), turn=turn):
-        print(f"     эксперимент: попытка семейства {name} учтена")
     obs, _r, term, trunc, info = env.step((ctrl, actor, name))
+    # Попытка считается только если действие реально ИСПОЛНЕНО: выбор, отвергнутый
+    # сервером, ничему не учит, и надбавка за незнание не должна из-за него падать.
+    if not (term or trunc) and note_choice(model, str(ctrl or ''), str(name or ''),
+                                          turn=turn):
+        print(f"     эксперимент: попытка семейства {family_of(name)} учтена "
+              f"(исполнено)")
     return obs, info
 
 

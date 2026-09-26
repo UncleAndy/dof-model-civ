@@ -27,7 +27,7 @@ from civrealm.agents import BaseAgent
 
 from env.entity_extractor import GameStateExtractor
 from env.action_mapper import ActionOptionGenerator, CivAction
-from env.experiments import note_choice
+
 from brain.generator.heuristics import ALL_STRATEGIES, DEFENSIVE, HeuristicGenerator
 from env.config import CONFIG
 
@@ -95,14 +95,6 @@ class DOFAgent(BaseAgent):
 
         if best_action is None:
             return None
-
-        # Step 5b: an unmeasured action IS an experiment — record the attempt.
-        # The bridge paid a bonus for finding out; counting the attempt makes that
-        # bonus decay for this family, so the agent probes the unknown instead of
-        # paying for the same ignorance forever.
-        ctrl = best_action.get('ctrl_type') or best_action.get('controller') or ''
-        name = best_action.get('action_name') or best_action.get('name') or ''
-        note_choice(self.extractor.model, str(ctrl), str(name), turn=turn)
 
         # Step 6: Convert DOF action to CivRealm action
         return self._map_to_civrealm(best_action, available_actions)

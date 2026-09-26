@@ -92,6 +92,12 @@ def _parse_cli(argv: list[str]) -> argparse.Namespace:
                              "not across environments.")
     parser.add_argument("--only", type=str, default="",
                         help="comma-separated agent subset, e.g. random,dof_defensive")
+    parser.add_argument("--no-curiosity", dest="curiosity", action="store_false",
+                        default=True,
+                        help="A/B: turn OFF the bonus for probing unmeasured "
+                             "actions (env.config.CURIOSITY_ENABLED). Everything "
+                             "else stays identical, so a difference is the "
+                             "mechanism's own effect.")
     parser.add_argument("--save-series", dest="save_series", action="store_true",
                         default=False,
                         help="also persist per-step DoF/entity/action series "
@@ -108,8 +114,11 @@ import gymnasium
 from civrealm.configs import fc_args
 from civrealm.agents import RandomAgent, BaseAgent
 
+from env import config as env_config
 from env.config import AXIOM4_PENALTY_OPTIONS, CORE_DOF_SCALE
 from env.entity_extractor import GameStateExtractor, compute_total_dof_index
+from env.experiments import note_choice
+from env.wedged import record_wedged
 from brain.generator.heuristics import ALL_STRATEGIES, DEFENSIVE, HeuristicGenerator
 from metrics.tracker import MatchMetrics, agent_turns
 
@@ -127,6 +136,12 @@ except Exception:  # noqa: BLE001 - Python fallback keeps the runner usable
 # Slots: singleplayer/pbem 6000-6009, idle multiplayer pool 6300-6331.
 MIN_PORT = 6000
 MAX_PORT = 6331
+
+#: Сколько секунд ждать один шаг, прежде чем считать, что стенд заклинило.
+#: Измерено, что `irrigation` на речной равнине и `build_road` на орошённой
+#: равнине не возвращают управление из `env.step` вообще — без этого таймера
+#: матч умирает только по общему бюджету, и непонятно, какой выбор его убил.
+STEP_TIMEOUT = 20
 
 
 class MatchTimeout(Exception):
@@ -337,11 +352,29 @@ def _turn_phase(action, used_actors: set, decisions_this_turn: int,
     return "act", key
 
 
+def _record_wedge(metrics: MatchMetrics, action, turn: int) -> None:
+    """Записать выбор, о который заклинило стенд, — это измерение, а не шум.
+
+    Матч потерян, но знание остаётся: семейство уходит в реестр, и следующий
+    матч (в т.ч. следующий агент того же прогона) за него уже не заплатит и не
+    выберет его.
+    """
+    if action is None:
+        return
+    ctrl, name = str(action[0]), str(action[2])
+    metrics.wedge_action = {"ctrl_type": ctrl, "action_name": name, "turn": turn}
+    try:
+        record_wedged(ctrl, name, turn=turn, context={"agent": metrics.agent_name})
+    except OSError as exc:  # pragma: no cover - диск, а не логика
+        print(f"  [warn] не записал клинч {ctrl}/{name}: {exc}", flush=True)
+
+
 def run_match(agent_type: str, turns: int = 30, port: int = 6001,
               timeout: int = 240, seed: int | None = None,
               include_series: bool = False, max_decisions_per_turn: int = 20,
               lookahead: int = 3, context_switch_penalty: float = 0.5,
               max_candidates: int = 8, pace: float = 0.0, trace: bool = False,
+              curiosity: bool = True,
               ) -> MatchMetrics:
     """Play one game on ``port`` and return its metrics, one record per turn.
 
@@ -353,10 +386,15 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
     seeds, so distinct seeds produce distinct scenarios.
     """
     metrics = MatchMetrics(agent_name=agent_type, include_series=include_series)
+    metrics.curiosity = curiosity
+    metrics.port = port
+    # The A/B switch: read at every bonus call, so it takes effect per match.
+    env_config.CURIOSITY_ENABLED = curiosity
     extractor = GameStateExtractor(my_player_id=0)
     env = None
 
     signal.signal(signal.SIGALRM, _on_alarm)
+    deadline = time.time() + timeout
     signal.alarm(timeout)
     try:
         agent = build_agent(agent_type, extractor, lookahead,
@@ -385,26 +423,53 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
         while not done and turns_played < turns:
             if pace:
                 time.sleep(pace)
-            action = agent.act(obs, info)
-            phase, key = _turn_phase(action, used_actors, decisions_this_turn,
-                                     max_decisions_per_turn)
+            # Every step is bounded. A step that never returns is not a slow stand,
+            # it is a wedge: knowing WHICH pick wedged it is the whole point, and
+            # the global match timeout alone cannot tell us that.
+            stepped = False
+            try:
+                remaining = max(1.0, deadline - time.time())
+                step_budget = min(STEP_TIMEOUT, remaining)
+                signal.setitimer(signal.ITIMER_REAL, step_budget)
+                action = agent.act(obs, info)
+                phase, key = _turn_phase(action, used_actors, decisions_this_turn,
+                                         max_decisions_per_turn)
 
-            if phase == "act":
-                used_actors.add(key)
-                decisions_this_turn += 1
-                end_turn = False
-                metrics.record_decision(turns_played + 1, action)
-                if trace:
-                    print(f"      turn {turns_played + 1}: "
-                          f"{action[0]}/{action[1]}/{action[2]}", flush=True)
-            else:
-                end_turn = True
-                action = None  # stepping None is what ends the turn
-                decisions_this_turn = 0
-                used_actors = set()
+                if phase == "act":
+                    used_actors.add(key)
+                    decisions_this_turn += 1
+                    end_turn = False
+                    metrics.record_decision(turns_played + 1, action)
+                    if trace:
+                        print(f"      turn {turns_played + 1}: "
+                              f"{action[0]}/{action[1]}/{action[2]}", flush=True)
+                else:
+                    end_turn = True
+                    action = None  # stepping None is what ends the turn
+                    decisions_this_turn = 0
+                    used_actors = set()
 
-            obs, _reward, terminated, truncated, info = env.step(action)
+                stepped = True  # from here a hang belongs to the chosen action
+                obs, _reward, terminated, truncated, info = env.step(action)
+            except MatchTimeout as exc:
+                if not stepped or step_budget < STEP_TIMEOUT - 1e-6:
+                    # Either the match budget ran out, or the agent itself hung:
+                    # neither names an action, so there is nothing to measure.
+                    raise
+                _record_wedge(metrics, action, turns_played + 1)
+                raise MatchTimeout(
+                    f"wedged on {action[0]}/{action[2]} at turn "
+                    f"{turns_played + 1}") from exc
+            finally:
+                signal.setitimer(signal.ITIMER_REAL, 0)
+
             done = bool(terminated or truncated)
+            # An experiment counts when the action was actually TAKEN, not when it
+            # was chosen: a pick the server rejects teaches nothing, and the bonus
+            # for probing must decay against real experience only.
+            if action is not None and not end_turn:
+                note_choice(extractor.model, str(action[0]), str(action[2]),
+                            turn=turns_played + 1)
 
             if end_turn:
                 turns_played += 1
@@ -439,6 +504,15 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
         print(traceback.format_exc(), file=sys.stderr, flush=True)
     finally:
         signal.alarm(0)
+        # Knowledge gained is reported even when the match died: a wedged match
+        # that still taught us a family's effect is not a total loss, and the A/B
+        # needs the count to compare "learning" against "score".
+        try:
+            metrics.experiments_total = sum(extractor.model.experiment_attempts.values())
+            metrics.pairs_total = sum(len(v) for v in extractor.model.pairs.values())
+            metrics.experiment_families = dict(extractor.model.experiment_attempts)
+        except AttributeError:  # pragma: no cover - модель без учёта пар
+            pass
         if env is not None:
             try:
                 env.close()
@@ -512,7 +586,10 @@ def main():
     print(f"REAL tournament: {len(agents)} agents x {args.episodes} episodes x "
           f"{args.turns} turns  ({total} matches)")
     print(f"Slot mode: {mode}")
-    print(f"Per-match timeout: {args.timeout}s, retries: {args.retries}\n")
+    print(f"Curiosity bonus (probing unmeasured actions): "
+          f"{'ON' if args.curiosity else 'OFF'}")
+    print(f"Per-match timeout: {args.timeout}s (per step {STEP_TIMEOUT}s), "
+          f"retries: {args.retries}\n")
 
     started = time.time()
     done_matches = 0
@@ -533,7 +610,8 @@ def main():
                 metrics = run_match(agent, args.turns, port, args.timeout, seed,
                                     args.save_series, args.max_decisions_per_turn,
                                     args.lookahead, args.context_switch_penalty,
-                                    args.max_candidates, args.pace, args.trace)
+                                    args.max_candidates, args.pace, args.trace,
+                                    args.curiosity)
                 if not metrics.error:
                     consecutive_errors = 0
                     break
@@ -574,6 +652,8 @@ def main():
                 "turns": args.turns,
                 "timeout": args.timeout,
                 "match_timeout_s": args.timeout,
+                "step_timeout_s": STEP_TIMEOUT,
+                "curiosity": args.curiosity,
                 "lookahead": args.lookahead,
                 "context_switch_penalty": args.context_switch_penalty,
                 "max_candidates": args.max_candidates,

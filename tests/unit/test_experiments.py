@@ -17,6 +17,7 @@ from env.entity_extractor import BridgeCalibration, EntityState, SystemStateMatr
 from env.experiments import (
     PROBE_MAP,
     action_known,
+    exploration_budget,
     experiment_families,
     family_of,
     note_choice,
@@ -27,11 +28,12 @@ from env.experiments import (
 from env.world_model import CONFIDENCE_K, Provenance, WorldModel
 
 
-def a_state(*, model_values=None, conf=None, contested=None, confidence_by_key=None):
+def a_state(*, model_values=None, attempts=None, contested=None,
+            confidence_by_key=None):
     bridge = BridgeCalibration(
         model_values=model_values if model_values is not None
         else {"AXIOM4_PENALTY_OPTIONS": cfg.AXIOM4_PENALTY_OPTIONS},
-        experiment_confidence=conf or {},
+        experiment_attempts=attempts or {},
         contested_keys=contested or [],
         confidence_by_key=confidence_by_key or {},
     )
@@ -134,15 +136,33 @@ class TestUncertaintyBonus:
     def test_bonus_decays_as_the_family_is_tried(self):
         seen = []
         for attempts in (0, 1, 3, 10):
-            conf = attempts / (attempts + CONFIDENCE_K) if attempts else 0.0
-            seen.append(uncertainty_bonus("city", "buy_improvement", self.VALS, conf))
+            seen.append(uncertainty_bonus("city", "buy_improvement", self.VALS,
+                                          attempts))
         assert seen == sorted(seen, reverse=True)
         assert seen[0] == pytest.approx(cfg.AXIOM4_PENALTY_OPTIONS)
         assert seen[-1] < seen[0]
 
+    def test_curiosity_is_bounded_and_then_stops(self):
+        # Любопытство ограничено: после CONFIDENCE_K проб семейства надбавка
+        # обнуляется, иначе оно вытеснило бы полезные действия навсегда.
+        assert uncertainty_bonus("city", "buy_improvement", self.VALS, 0) > 0
+        assert uncertainty_bonus("city", "buy_improvement", self.VALS,
+                                 CONFIDENCE_K) == 0.0
+        assert uncertainty_bonus("city", "buy_improvement", self.VALS, 99) == 0.0
+        assert exploration_budget(0) == 1.0
+        assert exploration_budget(CONFIDENCE_K) == 0.0
+
     def test_family_strips_parameters_so_probes_share_a_counter(self):
         assert family_of("set_sci_lux_tax_0_40_60") == "set_sci_lux_tax"
         assert family_of("goto_120") == "goto"
+        # Живые имена с координатами: весь числовой хвост снимается, иначе каждое
+        # место работы считалось бы новым семейством и бюджет не исчерпывался.
+        assert family_of("city_work_13_-2_-1") == "city_work"
+        assert family_of("city_unwork_9_-2_0") == "city_unwork"
+        assert family_of("research_tech_Advanced Flight_2") == \
+            "research_tech_Advanced Flight"
+        assert family_of("buy_improvement") == "buy_improvement"
+        assert family_of("") == ""
 
     def test_experiment_families_lists_only_unmeasured_candidates(self):
         candidates = [
@@ -196,11 +216,35 @@ class TestMapperPaysForExperiments:
         action = CivAction(ctrl_type="city", actor_id=1, action_name="buy_improvement")
         fresh = estimate_dof_delta(action, a_state())["city_1"]
         tried = estimate_dof_delta(
-            action, a_state(conf={"buy": 1.0, "buy_improvement": 0.5}))["city_1"]
+            action, a_state(attempts={"buy_improvement": 1}))["city_1"]
         assert tried < fresh
+
+    def test_a_family_that_has_been_probed_enough_is_not_paid(self):
+        action = CivAction(ctrl_type="city", actor_id=1, action_name="buy_improvement")
+        state = a_state(attempts={"buy_improvement": CONFIDENCE_K})
+        assert estimate_dof_delta(action, state).get("city_1", 0.0) == 0.0
 
 
 class TestQuestionsPanel:
+    def test_founding_pays_the_probe_bonus_where_evidence_is_produced(self):
+        # Ветка основания выходит из estimate_dof_delta РАНЬШЕ общей обработки
+        # неизмеренного, поэтому надбавка за зонд обязана платиться прямо здесь —
+        # иначе она недостижима ровно там, где рождается свидетельство.
+        state = SystemStateMatrix(
+            entities={"unit_9": EntityState(entity_id="unit_9", entity_type="unit",
+                                            dof_count=4.0, current_dof=0.4)},
+            bridge=BridgeCalibration(
+                new_city_options=3.0,
+                new_city_options_by_unit={"unit_9": 9.0},
+                model_values={"AXIOM4_PENALTY_OPTIONS": cfg.AXIOM4_PENALTY_OPTIONS},
+                contested_keys=[{"key": "new_city_options", "reports": 4}],
+                confidence_by_key={"new_city_options": 0.0},
+            ),
+        )
+        action = CivAction(ctrl_type="unit", actor_id=9, action_name="build_city")
+        delta = estimate_dof_delta(action, state)
+        assert delta["unit_9"] == pytest.approx(5.0 + cfg.AXIOM4_PENALTY_OPTIONS)
+
     def test_panel_reports_unknowns_contested_and_attempts(self):
         model = WorldModel()
         model.record_experiment("dipl", turn=1)
@@ -240,7 +284,8 @@ class TestCityPredictionMeetsTheFact:
         obs, extractor_cls = _rich_obs(with_city=False)
         ex = extractor_cls(my_player_id=0)
         ex.extract(obs, {}, 1)
-        assert ex._city_prediction is not None and ex._city_prediction > 0
+        assert ex._city_predictions and max(ex._city_predictions.values()) > 0
+        assert ex._carrier_pos == {"unit_7": (6, 6)}   # площадку знаем чью
 
         obs_with_city, _ = _rich_obs(with_city=True)
         ex.extract(obs_with_city, {}, 2)
@@ -250,7 +295,7 @@ class TestCityPredictionMeetsTheFact:
         assert turn == 2 and predicted > 0 and observed > 0
         # Прогноз не «сгорает»: на этом же ходу он пересчитывается для СЛЕДУЮЩЕГО
         # города (носитель ещё жив), поэтому здесь он снова заполнен.
-        assert ex._city_prediction is not None
+        assert ex._city_predictions
 
     def test_no_pair_without_a_new_city(self):
         obs, extractor_cls = _rich_obs(with_city=False)

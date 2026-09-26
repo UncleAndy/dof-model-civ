@@ -56,6 +56,20 @@ class MatchMetrics:
     error: str = ""
     finished: bool = False
     include_series: bool = False
+    #: Какой выбор заклинил стенд (действие, о которое step не вернулся). Не
+    #: ошибка кода, а измерение: этот матч потерян, но знание остаётся.
+    wedge_action: Optional[dict] = None
+    #: Включена ли надбавка за незнание в этом матче (для A/B-прогона).
+    curiosity: bool = True
+    #: Прирост знания за матч: попытки-эксперименты и пары «прогноз↔факт».
+    experiments_total: int = 0
+    pairs_total: int = 0
+    #: По семействам: что именно агент пробовал. Без этого «18 проб» ничего не
+    #: говорит о том, куда ушло любопытство.
+    experiment_families: dict[str, int] = field(default_factory=dict)
+    #: Слот, на котором игрался матч. Разные слоты — разные карты, поэтому без
+    #: него A/B «с любопытством / без» нельзя сопоставить по одной и той же среде.
+    port: Optional[int] = None
 
     def _series_payload(self) -> dict[str, Any]:
         if not self.include_series:
@@ -240,6 +254,12 @@ class MatchMetrics:
             "irreversible_actions": self.irreversible_actions,
             "irreversibility_ratio": self.irreversibility_ratio,
             "error": self.error,
+            "wedge_action": self.wedge_action,
+            "curiosity": self.curiosity,
+            "experiments_total": self.experiments_total,
+            "pairs_total": self.pairs_total,
+            "experiment_families": self.experiment_families,
+            "port": self.port,
         }
         payload.update(self._series_payload())
         return payload

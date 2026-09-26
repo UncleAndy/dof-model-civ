@@ -83,6 +83,27 @@ run_inspect_bridge() {
     "$PY" scripts/inspect_bridge.py "$@"
 }
 
+# A/B по механизму экспериментов: два прогона того же агента (с надбавкой за
+# незнание и без), затем разбор по метрикам и парам слотов. Слоты вариантов не
+# совпадают (пул выдаёт свободные), поэтому сравнение идёт и по средним, и по
+# парам там, где слот попал в оба варианта — карты разные, и разброс между ними
+# больше эффекта механизма.
+run_ab_curiosity() {
+    [ -x "$PY" ] || die_no_venv
+    local agent="${AGENT:-dof_expansionist}"
+    local episodes="${EPISODES:-6}"
+    local turns="${TURNS:-30}"
+    echo "==> A/B любопытства: $agent x $episodes слотов x $turns ходов"
+    "$PY" baselines/run_real_tournament.py --only "$agent" \
+        --episodes "$episodes" --turns "$turns" --no-curiosity \
+        --output ab_curiosity_off.json || return 1
+    "$PY" baselines/run_real_tournament.py --only "$agent" \
+        --episodes "$episodes" --turns "$turns" \
+        --output ab_curiosity_on.json || return 1
+    "$PY" scripts/analyze_curiosity_ab.py \
+        --off ab_curiosity_off.json --on ab_curiosity_on.json
+}
+
 do_clean() {
     echo "==> Removing $VENV and caches..."
     rm -rf "$VENV" .pytest_cache
@@ -99,7 +120,8 @@ case "${1:-help}" in
     tournament)       shift; run_tournament "$@" ;;
     analyze)          shift; run_analyze "$@" ;;
     inspect-actions)  shift; run_inspect_actions "$@" ;;
-    inspect-bridge)   shift; run_inspect_bridge "$@" ;;
+    inspect-bridge)   shift; run_inspect_bridge "$@";;
+    ab-curiosity)     shift; run_ab_curiosity "$@";;
     clean)            do_clean ;;
     help|--help|-h)
         echo "DOF-MODEL-CIV"
@@ -115,6 +137,7 @@ case "${1:-help}" in
         echo "  analyze          analyse/plot tournament results"
         echo "  inspect-actions  dump the live action space (civrealm)"
         echo "  inspect-bridge   check which DOF candidates are executable"
+        echo "  ab-curiosity     A/B: experiments bonus on vs off, then analyse"
         echo "  clean            remove venv and caches"
         ;;
     *)
