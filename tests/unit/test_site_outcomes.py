@@ -74,6 +74,37 @@ class TestErrorMath:
         rows = [{"pred_food": 2.0, "obs_food": float(o)} for o in (1, 2, 3)]
         assert summarize(rows)["channels"]["food"]["corr"] is None
 
+    def test_gross_comparison_adds_back_the_losses(self):
+        # Модель предсказывает валовое, мир публикует чистое: если не вернуть
+        # потери, торговля будет «не сходиться» из-за коррупции, а не из-за модели.
+        rows = [{"pred_trade": 6.0, "obs_trade": 2.0, "obs_corruption": 4.0},
+                {"pred_trade": 6.0, "obs_trade": 3.0, "obs_corruption": 3.0},
+                {"pred_trade": 9.0, "obs_trade": 5.0, "obs_corruption": 4.0}]
+        stats = summarize(rows)["channels"]["trade"]
+        assert stats["n_usable"] == 3
+        assert stats["error_mean"] == pytest.approx((4 / 2 + 3 / 3 + 4 / 5) / 3)
+        assert stats["gross_n"] == 3
+        assert stats["gross_error_mean"] == pytest.approx(0.0)
+        assert stats["gross_corr"] == pytest.approx(1.0)
+        assert stats["corr"] < stats["gross_corr"]
+
+    def test_channels_without_losses_compare_to_themselves(self):
+        # У еды потерь нет: валовое и чистое совпадают, и это видно в ответе.
+        rows = [{"pred_food": 6.0, "obs_food": 4.0},
+                {"pred_food": 5.0, "obs_food": 3.0},
+                {"pred_food": 7.0, "obs_food": 5.0}]
+        stats = summarize(rows)["channels"]["food"]
+        assert stats["gross_error_mean"] == pytest.approx(stats["error_mean"])
+
+    def test_missing_losses_are_treated_as_zero_not_as_missing(self):
+        # Старые строки корпуса потерь не знали: считать их нулём честнее, чем
+        # выкидывать наблюдение.
+        rows = [{"pred_shield": 4.0, "obs_shield": 2.0},
+                {"pred_shield": 5.0, "obs_shield": 3.0},
+                {"pred_shield": 6.0, "obs_shield": 4.0}]
+        stats = summarize(rows)["channels"]["shield"]
+        assert stats["n_usable"] == 3 and stats["gross_n"] == 3
+
     def test_missing_channel_is_reported_as_no_pairs(self):
         stats = summarize([{"pred_food": 1.0, "obs_food": 1.0}])
         assert stats["channels"]["trade"]["n_usable"] == 0

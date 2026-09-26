@@ -125,9 +125,75 @@ def main() -> int:
             if ci:
                 line += f"  95% CI [{ci[0]:+.2f}, {ci[1]:+.2f}]"
             print(line)
+        if stats.get("gross_n"):
+            gross_ci = bootstrap_corr_ci(
+                [(float(r[f"pred_{channel}"]),
+                  float(r[f"obs_{channel}"]) + float(r.get(
+                      {"shield": "obs_waste", "trade": "obs_corruption"}.get(
+                          channel, ""), 0) or 0))
+                 for r in usable if r.get(f"pred_{channel}") is not None
+                 and r.get(f"obs_{channel}") is not None])
+            print(f"    БЕЗ вычета потерь (валовой факт): ошибка "
+                  f"{stats['gross_error_mean']:.3f}, корреляция "
+                  f"{stats['gross_corr']:+.2f}" if stats.get('gross_corr') is not None
+                  else "    валовое сравнение: корреляция не определена",
+                  end="")
+            if gross_ci:
+                print(f"  95% CI [{gross_ci[0]:+.2f}, {gross_ci[1]:+.2f}]")
+            else:
+                print()
 
     print()
     print("-" * 84)
+    # Модель считает ПОТЕНЦИАЛ площадки (все size+1 клеток обрабатываются лучшим
+    # образом), а мир публикует ФАКТИЧЕСКУЮ занятость: каких именно жителей куда
+    # поставил губернатор, игра не сообщает. Поэтому «ошибка уровня» — это не
+    # ошибка модели, а разница между потенциалом и занятостью, и утверждать по
+    # ней «модель врёт на 41%» нельзя. Что проверяемо строго: (1) прогноз не
+    # должен быть НИЖЕ факта (иначе это не потенциал) и (2) связь должна быть.
+    for channel in CHANNELS:
+        pairs = [(float(r[f"pred_{channel}"]), float(r[f"obs_{channel}"]))
+                 for r in usable
+                 if r.get(f"pred_{channel}") is not None and r.get(f"obs_{channel}")]
+        pairs = [(p, o) for p, o in pairs if o]
+        if not pairs:
+            continue
+        above = sum(1 for p, o in pairs if p >= o - 1e-9) / len(pairs)
+        gaps = [p - o for p, o in pairs]
+        print(f"{channel:>9}: прогноз ≥ факт в {above:.0%} случаев; "
+              f"разрыв в среднем {sum(gaps)/len(gaps):+.2f} "
+              f"(от {min(gaps):+.2f} до {max(gaps):+.2f})")
+    print("  (если прогноз почти всегда ≥ факта и разрыв узкий — модель считает "
+          "потенциал площадки, а не фактическую занятость клеток; тогда «ошибка "
+          "уровня» измеряет неверность сравнения, а не модели)")
+
+    with_mood = [r for r in usable if r.get('obs_unhappy') is not None
+                 and r.get('pred_food') is not None and r.get('obs_food')]
+    if len(with_mood) >= 5:
+        def _bias(rows_: list[dict]):
+            if not rows_:
+                return None
+            vals = [(float(r['pred_food']) - float(r['obs_food'])) / float(r['obs_food'])
+                    for r in rows_]
+            return sum(vals) / len(vals)
+
+        upset = [r for r in with_mood
+                 if (r.get('obs_unhappy') or 0) + (r.get('obs_angry') or 0) > 0]
+        calm = [r for r in with_mood
+                if (r.get('obs_unhappy') or 0) + (r.get('obs_angry') or 0) == 0]
+        b_up, b_calm = _bias(upset), _bias(calm)
+        if b_up is not None and b_calm is not None:
+            print(f"Перекос прогноза по еде: с недовольными {b_up:+.3f} "
+                  f"(n={len(upset)}), без недовольных {b_calm:+.3f} (n={len(calm)})")
+            if abs(b_up - b_calm) < 0.05:
+                print("  → гипотеза НЕ подтверждается: перекос одинаков, значит "
+                      "дело в самой модели площадки, а не в неработающих жителях")
+            elif b_up > b_calm:
+                print("  → согласуется с гипотезой: перекос сильнее там, где есть "
+                      "недовольные (модель считает работающими всех)")
+            else:
+                print("  → обратное ожиданию: перекос сильнее БЕЗ недовольных")
+    print()
     if len(usable) < MIN_N_FOR_VERDICT:
         print(f"ВЫВОД: пока нельзя. Наблюдений {len(usable)}, нужно хотя бы "
               f"{MIN_N_FOR_VERDICT}: на малом N корреляция и ошибка сами по себе "

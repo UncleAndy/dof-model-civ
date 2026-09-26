@@ -1,0 +1,548 @@
+{
+  "meta": {
+    "agents": [
+      "dof_expansionist"
+    ],
+    "episodes": 10,
+    "turns": 60,
+    "timeout": 900,
+    "match_timeout_s": 900,
+    "step_timeout_s": 20,
+    "curiosity": true,
+    "false_claim": "",
+    "lookahead": 3,
+    "context_switch_penalty": 0.5,
+    "max_candidates": 8,
+    "max_decisions_per_turn": 20,
+    "save_series": false,
+    "seed_base": null,
+    "elapsed_s": 384.4
+  },
+  "results": {
+    "dof_expansionist": [
+      {
+        "agent": "dof_expansionist",
+        "seed": null,
+        "engine": "rust-core",
+        "turns": 60,
+        "avg_dof": 0.17520364139069505,
+        "final_dof": 0.19175384615384614,
+        "avg_total_dof_index": 31.099234400066734,
+        "final_total_dof_index": 37.259800624313804,
+        "min_entities": 95,
+        "max_entities": 104,
+        "actions_issued": 14,
+        "decisions_per_turn_mean": 0.23333333333333334,
+        "skipped_turns": 50,
+        "irreversible_actions": 2,
+        "irreversibility_ratio": 0.14285714285714285,
+        "error": "",
+        "wedge_action": null,
+        "curiosity": true,
+        "experiments_total": 13,
+        "pairs_total": 2,
+        "experiment_families": {
+          "hut_enter": 1,
+          "build_city": 2,
+          "city_unwork": 3,
+          "city_work": 2,
+          "city_buy_production": 3,
+          "city_change_specialist": 1,
+          "produce_Archers": 1
+        },
+        "port": 6314,
+        "start_fingerprint": "29b4d3509899",
+        "revealed_cells": 22,
+        "start_xy": [
+          22,
+          30
+        ],
+        "empty_action_turns": 74,
+        "reconciled": {
+          "match": 16523,
+          "new": 65
+        },
+        "entity_kinds_max": {
+          "unit": 13,
+          "city": 1,
+          "tech": 87,
+          "diplomacy": 3
+        },
+        "corrected_keys": [],
+        "false_claims": [],
+        "correction_log": []
+      },
+      {
+        "agent": "dof_expansionist",
+        "seed": null,
+        "engine": "rust-core",
+        "turns": 60,
+        "avg_dof": 0.17156189656771634,
+        "final_dof": 0.1776437964108911,
+        "avg_total_dof_index": 28.961346695019348,
+        "final_total_dof_index": 31.258793193361647,
+        "min_entities": 94,
+        "max_entities": 101,
+        "actions_issued": 46,
+        "decisions_per_turn_mean": 0.7666666666666667,
+        "skipped_turns": 16,
+        "irreversible_actions": 1,
+        "irreversibility_ratio": 0.021739130434782608,
+        "error": "",
+        "wedge_action": null,
+        "curiosity": true,
+        "experiments_total": 46,
+        "pairs_total": 1,
+        "experiment_families": {
+          "build_city": 1,
+          "join_city": 1,
+          "city_unwork": 3,
+          "city_buy_production": 3,
+          "city_work": 2,
+          "city_change_specialist": 1,
+          "produce_City Walls": 18,
+          "produce_Great Wall": 14,
+          "produce_Temple": 3
+        },
+        "port": 6315,
+        "start_fingerprint": "7ddb5a9c5f7c",
+        "revealed_cells": 21,
+        "start_xy": [
+          12,
+          27
+        ],
+        "empty_action_turns": 106,
+        "reconciled": {
+          "match": 18150,
+          "new": 87
+        },
+        "entity_kinds_max": {
+          "unit": 10,
+          "city": 1,
+          "tech": 87,
+          "diplomacy": 3
+        },
+        "corrected_keys": [],
+        "false_claims": [],
+        "correction_log": []
+      },
+      {
+        "agent": "dof_expansionist",
+        "seed": null,
+        "engine": "rust-core",
+        "turns": 60,
+        "avg_dof": 0.1833988826929749,
+        "final_dof": 0.20071980198019804,
+        "avg_total_dof_index": 33.29062567119401,
+        "final_total_dof_index": 40.29723936904122,
+        "min_entities": 94,
+        "max_entities": 101,
+        "actions_issued": 60,
+        "decisions_per_turn_mean": 1.0,
+        "skipped_turns": 2,
+        "irreversible_actions": 1,
+        "irreversibility_ratio": 0.016666666666666666,
+        "error": "",
+        "wedge_action": null,
+        "curiosity": true,
+        "experiments_total": 60,
+        "pairs_total": 1,
+        "experiment_families": {
+          "build_city": 1,
+          "join_city": 1,
+          "city_work": 3,
+          "city_unwork": 3,
+          "city_buy_production": 1,
+          "city_change_specialist": 3,
+          "produce_Phalanx": 24,
+          "produce_Colossus": 13,
+          "produce_Workers": 11
+        },
+        "port": 6316,
+        "start_fingerprint": "7973b3ec492d",
+        "revealed_cells": 21,
+        "start_xy": [
+          38,
+          15
+        ],
+        "empty_action_turns": 120,
+        "reconciled": {
+          "match": 18741,
+          "new": 112
+        },
+        "entity_kinds_max": {
+          "unit": 10,
+          "city": 1,
+          "tech": 87,
+          "diplomacy": 3
+        },
+        "corrected_keys": [],
+        "false_claims": [],
+        "correction_log": []
+      },
+      {
+        "agent": "dof_expansionist",
+        "seed": null,
+        "engine": "rust-core",
+        "turns": 60,
+        "avg_dof": 0.1746315181571572,
+        "final_dof": 0.19626652644230771,
+        "avg_total_dof_index": 30.243867875612032,
+        "final_total_dof_index": 39.43012189920049,
+        "min_entities": 94,
+        "max_entities": 104,
+        "actions_issued": 13,
+        "decisions_per_turn_mean": 0.21666666666666667,
+        "skipped_turns": 50,
+        "irreversible_actions": 2,
+        "irreversibility_ratio": 0.15384615384615385,
+        "error": "",
+        "wedge_action": null,
+        "curiosity": true,
+        "experiments_total": 12,
+        "pairs_total": 2,
+        "experiment_families": {
+          "hut_enter": 1,
+          "build_city": 2,
+          "city_unwork": 3,
+          "city_buy_production": 3,
+          "city_work": 2,
+          "city_change_specialist": 1
+        },
+        "port": 6317,
+        "start_fingerprint": "f831ac6a9fa3",
+        "revealed_cells": 19,
+        "start_xy": [
+          24,
+          32
+        ],
+        "empty_action_turns": 73,
+        "reconciled": {
+          "match": 14164,
+          "new": 53
+        },
+        "entity_kinds_max": {
+          "unit": 13,
+          "tech": 87,
+          "diplomacy": 3,
+          "city": 1
+        },
+        "corrected_keys": [],
+        "false_claims": [],
+        "correction_log": []
+      },
+      {
+        "agent": "dof_expansionist",
+        "seed": null,
+        "engine": "rust-core",
+        "turns": 60,
+        "avg_dof": 0.18501793574395575,
+        "final_dof": 0.19619330000000001,
+        "avg_total_dof_index": 33.38230825899833,
+        "final_total_dof_index": 37.8596225661805,
+        "min_entities": 94,
+        "max_entities": 100,
+        "actions_issued": 54,
+        "decisions_per_turn_mean": 0.9,
+        "skipped_turns": 8,
+        "irreversible_actions": 1,
+        "irreversibility_ratio": 0.018518518518518517,
+        "error": "",
+        "wedge_action": null,
+        "curiosity": true,
+        "experiments_total": 54,
+        "pairs_total": 1,
+        "experiment_families": {
+          "build_city": 1,
+          "join_city": 1,
+          "city_work": 3,
+          "city_unwork": 3,
+          "city_buy_production": 3,
+          "city_change_specialist": 3,
+          "produce_City Walls": 13,
+          "produce_Great Wall": 3,
+          "produce_Archers": 17,
+          "produce_Phalanx": 7
+        },
+        "port": 6318,
+        "start_fingerprint": "37e3c8e7d6ca",
+        "revealed_cells": 21,
+        "start_xy": [
+          67,
+          22
+        ],
+        "empty_action_turns": 114,
+        "reconciled": {
+          "match": 17504,
+          "new": 95
+        },
+        "entity_kinds_max": {
+          "unit": 9,
+          "city": 1,
+          "tech": 87,
+          "diplomacy": 3
+        },
+        "corrected_keys": [],
+        "false_claims": [],
+        "correction_log": []
+      },
+      {
+        "agent": "dof_expansionist",
+        "seed": null,
+        "engine": "rust-core",
+        "turns": 60,
+        "avg_dof": 0.14842352887426902,
+        "final_dof": 0.14653947368421052,
+        "avg_total_dof_index": 16.0540495661046,
+        "final_total_dof_index": 13.318892058668611,
+        "min_entities": 95,
+        "max_entities": 96,
+        "actions_issued": 0,
+        "decisions_per_turn_mean": 0.0,
+        "skipped_turns": 60,
+        "irreversible_actions": 0,
+        "irreversibility_ratio": 0.0,
+        "error": "",
+        "wedge_action": null,
+        "curiosity": true,
+        "experiments_total": 0,
+        "pairs_total": 0,
+        "experiment_families": {},
+        "port": 6319,
+        "start_fingerprint": "d6e03fb05a5e",
+        "revealed_cells": 9,
+        "start_xy": [
+          76,
+          7
+        ],
+        "empty_action_turns": 60,
+        "reconciled": {
+          "match": 7574,
+          "new": 30
+        },
+        "entity_kinds_max": {
+          "unit": 6,
+          "tech": 87,
+          "diplomacy": 3
+        },
+        "corrected_keys": [],
+        "false_claims": [],
+        "correction_log": []
+      },
+      {
+        "agent": "dof_expansionist",
+        "seed": null,
+        "engine": "rust-core",
+        "turns": 60,
+        "avg_dof": 0.17487707384294524,
+        "final_dof": 0.1988377450980392,
+        "avg_total_dof_index": 30.124443103926822,
+        "final_total_dof_index": 39.21289505470746,
+        "min_entities": 94,
+        "max_entities": 102,
+        "actions_issued": 54,
+        "decisions_per_turn_mean": 0.9,
+        "skipped_turns": 8,
+        "irreversible_actions": 1,
+        "irreversibility_ratio": 0.018518518518518517,
+        "error": "",
+        "wedge_action": null,
+        "curiosity": true,
+        "experiments_total": 54,
+        "pairs_total": 1,
+        "experiment_families": {
+          "build_city": 1,
+          "join_city": 1,
+          "city_work": 3,
+          "city_unwork": 3,
+          "city_buy_production": 3,
+          "city_change_specialist": 3,
+          "produce_Temple": 1,
+          "produce_Workers": 20,
+          "produce_Granary": 10,
+          "produce_City Walls": 3,
+          "produce_Horsemen": 6
+        },
+        "port": 6320,
+        "start_fingerprint": "883c1b73c4f2",
+        "revealed_cells": 21,
+        "start_xy": [
+          56,
+          12
+        ],
+        "empty_action_turns": 114,
+        "reconciled": {
+          "match": 19440,
+          "new": 106
+        },
+        "entity_kinds_max": {
+          "unit": 11,
+          "city": 1,
+          "tech": 87,
+          "diplomacy": 3
+        },
+        "corrected_keys": [],
+        "false_claims": [],
+        "correction_log": []
+      },
+      {
+        "agent": "dof_expansionist",
+        "seed": null,
+        "engine": "rust-core",
+        "turns": 60,
+        "avg_dof": 0.16826287245397725,
+        "final_dof": 0.18298267326732676,
+        "avg_total_dof_index": 26.330467856467084,
+        "final_total_dof_index": 32.423981194937234,
+        "min_entities": 94,
+        "max_entities": 101,
+        "actions_issued": 53,
+        "decisions_per_turn_mean": 0.8833333333333333,
+        "skipped_turns": 9,
+        "irreversible_actions": 1,
+        "irreversibility_ratio": 0.018867924528301886,
+        "error": "",
+        "wedge_action": null,
+        "curiosity": true,
+        "experiments_total": 53,
+        "pairs_total": 1,
+        "experiment_families": {
+          "build_city": 1,
+          "join_city": 1,
+          "city_work": 3,
+          "city_unwork": 3,
+          "city_buy_production": 3,
+          "city_change_specialist": 3,
+          "produce_Archers": 20,
+          "produce_City Walls": 6,
+          "produce_Horsemen": 13
+        },
+        "port": 6321,
+        "start_fingerprint": "35b965dba300",
+        "revealed_cells": 21,
+        "start_xy": [
+          71,
+          29
+        ],
+        "empty_action_turns": 113,
+        "reconciled": {
+          "match": 14381,
+          "new": 105
+        },
+        "entity_kinds_max": {
+          "unit": 10,
+          "city": 1,
+          "tech": 87,
+          "diplomacy": 3
+        },
+        "corrected_keys": [],
+        "false_claims": [],
+        "correction_log": []
+      },
+      {
+        "agent": "dof_expansionist",
+        "seed": null,
+        "engine": "rust-core",
+        "turns": 60,
+        "avg_dof": 0.18217713935023447,
+        "final_dof": 0.196109475,
+        "avg_total_dof_index": 32.35130722734829,
+        "final_total_dof_index": 37.853696818866766,
+        "min_entities": 94,
+        "max_entities": 100,
+        "actions_issued": 53,
+        "decisions_per_turn_mean": 0.8833333333333333,
+        "skipped_turns": 9,
+        "irreversible_actions": 1,
+        "irreversibility_ratio": 0.018867924528301886,
+        "error": "",
+        "wedge_action": null,
+        "curiosity": true,
+        "experiments_total": 53,
+        "pairs_total": 1,
+        "experiment_families": {
+          "build_city": 1,
+          "join_city": 1,
+          "city_work": 3,
+          "city_unwork": 3,
+          "city_buy_production": 2,
+          "city_change_specialist": 3,
+          "produce_Horsemen": 17,
+          "produce_Chariot": 20,
+          "produce_Archers": 3
+        },
+        "port": 6322,
+        "start_fingerprint": "594ccc74af6f",
+        "revealed_cells": 21,
+        "start_xy": [
+          17,
+          14
+        ],
+        "empty_action_turns": 113,
+        "reconciled": {
+          "match": 16988,
+          "new": 105
+        },
+        "entity_kinds_max": {
+          "unit": 9,
+          "city": 1,
+          "tech": 87,
+          "diplomacy": 3
+        },
+        "corrected_keys": [],
+        "false_claims": [],
+        "correction_log": []
+      },
+      {
+        "agent": "dof_expansionist",
+        "seed": null,
+        "engine": "rust-core",
+        "turns": 60,
+        "avg_dof": 0.18962079319956424,
+        "final_dof": 0.21219324324324326,
+        "avg_total_dof_index": 38.64968708166875,
+        "final_total_dof_index": 50.49915463502645,
+        "min_entities": 95,
+        "max_entities": 111,
+        "actions_issued": 15,
+        "decisions_per_turn_mean": 0.25,
+        "skipped_turns": 48,
+        "irreversible_actions": 2,
+        "irreversibility_ratio": 0.13333333333333333,
+        "error": "",
+        "wedge_action": null,
+        "curiosity": true,
+        "experiments_total": 13,
+        "pairs_total": 2,
+        "experiment_families": {
+          "build_city": 2,
+          "city_unwork": 3,
+          "city_work": 3,
+          "city_buy_production": 3,
+          "city_change_specialist": 2
+        },
+        "port": 6323,
+        "start_fingerprint": "a7c0119f7229",
+        "revealed_cells": 22,
+        "start_xy": [
+          38,
+          40
+        ],
+        "empty_action_turns": 75,
+        "reconciled": {
+          "match": 19213,
+          "new": 54
+        },
+        "entity_kinds_max": {
+          "unit": 19,
+          "city": 2,
+          "tech": 87,
+          "diplomacy": 3
+        },
+        "corrected_keys": [],
+        "false_claims": [],
+        "correction_log": []
+      }
+    ]
+  }
+}
