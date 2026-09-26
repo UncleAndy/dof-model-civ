@@ -46,12 +46,22 @@ def describe(ex, obs, info, turn):
           f"цена перехода: {gains or '—'}")
     print(f"  опции площадки (берег, ресурсы, бонус): {opts or '—'}")
     print(f"  цена работ: {work or '— (не измерено)'}")
+    # Витрина вопросов: что модель не знает, с чем мир спорит и что агент пробовал.
+    from env.experiments import questions as _questions
+
+    panel = _questions(ex.model, unknowns_limit=5)
+    pairs = len(ex.model.pairs.get("new_city_options", []))
+    print(f"  вопросы: не знаем ключей {len(panel['unknown_keys'])}, "
+          f"спорных {len(panel['contested_keys'])}; "
+          f"попытки-эксперименты {panel['experiment_attempts'] or '—'}; "
+          f"пар «прогноз↔факт» города {pairs}")
     return state
 
 
-def decide(env, gen, heuristic_gen, core, state, avail, obs, info):
+def decide(env, gen, heuristic_gen, core, state, avail, obs, info, model, turn):
     """Выбрать действие ядром и сделать шаг."""
     from dof_core import CoreAction, CoreEntity
+    from env.experiments import note_choice
 
     candidates = (heuristic_gen.generate_candidates(state, avail)
                   or gen.generate_from_state(state, avail))
@@ -83,6 +93,10 @@ def decide(env, gen, heuristic_gen, core, state, avail, obs, info):
     print(f"  ВЫБОР: {ctrl} {actor} {name} "
           f"(дельта {chosen.get('projected_dof_delta')}, "
           f"обратимо {chosen.get('is_reversible')})")
+    # Считаем попытку, если действие было экспериментом: так надбавка за незнание
+    # убывает по семейству, а не платится вечно.
+    if note_choice(model, str(ctrl or ''), str(name or ''), turn=turn):
+        print(f"     эксперимент: попытка семейства {name} учтена")
     obs, _r, term, trunc, info = env.step((ctrl, actor, name))
     return obs, info
 
@@ -135,7 +149,8 @@ def main():
                 turn = info.get("turn", 1)
                 state = describe(ex, obs, info, turn)
                 obs, info = decide(env, gen, heuristic_gen, core, state,
-                                   info.get("available_actions") or {}, obs, info)
+                                   info.get("available_actions") or {}, obs, info,
+                                   ex.model, turn)
                 if info.get("turn", turn) != turn:
                     break  # ход сменился — дальше закрывать нечего
             obs, _r, term, trunc, info = env.step(None)
