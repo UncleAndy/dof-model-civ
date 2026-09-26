@@ -415,6 +415,27 @@ def _start_footprint(obs: dict) -> tuple[str, dict]:
     return digest.hexdigest()[:12], info
 
 
+def _count_actions(obs: dict) -> int:
+    """Сколько действий сервер реально предложил в этом наблюдении.
+
+    Значение `available_actions[ctrl][actor][name]` истинно, если действие
+    доступно (CivRealm удаляет невалидные). Ноль здесь — это не «агент решил
+    ничего не делать», а «действий не дали»: такую разницу надо видеть числом,
+    а не выводить из косвенных признаков.
+    """
+    avail = as_dict(obs.get('available_actions')) or {}
+    count = 0
+    for ctrl_map in avail.values():
+        for actor_map in as_dict(ctrl_map).values():
+            for value in as_dict(actor_map).values():
+                try:
+                    if bool(value):
+                        count += 1
+                except Exception:  # noqa: BLE001 - numpy-скаляр и т.п.
+                    count += 1
+    return count
+
+
 def _parse_false_claims(spec: str) -> list[tuple[str, float]]:
     """`rules.citymindist=3.0,rules.food_cost=4` → [(key, 3.0), (key, 4.0)]."""
     out: list[tuple[str, float]] = []
@@ -518,6 +539,12 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
                 remaining = max(1.0, deadline - time.time())
                 step_budget = min(STEP_TIMEOUT, remaining)
                 signal.setitimer(signal.ITIMER_REAL, step_budget)
+                if _count_actions(obs) == 0:
+                    # Not (necessarily) a defect: with no action left to offer the
+                    # loop ends the turn, and that is how a turn normally closes.
+                    # A defect is zero actions for the WHOLE match; this counter is
+                    # context for reading that, not a verdict by itself.
+                    metrics.empty_action_turns += 1
                 action = agent.act(obs, info)
                 phase, key = _turn_phase(action, used_actors, decisions_this_turn,
                                          max_decisions_per_turn)

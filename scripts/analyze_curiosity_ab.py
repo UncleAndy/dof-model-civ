@@ -58,6 +58,21 @@ def is_valid(r: dict, min_turns: int) -> bool:
             and float(r.get("min_entities") or 0) > 0)
 
 
+def is_valid_agent_match(r: dict, min_turns: int) -> bool:
+    """То же плюс проверка, что агенту вообще было чем ходить.
+
+    Матч, где агент не сделал НИ ОДНОГО действия за все 150 ходов (а стенд не
+    пожаловался), — это вырожденное наблюдение: сервер не отдал список действий.
+    Мир в таком матче угасает ровно как у no-op (замерено: 17.25 → 6.28 — та же
+    кривая), и его индекс измеряет стенд, а не агента. Для агентской выборки
+    такой матч недействителен; для no-op ноль действий — норма, поэтому проверка
+    применяется только к агентам.
+    """
+    if not is_valid(r, min_turns):
+        return False
+    return float(r.get("actions_issued") or 0) > 0
+
+
 def values(records: list[dict], key: str) -> list[float]:
     return [float(r.get(key) or 0.0) for r in records]
 
@@ -80,8 +95,8 @@ def main() -> int:
 
     off_all, off_meta = load(args.off)
     on_all, on_meta = load(args.on)
-    off = [r for r in off_all if is_valid(r, args.min_turns)]
-    on = [r for r in on_all if is_valid(r, args.min_turns)]
+    off = [r for r in off_all if is_valid_agent_match(r, args.min_turns)]
+    on = [r for r in on_all if is_valid_agent_match(r, args.min_turns)]
     noop: list[dict] = []
     if args.noop:
         noop_all, _ = load(args.noop)
@@ -103,6 +118,10 @@ def main() -> int:
                 print(f"    [несостоявшийся] слот {r.get('port')}: ходов "
                       f"{r.get('turns')}, минимум сущностей {r.get('min_entities')}"
                       " — стенд не отдал игру")
+            elif not is_valid_agent_match(r, args.min_turns):
+                print(f"    [вырожденное наблюдение] слот {r.get('port')}: ходов "
+                      f"{r.get('turns')}, действий {r.get('actions_issued')} — "
+                      "сервер не отдал действий, это стенд, а не агент")
 
     # Show, without commentary, that each match really is its own environment.
     for label, kept in (("без", off), ("с", on), ("no-op", noop)):

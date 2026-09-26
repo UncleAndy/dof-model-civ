@@ -79,6 +79,12 @@ class MatchMetrics:
     revealed_cells: int = 0
     #: Центр разведанной области (старт), если определился.
     start_xy: Optional[list] = None
+    #: Сколько итераций цикла прошло с пустым списком действий. Осторожно: это НЕ
+    #: счётчик дефектов — в здоровом матче такая итерация штатно завершает ход
+    #: (замерено: 8 пустых на 3 хода, ~2-3 на ход). Дефект — это когда действий
+    #: НЕТ ВООБЩЕ за весь матч (`actions_issued == 0`); здесь же видно
+    #: соотношение «пустых итераций к ходам», и только оно.
+    empty_action_turns: int = 0
     #: Сколько сверок модели с миром дали каждый вердикт.
     reconciled: dict[str, int] = field(default_factory=dict)
     #: Ключи, которые мир фактически исправил, — прямое свидетельство Axiom
@@ -283,6 +289,7 @@ class MatchMetrics:
             "start_fingerprint": self.start_fingerprint,
             "revealed_cells": self.revealed_cells,
             "start_xy": self.start_xy,
+            "empty_action_turns": self.empty_action_turns,
             "reconciled": self.reconciled,
             "corrected_keys": self.corrected_keys,
             "false_claims": self.false_claims,
