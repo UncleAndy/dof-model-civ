@@ -86,6 +86,11 @@ def _worker_cmd(side: str, args, slot: int, out_path: Path, username: str) -> li
     ]
     if args.trace:
         cmd.append("--trace")
+    if args.follower_take_player:
+        # Follower обязан ВЗЯТЬ свою державу: иначе он наблюдатель, ходы получает,
+        # а действий не имеет (измерено: 0 решений за 25 ходов) — и дуэль
+        # превращается в «host против наблюдателя».
+        cmd.extend(["--follower_take_player", "true"])
     if extra:
         cmd.extend(extra.split())
     return cmd
@@ -160,8 +165,20 @@ def main() -> int:
     p.add_argument("--begin-turn-timeout", type=int, default=380)
     p.add_argument("--match-timeout", type=int, default=900)
     p.add_argument("--game-timeout", type=int, default=1200, help="бюджет одной игры")
+    p.add_argument("--settle", type=float, default=45.0,
+                   help="пауза между играми: Publite2 должен успеть пересоздать игру "
+                        "на переиспользуемом слоте, иначе матч умирает на ~5-м ходу "
+                        "у обеих сторон (измерено)")
     p.add_argument("--min-turns", type=int, default=10,
                    help="игра короче этого — не данные о политике, а сбой стенда")
+    p.add_argument("--retries", type=int, default=2,
+                   help="повторы несостоявшейся игры (стенд отдал слот без игры)")
+    p.add_argument("--follower-take-player", dest="follower_take_player",
+                   action="store_true", default=True,
+                   help="follower берёт свою державу после старта (иначе он наблюдатель)")
+    p.add_argument("--no-follower-take", dest="follower_take_player",
+                   action="store_false",
+                   help="оставить follower наблюдателем (для сравнения)")
     p.add_argument("--trace", action="store_true")
     p.add_argument("--output", default="duel_results.json")
     args = p.parse_args()
@@ -176,8 +193,28 @@ def main() -> int:
     print(f"  порог вердикта (задан заранее): игр не меньше {MIRROR_MIN_GAMES}")
 
     games = []
+    game_no = 0
     for i in range(1, args.games + 1):
-        games.append(_run_game(args, i))
+        if i > 1 and args.settle:
+            # Без паузы слот не успевает пересоздать игру, и матч умирает на ~5-м
+            # ходу у обеих сторон — это дефект стенда, а не политики.
+            print(f"[пауза {args.settle:.0f} с перед игрой {i}]", flush=True)
+            time.sleep(args.settle)
+        attempts = 0
+        while True:
+            game_no += 1
+            g = _run_game(args, game_no)
+            attempts += 1
+            if (_usable(g["a"], args.min_turns) and _usable(g["b"], args.min_turns)):
+                break
+            if attempts > args.retries:
+                print(f"  игра не состоялась даже после {attempts} попыток "
+                      f"(стенд) — оставляю как отброшенную", flush=True)
+                break
+            print(f"  игра не состоялась (стенд отдал {g['slot']} без игры) — "
+                  f"повтор, попытка {attempts + 1}", flush=True)
+            time.sleep(args.settle)
+        games.append(g)
 
     good = [g for g in games if _usable(g["a"], args.min_turns) and _usable(g["b"], args.min_turns)]
     bad = [g for g in games if g not in good]
