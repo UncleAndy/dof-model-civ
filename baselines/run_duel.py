@@ -143,10 +143,21 @@ def _run_game(args, game_no: int) -> dict:
             "log_a": str(log_a), "log_b": str(log_b)}
 
 
-def _usable(rec: dict | None, min_turns: int) -> bool:
+def _usable(rec: dict | None, min_turns: int, require_active: bool = False) -> bool:
+    """Годится ли запись стороны.
+
+    `require_active` (дуэль): сторона с НУЛЁМ решений — это не «слабая политика», а
+    сломанный инструмент: follower не взял свою державу и остался наблюдателем
+    (измерено: рецидив, 1 игра из 4). Такая игра выпадает из пары, иначе она
+    раздувает интервал «разницей», которой в игре не было.
+    """
     if not rec or rec.get("error"):
         return False
-    return float(rec.get("turns") or 0) >= min_turns
+    if float(rec.get("turns") or 0) < min_turns:
+        return False
+    if require_active and float(rec.get("decisions_per_turn_mean") or 0.0) <= 0.0:
+        return False
+    return True
 
 
 def main() -> int:
@@ -171,6 +182,14 @@ def main() -> int:
                         "у обеих сторон (измерено)")
     p.add_argument("--min-turns", type=int, default=10,
                    help="игра короче этого — не данные о политике, а сбой стенда")
+    p.add_argument("--require-both-active", dest="require_both_active",
+                   action="store_true", default=True,
+                   help="игра, где сторона не сделала НИ ОДНОГО решения, — сломанный "
+                        "инструмент (follower не взял державу), не результат политики")
+    p.add_argument("--allow-passive", dest="require_both_active",
+                   action="store_false",
+                   help="не фильтровать пассивную сторону (нужно, когда бездействие — "
+                        "сама политика, напр. no-op в роли противника)")
     p.add_argument("--retries", type=int, default=2,
                    help="повторы несостоявшейся игры (стенд отдал слот без игры)")
     p.add_argument("--follower-take-player", dest="follower_take_player",
@@ -205,7 +224,8 @@ def main() -> int:
             game_no += 1
             g = _run_game(args, game_no)
             attempts += 1
-            if (_usable(g["a"], args.min_turns) and _usable(g["b"], args.min_turns)):
+            if (_usable(g["a"], args.min_turns, args.require_both_active)
+                    and _usable(g["b"], args.min_turns, args.require_both_active)):
                 break
             if attempts > args.retries:
                 print(f"  игра не состоялась даже после {attempts} попыток "
@@ -216,10 +236,18 @@ def main() -> int:
             time.sleep(args.settle)
         games.append(g)
 
-    good = [g for g in games if _usable(g["a"], args.min_turns) and _usable(g["b"], args.min_turns)]
+    good = [g for g in games
+            if _usable(g["a"], args.min_turns, args.require_both_active)
+            and _usable(g["b"], args.min_turns, args.require_both_active)]
     bad = [g for g in games if g not in good]
     if bad:
-        print(f"\n  отброшено игр (сбой стенда или короткий матч): {len(bad)} из {len(games)}")
+        passive = [g for g in bad
+                   if g["a"] and g["b"]
+                   and (_usable(g["a"], args.min_turns)
+                        and _usable(g["b"], args.min_turns))]
+        print(f"\n  отброшено игр: {len(bad)} из {len(games)}"
+              + (f" (из них {len(passive)} — сторона не сделала ни одного решения: "
+                 f"follower не взял державу)" if passive else ""))
 
     def vals(key: str, side: str) -> list[float]:
         out = []
