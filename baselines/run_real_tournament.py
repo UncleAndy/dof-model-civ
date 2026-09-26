@@ -25,6 +25,7 @@ Operational notes
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import signal
@@ -98,6 +99,11 @@ def _parse_cli(argv: list[str]) -> argparse.Namespace:
                              "actions (env.config.CURIOSITY_ENABLED). Everything "
                              "else stays identical, so a difference is the "
                              "mechanism's own effect.")
+    parser.add_argument("--false-claim", type=str, default="",
+                        help="заведомо неверное утверждение в модель перед матчем, "
+                             "KEY=VALUE[,KEY=VALUE…]; проверяет, что мир его "
+                             "исправит (Axiom «реальность первична»). Пример: "
+                             "--false-claim rules.citymindist=3.0")
     parser.add_argument("--save-series", dest="save_series", action="store_true",
                         default=False,
                         help="also persist per-step DoF/entity/action series "
@@ -116,9 +122,10 @@ from civrealm.agents import RandomAgent, BaseAgent
 
 from env import config as env_config
 from env.config import AXIOM4_PENALTY_OPTIONS, CORE_DOF_SCALE
-from env.entity_extractor import GameStateExtractor, compute_total_dof_index
+from env.entity_extractor import GameStateExtractor, as_dict, compute_total_dof_index
 from env.experiments import note_choice
 from env.wedged import record_wedged
+from env.world_model import FALSE_CLAIM_MARKER
 from brain.generator.heuristics import ALL_STRATEGIES, DEFENSIVE, HeuristicGenerator
 from metrics.tracker import MatchMetrics, agent_turns
 
@@ -352,6 +359,77 @@ def _turn_phase(action, used_actors: set, decisions_this_turn: int,
     return "act", key
 
 
+def _start_footprint(obs: dict) -> tuple[str, dict]:
+    """Отпечаток СТАРТА: где мы появились и что видно с этой точки.
+
+    Почему не «отпечаток карты». На 1-м ходу разведано 9 клеток из 4056, а
+    неразведанные помечены 255 — то есть слой террейна почти постоянный, и
+    осреднение по блокам даёт одинаковый хэш у РАЗНЫХ миров. Именно так и вышло:
+    «одинаковый отпечаток» у двух слотов оказался артефактом вырожденного
+    инструмента, а не совпадением карт.
+
+    Измерено: три прогона на ОДНОМ слоте дали три разных старта ((7,43),
+    (21,11), (42,29)). Значит, каждый матч — своя среда, и «пара по слоту» не
+    существует: сравнивать можно только распределения по многим матчам.
+    Отпечаток старта фиксирует это: по нему видно, действительно ли две выборки
+    сделаны из одного места, а не предположительно.
+
+    `DOF_DUMP_MAP` кладёт слои на диск для разбора.
+    """
+    layer_map = as_dict(obs.get('map')) or {}
+    dump = os.environ.get("DOF_DUMP_MAP", "")
+    digest = hashlib.sha1()
+    info: dict[str, Any] = {"revealed": 0, "start": None}
+    try:
+        import numpy as np
+        terrain = layer_map.get('terrain')
+        output = layer_map.get('output')
+        if output is not None:
+            arr_out = np.ascontiguousarray(output)
+            if dump:
+                np.save(f"{dump}.output.npy", arr_out)
+            # Разведано там, где выход ненулевой (у нераскрытой клетки выход 0).
+            mask = arr_out.sum(axis=2) > 0
+            ys, xs = np.nonzero(mask)
+            info["revealed"] = int(mask.sum())
+            if len(ys):
+                info["start"] = [int(round(ys.mean())), int(round(xs.mean()))]
+            digest.update(mask.tobytes())
+            digest.update(arr_out[mask].tobytes())
+        if terrain is not None:
+            arr_t = np.ascontiguousarray(terrain)
+            if dump:
+                np.save(f"{dump}.terrain.npy", arr_t)
+            digest.update(arr_t.shape.__repr__().encode())
+            if info["revealed"]:
+                digest.update(arr_t[mask].tobytes())
+    except Exception:  # noqa: BLE001 - отпечаток не стоит падения матча
+        digest.update(repr(sorted(layer_map)).encode())
+    if dump:
+        try:
+            with open(f"{dump}.fingerprint", "w") as fh:
+                json.dump({"start_footprint": digest.hexdigest()[:12], **info},
+                          fh, ensure_ascii=False)
+        except OSError:
+            pass
+    return digest.hexdigest()[:12], info
+
+
+def _parse_false_claims(spec: str) -> list[tuple[str, float]]:
+    """`rules.citymindist=3.0,rules.food_cost=4` → [(key, 3.0), (key, 4.0)]."""
+    out: list[tuple[str, float]] = []
+    for item in str(spec or "").split(","):
+        item = item.strip()
+        if not item or "=" not in item:
+            continue
+        key, _, raw = item.partition("=")
+        try:
+            out.append((key.strip(), float(raw)))
+        except ValueError:
+            print(f"  [warn] не разобрал неверное утверждение: {item}", flush=True)
+    return out
+
+
 def _record_wedge(metrics: MatchMetrics, action, turn: int) -> None:
     """Записать выбор, о который заклинило стенд, — это измерение, а не шум.
 
@@ -375,6 +453,7 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
               lookahead: int = 3, context_switch_penalty: float = 0.5,
               max_candidates: int = 8, pace: float = 0.0, trace: bool = False,
               curiosity: bool = True,
+              false_claims: list[tuple[str, float]] | None = None,
               ) -> MatchMetrics:
     """Play one game on ``port`` and return its metrics, one record per turn.
 
@@ -392,6 +471,14 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
     env_config.CURIOSITY_ENABLED = curiosity
     extractor = GameStateExtractor(my_player_id=0)
     env = None
+
+    # Deliberately wrong claims, if the caller asked for them: the point is to make
+    # the world correct something, because on live data it mostly *adds* facts
+    # rather than contradicting them — so the correction branch would never be
+    # exercised and "reality is primary" would stay an untested belief.
+    for key, value in (false_claims or []):
+        extractor.model.plant_false_claim(key, value, note="внедрено раннером")
+        metrics.false_claims.append(f"{key}={value}")
 
     signal.signal(signal.SIGALRM, _on_alarm)
     deadline = time.time() + timeout
@@ -474,6 +561,14 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
             if end_turn:
                 turns_played += 1
                 extraction = extractor.extract(obs, info, info.get("turn", turns_played))
+                if not metrics.start_fingerprint:
+                    # Captured on the first turn. Not "the map": at turn 1 only a
+                    # handful of tiles are revealed, so what identifies a match is
+                    # where we started, not a map we cannot see.
+                    (metrics.start_fingerprint,
+                     start_info) = _start_footprint(obs)
+                    metrics.revealed_cells = start_info.get("revealed", 0)
+                    metrics.start_xy = start_info.get("start")
                 entities = extraction.state.entities
                 non_collapse = [e for e in entities.values() if not e.is_collapse_source]
                 dof_index = (
@@ -511,6 +606,27 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
             metrics.experiments_total = sum(extractor.model.experiment_attempts.values())
             metrics.pairs_total = sum(len(v) for v in extractor.model.pairs.values())
             metrics.experiment_families = dict(extractor.model.experiment_attempts)
+            # Did the world correct us? Counted from the model's own log, so the
+            # answer is a number, not an impression.
+            verdicts: dict[str, int] = {}
+            corrected: list[str] = []
+            log: list[dict] = []
+            for rec in extractor.model.reconciliations:
+                # Our own injection is not a world correction: it *is* the record
+                # whose prior was the honest value and whose observed value is the
+                # lie we planted. Counting it would double the evidence.
+                if FALSE_CLAIM_MARKER in (rec.evidence or ""):
+                    continue
+                verdicts[rec.verdict] = verdicts.get(rec.verdict, 0) + 1
+                if rec.verdict == 'corrected':
+                    if rec.key not in corrected:
+                        corrected.append(rec.key)
+                    log.append({'key': rec.key, 'turn': rec.turn,
+                                'prior': rec.prior, 'observed': rec.observed,
+                                'source': getattr(rec.source, 'value', str(rec.source))})
+            metrics.reconciled = verdicts
+            metrics.corrected_keys = corrected
+            metrics.correction_log = log
         except AttributeError:  # pragma: no cover - модель без учёта пар
             pass
         if env is not None:
@@ -562,6 +678,20 @@ def _print_report(agents: list[str], results: dict[str, list[dict]]) -> None:
                 print(f"  [error] {agent}: {record['error']}")
                 break
 
+    # Reconciliation is the point of the model being alive: show what the world
+    # said about our claims, including whether it corrected anything.
+    for agent in agents:
+        for record in results[agent]:
+            verdicts = record.get("reconciled") or {}
+            if not verdicts:
+                continue
+            corrected = record.get("corrected_keys") or []
+            claims = record.get("false_claims") or []
+            if claims or corrected:
+                print(f"  [model] {agent}: сверки {verdicts}"
+                      + (f", ИСПРАВЛЕНО {corrected}" if corrected else "")
+                      + (f", внедрено неверного: {claims}" if claims else ""))
+
     print("\nOne row per agent; Turn = game turns actually played (an agent that never")
     print("hands None to env.step never advances the game — see _turn_phase).")
     print("IrrRat = irreversible / decisions; SkipTurn = turns with no decision.")
@@ -611,7 +741,8 @@ def main():
                                     args.save_series, args.max_decisions_per_turn,
                                     args.lookahead, args.context_switch_penalty,
                                     args.max_candidates, args.pace, args.trace,
-                                    args.curiosity)
+                                    args.curiosity,
+                                    _parse_false_claims(args.false_claim))
                 if not metrics.error:
                     consecutive_errors = 0
                     break
@@ -654,6 +785,7 @@ def main():
                 "match_timeout_s": args.timeout,
                 "step_timeout_s": STEP_TIMEOUT,
                 "curiosity": args.curiosity,
+                "false_claim": args.false_claim,
                 "lookahead": args.lookahead,
                 "context_switch_penalty": args.context_switch_penalty,
                 "max_candidates": args.max_candidates,

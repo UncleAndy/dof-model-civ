@@ -70,6 +70,26 @@ class MatchMetrics:
     #: Слот, на котором игрался матч. Разные слоты — разные карты, поэтому без
     #: него A/B «с любопытством / без» нельзя сопоставить по одной и той же среде.
     port: Optional[int] = None
+    #: Отпечаток старта: где мы появились и что видно с этой точки. Каждый матч —
+    #: своя среда (измерено: три прогона на одном слоте дали три разных старта),
+    #: поэтому «пара по слоту» не существует — отпечаток нужен, чтобы это видеть,
+    #: а не предполагать.
+    start_fingerprint: str = ""
+    #: Сколько клеток разведано на 1-м ходу — мера слепоты старта.
+    revealed_cells: int = 0
+    #: Центр разведанной области (старт), если определился.
+    start_xy: Optional[list] = None
+    #: Сколько сверок модели с миром дали каждый вердикт.
+    reconciled: dict[str, int] = field(default_factory=dict)
+    #: Ключи, которые мир фактически исправил, — прямое свидетельство Axiom
+    #: «реальность первична» на живых данных.
+    corrected_keys: list[str] = field(default_factory=list)
+    #: Заведомо неверные утверждения, внедрённые перед матчем (проверка коррекции).
+    false_claims: list[str] = field(default_factory=list)
+    #: Журнал исправлений: что именно мир поправил, когда и с какого значения.
+    #: Счётчик «corrected: 6» без журнала — это цифра, которой нельзя доверять:
+    #: по ней не видно, шесть разных ключей исправлено или один шесть раз.
+    correction_log: list[dict] = field(default_factory=list)
 
     def _series_payload(self) -> dict[str, Any]:
         if not self.include_series:
@@ -260,6 +280,13 @@ class MatchMetrics:
             "pairs_total": self.pairs_total,
             "experiment_families": self.experiment_families,
             "port": self.port,
+            "start_fingerprint": self.start_fingerprint,
+            "revealed_cells": self.revealed_cells,
+            "start_xy": self.start_xy,
+            "reconciled": self.reconciled,
+            "corrected_keys": self.corrected_keys,
+            "false_claims": self.false_claims,
+            "correction_log": self.correction_log,
         }
         payload.update(self._series_payload())
         return payload

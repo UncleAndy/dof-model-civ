@@ -1,25 +1,29 @@
-"""A/B: надбавка за незнание включена против выключенной.
+"""A/B: надбавка за незнание включена против выключенной — по вкладу агента.
 
-Вопрос, на который отвечает скрипт: **окупается ли любопытство**. Агент с
-надбавкой тратит ходы на пробы неизмеренных действий; агент без неё те же ходы
-тратит на известную пользу. Разница в метриках — и есть цена/выигрыш механизма.
+Две ловушки, обе найдены на живых данных, и обе определяют, как считать.
 
-Как читать результат честно:
-* слот = карта, поэтому сравнивать надо **пары по слоту** (paired): один и тот
-  же мир, разные настройки. Пары, которых не случилось (варианты играли разные
-  слоты), в paired-анализ не попадают — и скрипт говорит, сколько их;
-* при малом N (6) CI широкий, и «CI включает 0» — это «данных не хватает», а не
-  «эффекта нет». Так и написано в выводе;
-* матч, убитый клинчем, — тоже результат: он показывает цену исследования. Он
-  не выбрасывается молча, а попадает в отдельную строку.
+1. **Индекс DoF измеряет состояние мира, а мир растёт сам.** Простаивающий агент
+   (0,1 решения на ход) набирает хороший индекс, потому что экономика
+   компаундится: метрика вознаграждает бездействие. Поэтому вклад считается
+   **относительно мира без агента** (`--noop`).
+2. **«Пара по слоту» не существует.** Предполагалось, что один слот = одна карта
+   и повторный прогон на нём даёт тот же мир. Измерено обратное: три прогона на
+   одном слоте дали три разных старта — (7,43), (21,11), (42,29). Каждый матч —
+   своя среда, поэтому сравнение только по распределениям, а не по парам, и
+   `start_fingerprint` фиксирует, совпали ли старты на самом деле (обычно нет).
 
-    python scripts/analyze_curiosity_ab.py --off ab_curiosity_off.json \
-                                           --on ab_curiosity_on.json
+Что это значит для вывода: разброс между матчами (в том числе у no-op) —
+это шум среды. Если разница между вариантами меньше этого разброса, вывода нет,
+и скрипт говорит это прямо, а не выдаёт точку оценки за эффект.
+
+    python scripts/analyze_curiosity_ab.py --off off.json --on on.json \
+                                           --noop noop.json
 """
 from __future__ import annotations
 
 import argparse
 import json
+import statistics
 import sys
 from pathlib import Path
 
@@ -27,11 +31,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from metrics.stats import bootstrap_diff_ci, ci95, cohens_d, mean  # noqa: E402
 
-#: Метрики, по которым сравниваем. Знак трактуем так: «больше — лучше», кроме
-#: IrrRat, где меньше — лучше (необратимое действие тратит опции без возврата).
 METRICS = [
     ("turns", "ходов сыграно"),
-    ("avg_total_dof_index", "индекс DoF (средн.)"),
     ("irreversibility_ratio", "доля необратимых"),
     ("decisions_per_turn_mean", "решений на ход"),
     ("experiments_total", "попыток-экспериментов"),
@@ -41,64 +42,56 @@ METRICS = [
 
 def load(path: str) -> tuple[list[dict], dict]:
     payload = json.loads(Path(path).read_text())
-    results = payload.get("results", {})
     records: list[dict] = []
-    for agent_records in results.values():
+    for agent_records in payload.get("results", {}).values():
         records.extend(agent_records)
     return records, payload.get("meta", {})
 
 
-def ok(records: list[dict]) -> list[dict]:
-    """Матчи, которые доигрались: ошибки и клинчи считаем отдельно."""
-    return [r for r in records if not r.get("error")]
-
-
 def is_valid(r: dict, min_turns: int) -> bool:
-    """Годится ли матч для сравнения.
-
-    Матч, который кончился на 5-м ходу с пустым миром (`min_entities == 0`), —
-    это не «агент сыграл плохо», это стенд не отдал игру (переиспользованный
-    слот, который Publite2 не успел перезапустить). Такой матч нельзя
-    засчитывать: его низкий индекс попал бы в средние как «цена любопытства».
-    """
+    """Матч, кончившийся на 5-м ходу с пустым миром, — это стенд не отдал игру
+    (занятый или доигранный слот), а не «агент сыграл плохо». Его нельзя
+    засчитывать: низкий индекс попал бы в средние как свойство агента."""
     if r.get("error") or r.get("wedge_action"):
         return False
-    if float(r.get("turns") or 0) < min_turns:
-        return False
-    if float(r.get("min_entities") or 0) <= 0:
-        return False
-    return True
-
-
-def by_port(records: list[dict]) -> dict[int, dict]:
-    return {r["port"]: r for r in records if r.get("port") is not None}
+    return (float(r.get("turns") or 0) >= min_turns
+            and float(r.get("min_entities") or 0) > 0)
 
 
 def values(records: list[dict], key: str) -> list[float]:
     return [float(r.get(key) or 0.0) for r in records]
 
 
+def fmt(values_list: list[float]) -> str:
+    if not values_list:
+        return "—"
+    lo, hi = ci95(values_list)
+    return f"{mean(values_list):+.3f} [{lo:+.3f}, {hi:+.3f}]"
+
+
 def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--off", default="ab_curiosity_off.json")
     p.add_argument("--on", default="ab_curiosity_on.json")
-    p.add_argument("--min-turns", type=int, default=20,
-                   help="матч короче этого числа ходов считается несостоявшимся")
-    p.add_argument("--why", type=str, default="",
-                   help="подзаголовок: чем этот прогон отличается от другого")
+    p.add_argument("--noop", default="", help="прогон агента no-op (мир без агента)")
+    p.add_argument("--min-turns", type=int, default=20)
+    p.add_argument("--why", type=str, default="")
     args = p.parse_args()
 
     off_all, off_meta = load(args.off)
     on_all, on_meta = load(args.on)
     off = [r for r in off_all if is_valid(r, args.min_turns)]
     on = [r for r in on_all if is_valid(r, args.min_turns)]
+    noop: list[dict] = []
+    if args.noop:
+        noop_all, _ = load(args.noop)
+        noop = [r for r in noop_all if is_valid(r, args.min_turns)]
 
-    print("=" * 78)
+    print("=" * 88)
     print("A/B: надбавка за незнание" + (f" — {args.why}" if args.why else ""))
-    print("=" * 78)
+    print("=" * 88)
     for label, all_records, kept in (("без", off_all, off), ("с", on_all, on)):
-        print(f"  {label} любопытства: {len(all_records)} матчей, "
-              f"пригодно {len(kept)}")
+        print(f"  {label} любопытства: {len(all_records)} матчей, пригодно {len(kept)}")
         for r in all_records:
             if r.get("wedge_action"):
                 w = r["wedge_action"]
@@ -107,61 +100,81 @@ def main() -> int:
             elif r.get("error"):
                 print(f"    [ошибка] слот {r.get('port')}: {r['error']}")
             elif not is_valid(r, args.min_turns):
-                # Не прячем: несостоявшийся матч — это факт о стенде, который
-                # иначе испортил бы вывод о механизме.
                 print(f"    [несостоявшийся] слот {r.get('port')}: ходов "
                       f"{r.get('turns')}, минимум сущностей {r.get('min_entities')}"
                       " — стенд не отдал игру")
 
+    # Show, without commentary, that each match really is its own environment.
+    for label, kept in (("без", off), ("с", on), ("no-op", noop)):
+        starts = [tuple(r.get("start_xy") or ()) for r in kept if r.get("start_xy")]
+        if starts:
+            uniq = len(set(starts))
+            print(f"  старты ({label}): {uniq} различных из {len(starts)} матчей"
+                  + ("  ← совпадений нет, парность невозможна"
+                     if uniq == len(starts) and uniq > 1 else ""))
+
     print()
-    print(f"{'метрика':<26}{'без':>10}{'с':>10}{'разница':>10}{'95% CI':>20}")
-    print("-" * 78)
+    print(f"{'метрика':<26}{'без':>12}{'с':>12}{'разница':>10}{'95% CI':>22}")
+    print("-" * 88)
     for key, label in METRICS:
         a, b = values(off, key), values(on, key)
         if not a or not b:
             continue
         lo, hi, diff = bootstrap_diff_ci(b, a)
-        # With one or two matches per side the bootstrap CI collapses to a point
-        # and would scream "significant" about nothing. Say "not enough data".
         star = "  <- значимо" if (lo > 0 or hi < 0) and min(len(a), len(b)) >= 4 else ""
-        print(f"{label:<26}{mean(a):>10.3f}{mean(b):>10.3f}{diff:>10.3f}"
-              f"{f'[{lo:+.3f}, {hi:+.3f}]':>20}{star}")
-
-    # Paired by slot: the same map, so map quality cancels out. This is the only
-    # comparison that isolates the mechanism rather than the map.
-    off_by_port, on_by_port = by_port(off), by_port(on)
-    pairs = [(port, off_by_port[port], on_by_port[port])
-             for port in sorted(set(off_by_port) & set(on_by_port))]
-    print()
-    if len(pairs) < 2:
-        print(f"Пар по слоту: {len(pairs)} — для paired-анализа мало. Выводы ниже"
-              " только описательные.")
-    else:
-        print(f"Пар по слоту: {len(pairs)} (один и тот же мир, разные настройки)")
-        print(f"{'метрика':<26}{'без':>10}{'с':>10}{'Δ средн.':>10}{'95% CI Δ':>20}")
-        print("-" * 78)
-        for key, label in METRICS:
-            diffs = [float(o.get(key) or 0.0) - float(f.get(key) or 0.0)
-                     for _, f, o in pairs]
-            lo, hi = ci95(diffs)
-            star = "  <- значимо" if (lo > 0 or hi < 0) and len(diffs) >= 4 else ""
-            print(f"{label:<26}{mean([float(f.get(key) or 0.0) for _, f, _ in pairs]):>10.3f}"
-                  f"{mean([float(o.get(key) or 0.0) for _, _, o in pairs]):>10.3f}"
-                  f"{mean(diffs):>10.3f}{f'[{lo:+.3f}, {hi:+.3f}]':>20}{star}")
-        a = [float(f.get("avg_total_dof_index") or 0.0) for _, f, _ in pairs]
-        b = [float(o.get("avg_total_dof_index") or 0.0) for _, _, o in pairs]
-        print(f"\n  d Коэна по индексу DoF (paired, N={len(pairs)}): {cohens_d(b, a):+.2f}")
+        print(f"{label:<26}{mean(a):>12.3f}{mean(b):>12.3f}{diff:>10.3f}"
+              f"{f'[{lo:+.3f}, {hi:+.3f}]':>22}{star}")
 
     print()
-    print("Оговорки, которые надо держать в голове при чтении:")
-    print(" * N=6 слотов на вариант — CI широкий; «CI включает 0» значит «данных")
-    print("   мало», а не «эффекта нет».")
-    print(" * Слот = отдельная карта, поэтому и сравниваем по парам слотов.")
-    print(" * Матч, убитый клинчем, — цена исследования, а не ошибка измерения:")
-    print("   он вычтен из средних и показан отдельно.")
-    sw = off_meta.get("curiosity"), on_meta.get("curiosity")
-    print(f" * В метаданных прогонов: curiosity без = {sw[0]}, с = {sw[1]}"
-          " (должно быть False и True).")
+    print("ИНДЕКС DoF: состояние мира против вклада агента")
+    a_idx, b_idx = values(off, "avg_total_dof_index"), values(on, "avg_total_dof_index")
+    lo, hi, diff = bootstrap_diff_ci(b_idx, a_idx)
+    star = "  <- значимо" if (lo > 0 or hi < 0) and min(len(a_idx), len(b_idx)) >= 4 else ""
+    print(f"  {'без (состояние)':<26}{fmt(a_idx):>28}")
+    print(f"  {'с (состояние)':<26}{fmt(b_idx):>28}")
+    print(f"  {'разница состояний':<26}{diff:>+28.3f}  95% CI "
+          f"[{lo:+.3f}, {hi:+.3f}]{star}")
+    if len(a_idx) >= 2 and len(b_idx) >= 2:
+        print(f"  d Коэна по состоянию: {cohens_d(b_idx, a_idx):+.2f}")
+
+    if noop:
+        n_idx = values(noop, "avg_total_dof_index")
+        print()
+        print("МИР БЕЗ АГЕНТА (no-op) — планка и шум среды")
+        print(f"  индекс no-op: {fmt(n_idx)}  (матчей {len(n_idx)})")
+        if len(n_idx) >= 2:
+            print(f"  разброс среды: мин {min(n_idx):.2f}, макс {max(n_idx):.2f}, "
+                  f"σ {statistics.stdev(n_idx):.2f}")
+        base = mean(n_idx)
+        n_turns = mean(values(noop, "turns"))
+        print(f"  средняя длина no-op: {n_turns:.1f} ходов")
+        att_off = [v - base for v in a_idx]
+        att_on = [v - base for v in b_idx]
+        print(f"  вклад без надбавки: {fmt(att_off)}")
+        print(f"  вклад с надбавкой : {fmt(att_on)}")
+        lo, hi, diff = bootstrap_diff_ci(att_on, att_off)
+        star = "  <- значимо" if (lo > 0 or hi < 0) and min(len(att_on), len(att_off)) >= 4 else ""
+        print(f"  Δ вклада: {diff:+.3f}  95% CI [{lo:+.3f}, {hi:+.3f}]{star}")
+        if len(n_idx) >= 2:
+            spread = max(n_idx) - min(n_idx)
+            print(f"  ВНИМАНИЕ: разброс среды {spread:.2f}. Если |Δ вклада| меньше,"
+                  " он не отличим от того, куда нас поставили, а не от того,"
+                  " что мы делали.")
+        # With a fixed horizon (which the long run has), how much of the
+        # difference is just "no-op also reaches turn N"? Reported, not hidden.
+        print(f"  (матчи фиксированного горизонта: у no-op {min(values(noop, 'turns')):.0f}"
+              f"–{max(values(noop, 'turns')):.0f} ходов, у вариантов "
+              f"{min(values(off + on, 'turns')):.0f}–{max(values(off + on, 'turns')):.0f})")
+
+    print()
+    print("Оговорки:")
+    print(" * Каждый матч — своя среда (старты не повторяются), парности нет:")
+    print("   сравниваем распределения, а не пары.")
+    print(" * «CI включает 0» = «данных мало», а не «эффекта нет».")
+    print(" * Индекс измеряет состояние мира; решает вклад относительно no-op.")
+    print(" * Несостоявшийся матч и клинч — факты о стенде, не о механизме.")
+    print(f" * Метаданные: curiosity без = {off_meta.get('curiosity')}, "
+          f"с = {on_meta.get('curiosity')}.")
     return 0
 
 
