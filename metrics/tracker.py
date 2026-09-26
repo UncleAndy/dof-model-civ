@@ -97,6 +97,20 @@ class MatchMetrics:
     corrected_keys: list[str] = field(default_factory=list)
     #: Заведомо неверные утверждения, внедрённые перед матчем (проверка коррекции).
     false_claims: list[str] = field(default_factory=list)
+    #: СЧЁТ ИГРЫ — единственный сигнал исхода, который не зависит ни от канала
+    #: наблюдения, ни от того, сколько пакетов агент себе заработал действиями.
+    #: Мир отдаёт его приростом (`current_score - last_score`), поэтому сумма
+    #: приростов = выигрыш по счёту за матч. Пока это поле не собиралось, все
+    #: сравнения опирались на индекс DoF из `obs` и потому измеряли поведение.
+    score_cum: float = 0.0
+    #: Первый прирост: у контроллера `_last_score` стартует с нуля, поэтому первое
+    #: значение — это весь накопленный счёт, а не прирост. Держим отдельно, чтобы
+    #: считать выигрыш честно (`score_cum - score_first`).
+    score_first: Optional[float] = None
+    score_events: int = 0
+    score_max_step: float = 0.0
+    #: Ненулевые приросты с номерами ходов (их немного: счёт меняется между ходами).
+    score_series: list[dict] = field(default_factory=list)
     #: Журнал исправлений: что именно мир поправил, когда и с какого значения.
     #: Счётчик «corrected: 6» без журнала — это цифра, которой нельзя доверять:
     #: по ней не видно, шесть разных ключей исправлено или один шесть раз.
@@ -183,6 +197,33 @@ class MatchMetrics:
         )
         self.decisions.append(record)
         return record
+
+    def record_score(self, turn: int, delta: float) -> None:
+        """Записать прирост счёта игры.
+
+        Мир отдаёт счёт **приростом**: `current_score - last_score`. Поэтому
+        вызывающий обязан звать это на каждом шаге (даже когда прирост нулевой):
+        первый вызов возвращает весь накопленный счёт сразу, потому что
+        `_last_score` у контроллера стартует с нуля. Путать стартовый счёт с
+        приростом нельзя — иначе «выигрыш» будет завышен на всю начальную оценку.
+        """
+        delta = float(delta or 0.0)
+        if self.score_first is None:
+            self.score_first = delta
+        self.score_cum += delta
+        if delta:
+            self.score_events += 1
+            if abs(delta) > abs(self.score_max_step):
+                self.score_max_step = delta
+            if len(self.score_series) < 400:
+                self.score_series.append({'turn': int(turn), 'delta': delta})
+
+    @property
+    def score_gain(self) -> float:
+        """Выигрыш по счёту за матч: сумма приростов без стартового значения."""
+        if self.score_first is None:
+            return 0.0
+        return self.score_cum - self.score_first
 
     # ── aggregates ───────────────────────────────────────────────────────────
 
@@ -300,6 +341,11 @@ class MatchMetrics:
             "corrected_keys": self.corrected_keys,
             "false_claims": self.false_claims,
             "correction_log": self.correction_log,
+            "score_cum": self.score_cum,
+            "score_gain": self.score_gain,
+            "score_first": self.score_first,
+            "score_events": self.score_events,
+            "score_max_step": self.score_max_step,
         }
         payload.update(self._series_payload())
         return payload

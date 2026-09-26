@@ -567,7 +567,7 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
                     used_actors = set()
 
                 stepped = True  # from here a hang belongs to the chosen action
-                obs, _reward, terminated, truncated, info = env.step(action)
+                obs, reward, terminated, truncated, info = env.step(action)
             except MatchTimeout as exc:
                 if not stepped or step_budget < STEP_TIMEOUT - 1e-6:
                     # Either the match budget ran out, or the agent itself hung:
@@ -581,6 +581,11 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
                 signal.setitimer(signal.ITIMER_REAL, 0)
 
             done = bool(terminated or truncated)
+            # Счёт игры: серверная величина, не выведенная из наблюдения. Это
+            # единственная метрика исхода, на которой можно законно сравнивать
+            # агента с бездействующим: пакеты наблюдения у них разные, а счёт
+            # считает сервер по своим правилам для всех одинаково.
+            metrics.record_score(turns_played + 1, reward)
             # An experiment counts when the action was actually TAKEN, not when it
             # was chosen: a pick the server rejects teaches nothing, and the bonus
             # for probing must decay against real experience only.
@@ -695,7 +700,7 @@ def _print_report(agents: list[str], results: dict[str, list[dict]]) -> None:
     print("RESULTS (all agents measured through the same recorder)")
     print("=" * 88)
     print(f"{'Agent':<20}{'N':>4}{'Turns':>7}{'Index':>10}{'AvgDoF':>9}"
-          f"{'IrrRat':>8}{'Dec/turn':>9}{'SkipTurn':>9}{'Errs':>6}")
+          f"{'IrrRat':>8}{'Dec/turn':>9}{'SkipTurn':>9}{'Score↑':>9}{'Errs':>6}")
     print("-" * 88)
     for agent in agents:
         summary = agent_turns(results[agent])
@@ -704,11 +709,15 @@ def _print_report(agents: list[str], results: dict[str, list[dict]]) -> None:
             continue
         records = results[agent]
         dec_per_turn = sum(r.get("decisions_per_turn_mean", 0.0) for r in records) / len(records)
+        # «Score↑» — выигрыш по счёту игры за матч (серверная величина). Он не
+        # выведен из наблюдения, поэтому пригоден и для сравнения с no-op.
+        score = sum(r.get("score_gain", 0.0) or 0.0 for r in records) / len(records)
         print(f"{agent:<20}{summary['n']:>4}{summary['turns']:>7.1f}"
               f"{summary['avg_total_dof_index']:>10.3f}"
               f"{summary['avg_dof']:>9.3f}"
               f"{summary['irreversibility_ratio']:>8.2f}"
               f"{dec_per_turn:>9.1f}{summary['skipped_turns']:>9.1f}"
+              f"{score:>9.1f}"
               f"{summary['errors']:>6}")
 
     for agent in agents:
