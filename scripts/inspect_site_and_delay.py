@@ -81,6 +81,20 @@ def main():
                   f"({rate * 15:.2f} за 15 ходов)")
 
         print("\n=== СТОК ПО ХОДАМ (системный сток, опции) ===")
+        # Куда идти: выигрыш от перехода к лучшей площадке в пределах хода.
+        mover = ex.extract(obs, info, info.get("turn", 1)).state.bridge
+        if mover.site_move_gain_by_unit:
+            print("\n=== КУДА ИДТИ (выигрыш площадки, дисконтированный) ===")
+            for uid, gain in mover.site_move_gain_by_unit.items():
+                rep = mover.site_move_report.get(uid, {})
+                tgt = rep.get("target") or {}
+                print(f"  {uid}: сейчас {rep.get('current_value')} -> "
+                      f"в ({tgt.get('target_x')},{tgt.get('target_y')}) "
+                      f"{rep.get('best_value')}; сырой {rep.get('raw_gain')}, "
+                      f"дисконт {gain:.3f} (ход {rep.get('reach')})")
+        else:
+            print("\n=== КУДА ИДТИ: выигрыша нет (стоять не хуже) ===")
+
         for t in range(args.turns):
             turn = info.get("turn")
             result = ex.extract(obs, info, turn)
