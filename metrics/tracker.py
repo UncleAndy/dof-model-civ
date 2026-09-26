@@ -87,6 +87,11 @@ class MatchMetrics:
     empty_action_turns: int = 0
     #: Сколько сверок модели с миром дали каждый вердикт.
     reconciled: dict[str, int] = field(default_factory=dict)
+    #: Наибольший состав сущностей по видам за матч (city/unit/tech/dipl).
+    #: Нужен, чтобы видеть, ОДИНАКОВО ли агент и no-op видят мир: если у планки
+    #: наблюдение беднее, то и её индекс ниже не из-за бездействия, а из-за
+    #: наблюдения, и любой «вклад агента» — артефакт измерения.
+    entity_kinds_max: dict[str, int] = field(default_factory=dict)
     #: Ключи, которые мир фактически исправил, — прямое свидетельство Axiom
     #: «реальность первична» на живых данных.
     corrected_keys: list[str] = field(default_factory=list)
@@ -291,6 +296,7 @@ class MatchMetrics:
             "start_xy": self.start_xy,
             "empty_action_turns": self.empty_action_turns,
             "reconciled": self.reconciled,
+            "entity_kinds_max": self.entity_kinds_max,
             "corrected_keys": self.corrected_keys,
             "false_claims": self.false_claims,
             "correction_log": self.correction_log,

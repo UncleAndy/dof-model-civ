@@ -1,0 +1,154 @@
+{
+  "meta": {
+    "agents": [
+      "no-op"
+    ],
+    "episodes": 3,
+    "turns": 60,
+    "timeout": 900,
+    "match_timeout_s": 900,
+    "step_timeout_s": 20,
+    "curiosity": true,
+    "false_claim": "",
+    "lookahead": 3,
+    "context_switch_penalty": 0.5,
+    "max_candidates": 8,
+    "max_decisions_per_turn": 20,
+    "save_series": false,
+    "seed_base": null,
+    "elapsed_s": 107.0
+  },
+  "results": {
+    "no-op": [
+      {
+        "agent": "no-op",
+        "seed": null,
+        "engine": "rust-core",
+        "turns": 60,
+        "avg_dof": 0.15027631578947367,
+        "final_dof": 0.1499078947368421,
+        "avg_total_dof_index": 17.87766429978991,
+        "final_total_dof_index": 16.57776788353681,
+        "min_entities": 95,
+        "max_entities": 95,
+        "actions_issued": 0,
+        "decisions_per_turn_mean": 0.0,
+        "skipped_turns": 60,
+        "irreversible_actions": 0,
+        "irreversibility_ratio": 0.0,
+        "error": "",
+        "wedge_action": null,
+        "curiosity": true,
+        "experiments_total": 0,
+        "pairs_total": 0,
+        "experiment_families": {},
+        "port": 6330,
+        "start_fingerprint": "64a1be6783d6",
+        "revealed_cells": 9,
+        "start_xy": [
+          67,
+          39
+        ],
+        "empty_action_turns": 60,
+        "reconciled": {
+          "match": 3750,
+          "new": 30
+        },
+        "entity_kinds_max": {
+          "unit": 5,
+          "tech": 87,
+          "diplomacy": 3
+        },
+        "corrected_keys": [],
+        "false_claims": [],
+        "correction_log": []
+      },
+      {
+        "agent": "no-op",
+        "seed": null,
+        "engine": "rust-core",
+        "turns": 60,
+        "avg_dof": 0.14814298245614035,
+        "final_dof": 0.14653947368421052,
+        "avg_total_dof_index": 13.25615405515116,
+        "final_total_dof_index": 8.193114280890832,
+        "min_entities": 95,
+        "max_entities": 95,
+        "actions_issued": 0,
+        "decisions_per_turn_mean": 0.0,
+        "skipped_turns": 60,
+        "irreversible_actions": 0,
+        "irreversibility_ratio": 0.0,
+        "error": "",
+        "wedge_action": null,
+        "curiosity": true,
+        "experiments_total": 0,
+        "pairs_total": 0,
+        "experiment_families": {},
+        "port": 6331,
+        "start_fingerprint": "3405f62db94f",
+        "revealed_cells": 9,
+        "start_xy": [
+          12,
+          43
+        ],
+        "empty_action_turns": 60,
+        "reconciled": {
+          "match": 3750,
+          "new": 30
+        },
+        "entity_kinds_max": {
+          "unit": 5,
+          "tech": 87,
+          "diplomacy": 3
+        },
+        "corrected_keys": [],
+        "false_claims": [],
+        "correction_log": []
+      },
+      {
+        "agent": "no-op",
+        "seed": null,
+        "engine": "rust-core",
+        "turns": 60,
+        "avg_dof": 0.15027631578947367,
+        "final_dof": 0.1499078947368421,
+        "avg_total_dof_index": 15.43244207756769,
+        "final_total_dof_index": 11.687323439092369,
+        "min_entities": 95,
+        "max_entities": 95,
+        "actions_issued": 0,
+        "decisions_per_turn_mean": 0.0,
+        "skipped_turns": 60,
+        "irreversible_actions": 0,
+        "irreversibility_ratio": 0.0,
+        "error": "",
+        "wedge_action": null,
+        "curiosity": true,
+        "experiments_total": 0,
+        "pairs_total": 0,
+        "experiment_families": {},
+        "port": 6300,
+        "start_fingerprint": "8ec130fec1a8",
+        "revealed_cells": 9,
+        "start_xy": [
+          56,
+          5
+        ],
+        "empty_action_turns": 60,
+        "reconciled": {
+          "match": 3750,
+          "new": 30
+        },
+        "entity_kinds_max": {
+          "unit": 5,
+          "tech": 87,
+          "diplomacy": 3
+        },
+        "corrected_keys": [],
+        "false_claims": [],
+        "correction_log": []
+      }
+    ]
+  }
+}

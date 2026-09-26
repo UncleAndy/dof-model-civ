@@ -488,6 +488,9 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
     metrics = MatchMetrics(agent_name=agent_type, include_series=include_series)
     metrics.curiosity = curiosity
     metrics.port = port
+    # Метка для корпуса сверок площадок: строки должны различаться по агентам,
+    # иначе «прогноз против факта» смешает города всех вариантов в одну кучу.
+    os.environ["DOF_RUN_TAG"] = f"{agent_type}{'' if curiosity else '/no-curiosity'}"
     # The A/B switch: read at every bonus call, so it takes effect per match.
     env_config.CURIOSITY_ENABLED = curiosity
     extractor = GameStateExtractor(my_player_id=0)
@@ -597,6 +600,15 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
                     metrics.revealed_cells = start_info.get("revealed", 0)
                     metrics.start_xy = start_info.get("start")
                 entities = extraction.state.entities
+                # Состав по видам: без него «вклад агента против no-op» может
+                # оказаться разницей не в игре, а в том, что планка видела мир иначе.
+                kinds: dict[str, int] = {}
+                for entity_id in entities:
+                    kind = str(entity_id).split('_', 1)[0]
+                    kinds[kind] = kinds.get(kind, 0) + 1
+                for kind, count in kinds.items():
+                    if count > metrics.entity_kinds_max.get(kind, 0):
+                        metrics.entity_kinds_max[kind] = count
                 non_collapse = [e for e in entities.values() if not e.is_collapse_source]
                 dof_index = (
                     sum(e.current_dof for e in non_collapse) / len(non_collapse)
