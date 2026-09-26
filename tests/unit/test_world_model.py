@@ -16,6 +16,7 @@ import pytest
 
 from env.config import CITY_BASE, DOF_SCALE, UNIT_ATTACK_REF
 from env.entity_extractor import (
+    compute_total_dof_index,
     GameStateExtractor, city_options, unit_options,
 )
 from env.world_model import (
@@ -242,6 +243,98 @@ class TestExtractorReconciliation:
         assert extractor.model is not default_model()
         assert city_options({'size': 1}) == city_options({'size': 1},
                                                          model=default_model())
+
+
+class TestCarrierPressure:
+    """Two approved mechanisms that make founding *now* better than wandering.
+
+    The decay alone only shifts *when* a settler's option space is lost (in a
+    Σ ln index the end state is the same), so the accumulating sink of undeployed
+    population is what actually creates the cost of delay.
+    """
+
+    @staticmethod
+    def _settler(health: int = 20):
+        return {'unit': {'1': {
+            'type_rule_name': 'Settlers', 'health': health, 'type_hp': 20,
+            'moves_left': 1, 'max_moves': 1, 'type_move_rate': 1,
+            'type_worker': True, 'type_converted_to': 52, 'type_convert_time': 1,
+            'x': 0, 'y': 0, 'owner': 0}}}
+
+    def test_decay_is_fast_and_stops_at_the_floor(self):
+        """Approved 2026-09-26: 5%/turn, floor 0.25 — the carrying window closes
+        in 15 turns, so the first city belongs to the first handful of turns."""
+        from env.config import CARRIER_DECAY_FLOOR, CARRIER_DECAY_PER_TURN
+
+        assert CARRIER_DECAY_PER_TURN == pytest.approx(0.05)
+        assert CARRIER_DECAY_FLOOR == pytest.approx(0.25)
+
+        extractor = GameStateExtractor(my_player_id=0)
+        obs = self._settler()
+        fresh = list(extractor.extract(obs, {}, 1).state.entities.values())[0]
+        extractor.extract(obs, {}, 1)
+        at10 = list(extractor.extract(obs, {}, 11).state.entities.values())[0]
+        extractor.extract(obs, {}, 1)
+        at15 = list(extractor.extract(obs, {}, 16).state.entities.values())[0]
+        extractor.extract(obs, {}, 1)
+        at40 = list(extractor.extract(obs, {}, 41).state.entities.values())[0]
+
+        assert fresh.dof_count > at10.dof_count > at15.dof_count
+        assert at40.dof_count == pytest.approx(at15.dof_count)  # floor reached
+
+    def test_undeployed_population_accumulates_as_a_system_sink(self):
+        """The permanent cost of delay: 0.02 options per turn of carried
+        population, growing without saturation."""
+        from env.config import UNDEPLOYED_CARRIER_SINK_PER_TURN
+
+        extractor = GameStateExtractor(my_player_id=0)
+        obs = self._settler()
+        first = extractor.extract(obs, {}, 1)
+        assert first.state.dof_sink == pytest.approx(0.0)      # turn one: no delay
+
+        extractor.extract(obs, {}, 11)
+        later = extractor.extract(obs, {}, 21)
+        assert later.state.dof_sink == pytest.approx(UNDEPLOYED_CARRIER_SINK_PER_TURN * 20)
+
+    def test_sink_lowers_the_index_but_never_below_zero_entity(self):
+        extractor = GameStateExtractor(my_player_id=0)
+        obs = self._settler()
+        extractor.extract(obs, {}, 1)
+        early = extractor.extract(obs, {}, 2)
+        extractor.extract(obs, {}, 3)
+        late = extractor.extract(obs, {}, 30)
+        assert compute_total_dof_index(late.state) < compute_total_dof_index(early.state)
+
+
+class TestRulesetReconciliation:
+    """The stand describes itself in `obs['rules']`; the model must use it."""
+
+    def test_claimed_rules_are_checked_against_the_stand(self):
+        extractor = GameStateExtractor(my_player_id=0)
+        obs = {'unit': {}, 'rules': {'citymindist': 2, 'celebratesize': 3,
+                                     'angrycitizen': 1, 'food_cost': 2}}
+        extractor.extract(obs, {}, turn=1)
+        model = extractor.model
+        assert model.get('rules.citymindist') == 2.0
+        assert model.get('rules.celebratesize') == 3.0
+        verdicts = {r.key: r.verdict for r in model.reconciliations}
+        assert verdicts['rules.citymindist'] == 'match'
+        assert verdicts['rules.food_cost'] == 'match'
+        assert model.corrections() == []
+
+    def test_a_stale_claim_is_corrected_by_the_stand(self):
+        """The calibration document claimed cities must be 3 tiles apart; the
+        stand says 2. The pre-installed model can hold the stale claim, and the
+        world overwrites it (with the old value kept in the entry's history)."""
+        model = WorldModel(ruleset_priors={'rules.citymindist': 3.0})
+        extractor = GameStateExtractor(my_player_id=0, model=model)
+        extractor.extract({'unit': {}, 'rules': {'citymindist': 2}}, {}, turn=1)
+        entry = model.entries['rules.citymindist']
+        assert entry.value == 2.0
+        assert entry.revision == 1
+        assert entry.history[-1]['old'] == 3.0
+        assert model.revert('rules.citymindist') is True
+        assert entry.value == 3.0
 
 
 class TestNoHiddenConstants:
