@@ -12,6 +12,7 @@ Five canonical strategies based on historical patterns:
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -123,9 +124,14 @@ class HeuristicGenerator:
     based on historical governance patterns.
     """
 
-    def __init__(self, strategy: Optional[StrategyTemplate] = None):
+    def __init__(self, strategy: Optional[StrategyTemplate] = None,
+                 max_candidates: int = 8):
         self.strategy = strategy or DEFENSIVE
         self.action_mapper = ActionOptionGenerator()
+        # Cap on branches handed to DOF-Core per decision. The core's lookahead
+        # cost grows roughly as max_candidates ** horizon, so a deeper horizon
+        # needs a smaller shortlist.
+        self.max_candidates = max_candidates
 
     def generate_candidates(
         self,
@@ -176,35 +182,61 @@ class HeuristicGenerator:
             groups['tech'],
         )
 
-        return self._diverse_shortlist(prioritized)
+        return self._diverse_shortlist(prioritized, max_candidates=self.max_candidates)
 
     @staticmethod
+    def _action_family(action: dict) -> tuple[str, str]:
+        """(ctrl_type, action family) with parameter suffixes stripped.
+
+        `goto_0` … `goto_300` are one kind of decision; `set_sci_lux_tax_0_40_60`
+        is the family `set_sci_lux_tax`. Without this the shortlist fills with
+        hundreds of variants of a single move and the agent never sees the other
+        kinds of action available to it.
+        """
+        ctrl = action.get('ctrl_type', '')
+        name = re.sub(r'(_\d+)+$', '', action.get('action_name', ''))
+        return ctrl, name
+
+    @classmethod
     def _diverse_shortlist(
+        cls,
         ranked: list[dict],
         max_candidates: int = 8,
         top_by_gain: int = 4,
         top_reversible: int = 4,
     ) -> list[dict]:
-        """Build a shortlist that always contains reversible alternatives.
+        """Build a shortlist that spans distinct actions and keeps a safe branch.
 
         Ranking purely by projected gain produced shortlists made entirely of
         irreversible actions, which DOF-Core then vetoed (Axiom 4 penalty) —
-        leaving the agent frozen even though reversible options existed. The
-        shortlist must offer both: the best DoF-gaining branches *and* the best
-        reversible ones, so the veto has something safe to fall back to.
+        leaving the agent frozen even though reversible options existed. Ranking
+        without deduplication produced shortlists of 300 near-identical moves.
+        So: one representative per action family, best-gain kinds first, then the
+        best reversible kinds as the veto's fallback.
         """
-        picked: list[dict] = []
-        seen: set[str] = set()
+        def best_per_family(items: list[dict]) -> list[dict]:
+            families: dict[tuple[str, str], dict] = {}
+            for candidate in items:
+                key = cls._action_family(candidate)
+                current = families.get(key)
+                if current is None or (
+                        sum(candidate.get('projected_dof_delta', {}).values())
+                        > sum(current.get('projected_dof_delta', {}).values())):
+                    families[key] = candidate
+            return list(families.values())
 
-        for candidate in ranked[:top_by_gain]:
-            key = candidate.get('option_id', '')
+        picked: list[dict] = []
+        seen: set[tuple[str, str]] = set()
+
+        for candidate in best_per_family(ranked)[:top_by_gain]:
+            key = cls._action_family(candidate)
             if key not in seen:
                 seen.add(key)
                 picked.append(candidate)
 
         reversible = [c for c in ranked if c.get('is_reversible', True)]
-        for candidate in reversible[:top_reversible]:
-            key = candidate.get('option_id', '')
+        for candidate in best_per_family(reversible)[:top_reversible]:
+            key = cls._action_family(candidate)
             if key not in seen:
                 seen.add(key)
                 picked.append(candidate)

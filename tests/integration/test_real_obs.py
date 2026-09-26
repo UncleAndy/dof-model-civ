@@ -73,12 +73,13 @@ class TestRealObservationExtraction:
         assert result1.state.psi["digest"] == result2.state.psi["digest"]
 
     def test_total_dof_index_finite(self, snapshots, extractor):
-        """TotalDoF_index should be finite (not -inf or nan)."""
+        """TotalDoF_index should be finite (not -inf or nan) and positive for a
+        live game: DoF is an option COUNT, so live entities contribute ln(>1)."""
         for snap in snapshots:
             result = extractor.extract(snap["observation"], snap["info"], snap["turn"])
             index = compute_total_dof_index(result.state)
             assert math.isfinite(index)
-            assert index < 0  # all entities have DoF < 1, so ln(DoF) < 0
+            assert index > 0
 
     def test_units_extracted(self, snapshots, extractor):
         """At least one unit should be extracted (the player has units)."""

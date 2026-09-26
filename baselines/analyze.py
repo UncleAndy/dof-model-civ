@@ -63,6 +63,8 @@ def main() -> int:
     print("within-scenario replication only — not variation across environments.")
     if meta:
         print(f"episodes/agent={meta.get('episodes')}  turns/match={meta.get('turns')}  "
+              f"lookahead={meta.get('lookahead', '?')}  "
+              f"max_candidates={meta.get('max_candidates', '?')}  "
               f"elapsed={meta.get('elapsed_s', 0) / 60:.1f} min")
     print()
     print(f"{'Agent':<20}{'N':>4}{'Index':>10}{'95% CI':>22}"

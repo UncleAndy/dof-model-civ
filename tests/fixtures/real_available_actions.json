@@ -25,41 +25,41 @@
     }
   },
   "unit": {
-    "102": {
+    "104": {
       "plant": true,
+      "irrigation": true,
       "keep_activity": true,
       "build_city": true,
       "build_road": true,
       "goto_0": true,
       "goto_1": true,
-      "goto_2": true,
       "goto_3": true,
       "transform_terrain": false,
       "mine": false,
       "cultivate": false,
       "fortress": false,
       "airbase": false,
-      "irrigation": false,
       "paradrop": false,
-      "join_city": false
+      "join_city": false,
+      "fortify": false
     },
-    "109": {
+    "117": {
       "plant": true,
+      "irrigation": true,
       "keep_activity": true,
       "build_city": true,
       "build_road": true,
       "goto_0": true,
       "goto_1": true,
-      "goto_2": true,
       "goto_3": true,
       "transform_terrain": false,
       "mine": false,
       "cultivate": false,
       "fortress": false,
       "airbase": false,
-      "irrigation": false,
       "paradrop": false,
-      "join_city": false
+      "join_city": false,
+      "fortify": false
     }
   },
   "dipl": {

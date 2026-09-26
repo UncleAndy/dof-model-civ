@@ -57,12 +57,25 @@ def _parse_cli(argv: list[str]) -> argparse.Namespace:
                         help="pick a free slot via civrealm Ports.get() (default)")
     parser.add_argument("--no-auto-port", dest="auto_port", action="store_false",
                         help="use --port + episode index instead")
-    parser.add_argument("--port-wait", type=int, default=120,
+    parser.add_argument("--port-wait", type=int, default=180,
                         help="seconds to wait for a free slot before falling back")
     parser.add_argument("--retries", type=int, default=2,
                         help="extra attempts per match when the server stalls")
-    parser.add_argument("--settle", type=float, default=2.0,
-                        help="seconds to wait between matches")
+    parser.add_argument("--settle", type=float, default=10.0,
+                        help="seconds between matches (gives Publite2 time to "
+                             "restart a recycled slot before it is reused)")
+    parser.add_argument("--max-decisions-per-turn", type=int, default=20,
+                        help="cap decisions issued inside one turn before the turn "
+                             "is ended explicitly")
+    parser.add_argument("--lookahead", type=int, default=3,
+                        help="DOF-Core lookahead horizon in turns (core default 3). "
+                             "Cost grows ~ candidates**horizon, so raise it together "
+                             "with a smaller --max-candidates.")
+    parser.add_argument("--context-switch-penalty", type=float, default=0.5,
+                        help="DOF-Core penalty charged to irreversible actions "
+                             "(Axiom 4); core default 0.5")
+    parser.add_argument("--max-candidates", type=int, default=8,
+                        help="max branches handed to DOF-Core per decision")
     parser.add_argument("--seed-base", type=int, default=None,
                         help="if set, episode i calls env.reset(seed=seed_base+i). "
                              "NOTE: observed ineffective on the standard stand -- "
@@ -127,12 +140,18 @@ class NoOpAgent(BaseAgent):
         return None
 
 
-def allocate_port(wait: int = 120):
+def allocate_port(wait: int = 120, bad_slots: set | None = None):
     """Ask civrealm for a free slot, or None if none appears in ``wait`` seconds.
 
     ``Ports.get()`` loops forever when no slot is free, so it is alarm-guarded.
     Slots are recycled by Publite2 after a game ends, so waiting is normal in a
     long run.
+
+    ``bad_slots`` are ports that already failed a match in this process. CivRealm
+    releases a slot when it has been idle for 30s even if its game never actually
+    restarted, and such a slot hangs (`BeginTurnTimeout`); re-drawing it wastes a
+    full match timeout, so failed slots are skipped. Drawing again is safe because
+    ``Ports.get()`` marks the slot it just handed out as occupied.
     """
     try:
         from civrealm.freeciv.utils.port_utils import Ports
@@ -142,10 +161,15 @@ def allocate_port(wait: int = 120):
     def _alarm(signum, frame):
         raise MatchTimeout("no free slot")
 
+    bad = bad_slots or set()
     previous = signal.signal(signal.SIGALRM, _alarm)
     signal.alarm(max(1, wait))
     try:
-        return Ports.get()
+        for _ in range(8):
+            port = Ports.get()
+            if port not in bad:
+                return port
+        return None
     except (MatchTimeout, Exception):  # noqa: BLE001
         return None
     finally:
@@ -194,8 +218,15 @@ def _core_actions(candidates: list[dict]) -> list:
     ]
 
 
-def build_agent(agent_type: str, extractor: GameStateExtractor):
-    """Create the agent for a given agent_type."""
+def build_agent(agent_type: str, extractor: GameStateExtractor,
+                lookahead: int = 3, context_switch_penalty: float = 0.5,
+                max_candidates: int = 8):
+    """Create the agent for a given agent_type.
+
+    ``lookahead`` / ``context_switch_penalty`` configure the DOF-Core engine;
+    ``max_candidates`` caps how many branches each decision is evaluated over
+    (the core's lookahead cost grows roughly as ``candidates ** horizon``).
+    """
     if agent_type == "no-op":
         return NoOpAgent()
     if agent_type == "random":
@@ -207,7 +238,12 @@ def build_agent(agent_type: str, extractor: GameStateExtractor):
             (s for s in ALL_STRATEGIES if s.name == strategy_name), DEFENSIVE
         )
         gen = HeuristicGenerator(strategy=strategy)
-        core = DOFCalculusCore() if HAVE_DOF_CORE else None
+        gen.max_candidates = max_candidates
+        core = (
+            DOFCalculusCore(lookahead_horizon=lookahead,
+                            context_switch_penalty=context_switch_penalty)
+            if HAVE_DOF_CORE else None
+        )
 
         class DofAgent(BaseAgent):
             def act(self, obs, info):
@@ -238,10 +274,43 @@ def build_agent(agent_type: str, extractor: GameStateExtractor):
     return RandomAgent()
 
 
+def _turn_phase(action, used_actors: set, decisions_this_turn: int,
+                max_decisions: int) -> tuple[str, tuple | None]:
+    """Decide whether to act or to end the turn.
+
+    CivRealm ends a turn **only** when the action handed to ``env.step`` is
+    ``None`` (``civ_controller.perform_action``); a real action never advances
+    the turn. Without this bookkeeping an agent that always finds something to do
+    plays the whole match inside turn 1 and the AI opponents never move — which
+    made a no-op baseline look like the strongest strategy.
+
+    Returns ``("act", key)`` or ``("end_turn", None)``.
+    """
+    if action is None:
+        return "end_turn", None
+    if decisions_this_turn >= max_decisions:
+        return "end_turn", None
+
+    key = (action[0], action[1])
+    if key in used_actors:
+        # One decision per actor per turn (civrealm's own convention): without
+        # this, a reversible action with a positive-looking projection is
+        # repeated forever inside a single turn.
+        return "end_turn", None
+    return "act", key
+
+
 def run_match(agent_type: str, turns: int = 30, port: int = 6001,
               timeout: int = 240, seed: int | None = None,
-              include_series: bool = False) -> MatchMetrics:
-    """Play one game on ``port`` and return its metrics.
+              include_series: bool = False, max_decisions_per_turn: int = 20,
+              lookahead: int = 3, context_switch_penalty: float = 0.5,
+              max_candidates: int = 8,
+              ) -> MatchMetrics:
+    """Play one game on ``port`` and return its metrics, one record per turn.
+
+    ``turns`` counts *game turns*, not decisions: within a turn the agent may
+    issue several decisions (one per actor), then the turn is ended explicitly by
+    stepping ``None``.
 
     ``seed`` is handed to ``env.reset`` which sets the Freeciv map/game/agent
     seeds, so distinct seeds produce distinct scenarios.
@@ -253,7 +322,8 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
     signal.signal(signal.SIGALRM, _on_alarm)
     signal.alarm(timeout)
     try:
-        agent = build_agent(agent_type, extractor)
+        agent = build_agent(agent_type, extractor, lookahead,
+                           context_switch_penalty, max_candidates)
 
         fc_args["client_port"] = port
         env = gymnasium.make("civrealm/FreecivBase-v0")
@@ -261,31 +331,50 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
         metrics.seed = seed
         metrics.engine = "rust-core" if HAVE_DOF_CORE else "python"
 
-        step = 0
+        turns_played = 0
+        decisions_this_turn = 0
+        used_actors: set = set()
         done = False
-        while not done and step < turns:
-            action = agent.act(obs, info)
 
-            extraction = extractor.extract(obs, info, info.get("turn", step))
-            entities = extraction.state.entities
-            non_collapse = [e for e in entities.values() if not e.is_collapse_source]
-            dof_index = (
-                sum(e.current_dof for e in non_collapse) / len(non_collapse)
-                if non_collapse else 0.0
-            )
-            metrics.record_step(
-                info.get("turn", step),
-                dof_index,
-                len(entities),
-                action,
-                compute_total_dof_index(extraction.state),
-            )
+        while not done and turns_played < turns:
+            action = agent.act(obs, info)
+            phase, key = _turn_phase(action, used_actors, decisions_this_turn,
+                                     max_decisions_per_turn)
+
+            if phase == "act":
+                used_actors.add(key)
+                decisions_this_turn += 1
+                end_turn = False
+                metrics.record_decision(turns_played + 1, action)
+            else:
+                end_turn = True
+                action = None  # stepping None is what ends the turn
+                decisions_this_turn = 0
+                used_actors = set()
 
             obs, _reward, terminated, truncated, info = env.step(action)
             done = bool(terminated or truncated)
-            step += 1
-            if step % 10 == 0:
-                print(f" [{step}/{turns}]", end="", flush=True)
+
+            if end_turn:
+                turns_played += 1
+                extraction = extractor.extract(obs, info, info.get("turn", turns_played))
+                entities = extraction.state.entities
+                non_collapse = [e for e in entities.values() if not e.is_collapse_source]
+                dof_index = (
+                    sum(e.current_dof for e in non_collapse) / len(non_collapse)
+                    if non_collapse else 0.0
+                )
+                # One record per turn; the "action" is the end-turn marker, and the
+                # per-decision reversibility accounting is kept in decisions_*.
+                metrics.record_step(
+                    turns_played,
+                    dof_index,
+                    len(entities),
+                    None,
+                    compute_total_dof_index(extraction.state),
+                )
+                if turns_played % 10 == 0:
+                    print(f" [turn {turns_played}/{turns}]", end="", flush=True)
 
         metrics.finished = True
     except MatchTimeout as exc:
@@ -321,18 +410,20 @@ def _print_report(agents: list[str], results: dict[str, list[dict]]) -> None:
     print("RESULTS (all agents measured through the same recorder)")
     print("=" * 88)
     print(f"{'Agent':<20}{'N':>4}{'Turns':>7}{'Index':>10}{'AvgDoF':>9}"
-          f"{'IrrRat':>8}{'Issued':>8}{'Skipped':>9}{'Errs':>6}")
+          f"{'IrrRat':>8}{'Dec/turn':>9}{'SkipTurn':>9}{'Errs':>6}")
     print("-" * 88)
     for agent in agents:
         summary = agent_turns(results[agent])
         if summary["n"] == 0:
             print(f"{agent:<20}{0:>4}")
             continue
+        records = results[agent]
+        dec_per_turn = sum(r.get("decisions_per_turn_mean", 0.0) for r in records) / len(records)
         print(f"{agent:<20}{summary['n']:>4}{summary['turns']:>7.1f}"
               f"{summary['avg_total_dof_index']:>10.3f}"
               f"{summary['avg_dof']:>9.3f}"
               f"{summary['irreversibility_ratio']:>8.2f}"
-              f"{summary['actions_issued']:>8.1f}{summary['skipped_turns']:>9.1f}"
+              f"{dec_per_turn:>9.1f}{summary['skipped_turns']:>9.1f}"
               f"{summary['errors']:>6}")
 
     for agent in agents:
@@ -341,7 +432,9 @@ def _print_report(agents: list[str], results: dict[str, list[dict]]) -> None:
                 print(f"  [error] {agent}: {record['error']}")
                 break
 
-    print("\nIrrRat = irreversible / issued actions (skipped turns excluded).")
+    print("\nOne row per agent; Turn = game turns actually played (an agent that never")
+    print("hands None to env.step never advances the game — see _turn_phase).")
+    print("IrrRat = irreversible / decisions; SkipTurn = turns with no decision.")
     print("For N and confidence intervals run: bash do.sh analyze")
 
 
@@ -368,6 +461,8 @@ def main():
     started = time.time()
     done_matches = 0
 
+    bad_slots: set = set()
+    consecutive_errors = 0
     for agent in agents:
         print(f"  {agent:<20}", end="", flush=True)
         for ep in range(args.episodes):
@@ -376,13 +471,28 @@ def main():
             port = None
             for _attempt in range(args.retries + 1):
                 if args.auto_port:
-                    port = allocate_port(args.port_wait)
+                    port = allocate_port(args.port_wait, bad_slots)
                 if port is None:
                     port = args.port + (ep % max(1, MAX_PORT - MIN_PORT + 1))
                 metrics = run_match(agent, args.turns, port, args.timeout, seed,
-                                    args.save_series)
+                                    args.save_series, args.max_decisions_per_turn,
+                                    args.lookahead, args.context_switch_penalty,
+                                    args.max_candidates)
                 if not metrics.error:
+                    consecutive_errors = 0
                     break
+                bad_slots.add(port)
+                consecutive_errors += 1
+                # If many slots in a row die, reset the pool so Publite2
+                # can recycle them (BeginTurnTimeout / stale slots).
+                if consecutive_errors >= 3:
+                    try:
+                        from civrealm.freeciv.utils.port_utils import Ports
+                        Ports.clear()
+                        consecutive_errors = 0
+                    except Exception:  # noqa: BLE001
+                        pass
+                metrics.error = f"{metrics.error} [slot {port}]"
                 time.sleep(args.settle)
 
             results[agent].append(metrics.to_dict())
@@ -408,6 +518,10 @@ def main():
                 "turns": args.turns,
                 "timeout": args.timeout,
                 "match_timeout_s": args.timeout,
+                "lookahead": args.lookahead,
+                "context_switch_penalty": args.context_switch_penalty,
+                "max_candidates": args.max_candidates,
+                "max_decisions_per_turn": args.max_decisions_per_turn,
                 "save_series": args.save_series,
                 "seed_base": args.seed_base,
                 "elapsed_s": round(time.time() - started, 1),

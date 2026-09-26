@@ -98,12 +98,33 @@ class TestMatchMetrics:
 
         m.include_series = True
         payload = m.to_dict()
+        # per-turn series
         assert payload["dof_series"] == [0.5, 0.6]
         assert payload["entity_series"] == [10, 11]
         assert payload["turns_series"] == [1, 2]
-        assert payload["reversible_series"] == [True, None]
-        assert payload["actions"][0] == ["unit", 1, "fortify"]
-        assert payload["actions"][1] is None
+        assert payload["decisions_per_turn"] == [1, 0]
+        # per-decision series
+        assert payload["decisions"] == [["unit", 1, "fortify"]]
+        assert payload["decision_turns"] == [1]
+        assert payload["reversible_series"] == [True]
+
+    def test_decisions_are_counted_separately_from_turns(self):
+        """A turn may contain several decisions; a no-op turn contains none."""
+        m = MatchMetrics()
+        m.record_step(1, 0.5, 10, None)              # turn 1: no decision
+        m.record_step(2, 0.6, 10, None)
+        m.record_decision(2, ("unit", 1, "goto_0"))
+        m.record_decision(2, ("unit", 2, "fortify"))
+        m.record_decision(2, ("unit", 3, "disband"))
+        m.record_step(3, 0.7, 10, None)
+
+        assert m.turns_played == 3
+        assert m.actions_issued == 3
+        assert m.irreversible_actions == 1
+        assert m.irreversibility_ratio == pytest.approx(1 / 3)
+        assert m.decisions_per_turn == [0, 3, 0]
+        # skipped_turns counts turns with no decision at all
+        assert m.skipped_turns == 2
 
 
 class TestAgentTurns:

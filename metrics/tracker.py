@@ -37,12 +37,22 @@ class StepRecord:
 
 @dataclass
 class MatchMetrics:
-    """Accumulates the per-step records of a single match."""
+    """Accumulates per-turn records and per-decision accounting of one match.
+
+    Two levels are kept deliberately separate:
+
+    * ``steps`` — one record per **game turn** (DoF index, entity count). This is
+      the unit of comparison between agents.
+    * ``decisions`` — one record per action actually handed to ``env.step``.
+      Reversibility lives here, because a turn may contain several decisions and
+      a no-op turn contains none.
+    """
 
     agent_name: str = ""
     seed: Optional[int] = None
     engine: str = ""
     steps: list[StepRecord] = field(default_factory=list)
+    decisions: list[StepRecord] = field(default_factory=list)
     error: str = ""
     finished: bool = False
     include_series: bool = False
@@ -55,11 +65,13 @@ class MatchMetrics:
             "dof_series": self.dof_series,
             "total_dof_series": self.total_dof_series,
             "entity_series": self.entity_series,
-            "actions": [
-                None if s.action is None else [s.action[0], s.action[1], s.action[2]]
-                for s in self.steps
+            "decisions_per_turn": self.decisions_per_turn,
+            "decisions": [
+                None if d.action is None else [d.action[0], d.action[1], d.action[2]]
+                for d in self.decisions
             ],
-            "reversible_series": [s.is_reversible for s in self.steps],
+            "decision_turns": [d.turn for d in self.decisions],
+            "reversible_series": [d.is_reversible for d in self.decisions],
         }
 
     # ── recording ────────────────────────────────────────────────────────────
@@ -105,6 +117,26 @@ class MatchMetrics:
             )
 
         self.steps.append(record)
+        if action is not None:
+            self.record_decision(turn, action)
+        return record
+
+    def record_decision(
+        self,
+        turn: int,
+        action: tuple[str, Any, str],
+    ) -> StepRecord:
+        """Record one action actually handed to the environment."""
+        action_name = action[2] if len(action) > 2 else ""
+        record = StepRecord(
+            turn=turn,
+            dof_index=0.0,
+            entity_count=0,
+            action=action,
+            is_reversible=classify_reversibility(action_name),
+            skipped=False,
+        )
+        self.decisions.append(record)
         return record
 
     # ── aggregates ───────────────────────────────────────────────────────────
@@ -115,15 +147,24 @@ class MatchMetrics:
 
     @property
     def actions_issued(self) -> int:
-        return sum(1 for s in self.steps if not s.skipped)
+        return len(self.decisions)
 
     @property
     def skipped_turns(self) -> int:
-        return sum(1 for s in self.steps if s.skipped)
+        """Turns in which the agent issued no decision at all."""
+        acted_turns = {d.turn for d in self.decisions}
+        return sum(1 for s in self.steps if s.turn not in acted_turns)
+
+    @property
+    def decisions_per_turn(self) -> list[int]:
+        counts: dict[int, int] = {}
+        for d in self.decisions:
+            counts[d.turn] = counts.get(d.turn, 0) + 1
+        return [counts.get(s.turn, 0) for s in self.steps]
 
     @property
     def irreversible_actions(self) -> int:
-        return sum(1 for s in self.steps if s.is_reversible is False)
+        return sum(1 for d in self.decisions if d.is_reversible is False)
 
     @property
     def irreversibility_ratio(self) -> float:
@@ -191,6 +232,10 @@ class MatchMetrics:
             "min_entities": self.min_ent,
             "max_entities": self.max_ent,
             "actions_issued": self.actions_issued,
+            "decisions_per_turn_mean": (
+                sum(self.decisions_per_turn) / len(self.decisions_per_turn)
+                if self.decisions_per_turn else 0.0
+            ),
             "skipped_turns": self.skipped_turns,
             "irreversible_actions": self.irreversible_actions,
             "irreversibility_ratio": self.irreversibility_ratio,

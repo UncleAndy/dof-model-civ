@@ -1,0 +1,61 @@
+{
+  "meta": {
+    "agents": [
+      "dof_expansionist",
+      "random"
+    ],
+    "episodes": 1,
+    "turns": 12,
+    "timeout": 300,
+    "match_timeout_s": 300,
+    "lookahead": 3,
+    "context_switch_penalty": 0.5,
+    "max_candidates": 8,
+    "max_decisions_per_turn": 20,
+    "save_series": false,
+    "seed_base": null,
+    "elapsed_s": 56.7
+  },
+  "results": {
+    "dof_expansionist": [
+      {
+        "agent": "dof_expansionist",
+        "seed": null,
+        "engine": "rust-core",
+        "turns": 12,
+        "avg_dof": 0.11935000000000001,
+        "final_dof": 0.11894473684210528,
+        "avg_total_dof_index": 10.00979255694343,
+        "final_total_dof_index": 9.918388531940609,
+        "min_entities": 95,
+        "max_entities": 95,
+        "actions_issued": 15,
+        "decisions_per_turn_mean": 1.25,
+        "skipped_turns": 0,
+        "irreversible_actions": 0,
+        "irreversibility_ratio": 0.0,
+        "error": ""
+      }
+    ],
+    "random": [
+      {
+        "agent": "random",
+        "seed": null,
+        "engine": "rust-core",
+        "turns": 12,
+        "avg_dof": 0.12543851387394594,
+        "final_dof": 0.12964103498542276,
+        "avg_total_dof_index": 12.433344815477883,
+        "final_total_dof_index": 14.491727530111413,
+        "min_entities": 95,
+        "max_entities": 98,
+        "actions_issued": 56,
+        "decisions_per_turn_mean": 4.666666666666667,
+        "skipped_turns": 0,
+        "irreversible_actions": 2,
+        "irreversibility_ratio": 0.03571428571428571,
+        "error": ""
+      }
+    ]
+  }
+}

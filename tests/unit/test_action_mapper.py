@@ -82,11 +82,14 @@ class TestDofDelta:
             },
         )
 
-    def test_build_city_positive_delta(self, sample_state):
+    def test_build_city_delta_is_measured_negative(self, sample_state):
+        """Founding a city exchanges a flexible Settler for a less flexible
+        size-1 city: measured Δindex = -0.3228 on a live game, not the +0.30 the
+        bridge used to guess."""
         action = CivAction(ctrl_type='unit', actor_id='103', action_name='build_city')
         delta = estimate_dof_delta(action, sample_state)
         assert 'unit_103' in delta
-        assert delta['unit_103'] > 0  # creating settlement increases DoF
+        assert delta['unit_103'] < 0  # measured trade of flexibility
 
     def test_attack_negative_delta(self, sample_state):
         action = CivAction(ctrl_type='unit', actor_id='103', action_name='attack')
@@ -94,12 +97,18 @@ class TestDofDelta:
         assert 'unit_103' in delta
         assert delta['unit_103'] < 0  # risk of loss decreases DoF
 
-    def test_goto_small_positive_delta(self, sample_state):
+    def test_goto_is_measured_neutral(self, sample_state):
+        """`goto` was guessed at +0.01; measured on a live game it changes
+        nothing in the index (Δindex = 0.0000)."""
         action = CivAction(ctrl_type='unit', actor_id='103', action_name='goto_3')
         delta = estimate_dof_delta(action, sample_state)
         assert 'unit_103' in delta
-        assert delta['unit_103'] > 0
-        assert delta['unit_103'] < 0.1  # small effect
+        assert delta['unit_103'] == pytest.approx(0.0)
+
+    def test_fortify_is_measured_neutral(self, sample_state):
+        action = CivAction(ctrl_type='unit', actor_id='103', action_name='fortify')
+        delta = estimate_dof_delta(action, sample_state)
+        assert delta['unit_103'] == pytest.approx(0.0)
 
     def test_city_build_unit_positive_delta(self, sample_state):
         action = CivAction(ctrl_type='city', actor_id='1', action_name='build_unit')
@@ -270,11 +279,29 @@ class TestHeuristicGenerator:
         if fortify_idx >= 0 and attack_idx >= 0:
             assert fortify_idx < attack_idx
 
-    def test_expansionist_prioritizes_build_city(self, sample_state, sample_available):
+    def test_dominated_branch_is_excluded_from_shortlist(self, sample_state, sample_available):
+        """Founding (measured -0.32) is dominated by better branches, so it is
+        not offered; offering a dominated branch would only waste a slot."""
         gen = HeuristicGenerator(strategy=EXPANSIONIST)
         candidates = gen.generate_candidates(sample_state, sample_available)
         assert len(candidates) > 0
-        assert any('build_city' in c['option_id'] for c in candidates[:3])
+        gains = [sum(c['projected_dof_delta'].values()) for c in candidates]
+        assert min(gains) > -0.3228, (
+            "a worse-than-founding branch was shortlisted while founding was not")
+
+    def test_founding_is_shortlisted_when_it_is_best_available(self, sample_state):
+        """With only founding and a neutral move available, both kinds must appear
+        so DOF-Core can weigh (and veto) the founding branch itself."""
+        state = SystemStateMatrix(entities={
+            'unit_103': EntityState(entity_id='unit_103', current_dof=0.6),
+        })
+        avail = {'unit': {'103': {'build_city': True, 'goto_0': True}}}
+        candidates = HeuristicGenerator(strategy=EXPANSIONIST).generate_candidates(
+            state, avail)
+        names = {c['action_name'] for c in candidates}
+        assert names == {'build_city', 'goto_0'}
+        founding = next(c for c in candidates if c['action_name'] == 'build_city')
+        assert founding['projected_dof_delta']['unit_103'] < 0
 
     def test_economic_prioritizes_trade(self, sample_state):
         available = {
@@ -531,17 +558,22 @@ class TestRealVocabularyHeuristics:
         assert names.index("fortify") < names.index("attack_15")
 
     def test_expansionist_prefers_city_founding(self, state):
-        """Founding outranks non-preferred rivals.
+        """Founding is a distinct branch, ranked by measured DoF cost.
 
-        NB: a reversible action with the same strategy score wins on the
-        reversibility tie-break (Axiom 4), so the rival here is a
-        non-preferred irreversible one.
+        Both branches are DoF-negative; the measured founding (-0.32) is worse
+        than the estimated attack (-0.1), so attack ranks first. What matters is
+        that DOF-Core *sees* the founding branch and can veto it — the previous
+        bridge hid this by claiming +0.30.
         """
         avail = {
             "unit": {102: {"found_city": True, "attack_15": True}},
         }
         cands = HeuristicGenerator(strategy=EXPANSIONIST).generate_candidates(state, avail)
-        assert cands[0]["action_name"] == "found_city"
+        names = [c["action_name"] for c in cands]
+        assert set(names) == {"found_city", "attack_15"}
+        founding = next(c for c in cands if c["action_name"] == "found_city")
+        assert founding["projected_dof_delta"]["unit_102"] < 0
+        assert founding["is_reversible"] is False
 
     def test_technological_prefers_research(self, state):
         avail = {
@@ -552,70 +584,72 @@ class TestRealVocabularyHeuristics:
         assert cands[0]["action_name"].startswith("research_tech")
 
     def test_dof_gain_outranks_reversibility(self, state):
-        """Merge of two earlier behaviours: DoF gain is the objective.
+        """DoF gain is the objective; reversibility only breaks ties.
 
-        `research_tech_*` is only partially reversible yet it has a positive
-        projected gain, while `set_tech_goal_*` is reversible but purely
-        advisory (zero gain). DOF-Core maximises DoF, so research must win;
-        reversibility only breaks ties at equal gain.
+        Uses an unmeasured positive fallback (`city/build_unit`, +0.1) against a
+        measured-neutral advisory action, so the positive-gain branch must win
+        even though it is the less reversible one.
         """
         avail = {
-            "tech": {"cur_player": {"research_tech_Alphabet_2": True,
-                                    "set_tech_goal_Banking_7": True}},
+            "city": {1: {"build_unit": True}},
+            "tech": {"cur_player": {"set_tech_goal_Banking_7": True}},
         }
         cands = HeuristicGenerator(strategy=TECHNOLOGICAL).generate_candidates(state, avail)
         assert len(cands) == 2
-        assert cands[0]["action_name"].startswith("research_tech")
-        assert cands[0]["is_reversible"] is False
+        assert cands[0]["action_name"] == "build_unit"
+        assert cands[0]["projected_dof_delta"]["city_1"] > 0
+
+    def test_measured_neutral_actions_are_not_preferred_over_gain(self, state):
+        """`research_tech` is measured neutral (0.0), `city/build_unit` is a
+        positive fallback: the positive branch wins on DoF."""
+        avail = {
+            "tech": {"cur_player": {"research_tech_Alphabet_2": True}},
+            "city": {1: {"build_unit": True}},
+        }
+        best = HeuristicGenerator(strategy=TECHNOLOGICAL).select_best(
+            HeuristicGenerator(strategy=TECHNOLOGICAL).generate_candidates(state, avail),
+            state)
+        assert best["action_name"] == "build_unit"
 
     def test_reversible_wins_at_equal_gain(self, state):
-        """Axiom 4 as a tie-break: equal projected gain -> prefer reversible.
-
-        `fortify` and `fortress` both carry the defensive +0.02 unit delta, so
-        the choice comes down to reversibility, where fortify wins.
-        """
+        """Axiom 4 as a tie-break: at equal (here measured-zero) gain, prefer the
+        reversible action."""
         avail = {
             "unit": {102: {"fortify": True, "fortress": True}},
         }
         cands = HeuristicGenerator(strategy=DEFENSIVE).generate_candidates(state, avail)
         gains = [sum(c["projected_dof_delta"].values()) for c in cands]
-        assert all(g == pytest.approx(0.02) for g in gains)
+        assert all(g == pytest.approx(0.0) for g in gains)
         reversible = HeuristicGenerator(strategy=DEFENSIVE).select_best(cands, state)
         assert reversible["is_reversible"] is True
 
-    def test_high_dof_action_survives_a_goto_flood(self, state):
+    def test_best_gain_action_survives_a_goto_flood(self, state):
         """Regression: hundreds of reversible goto_* used to fill the top-5 and
-        push the only DoF-positive action out of the shortlist."""
+        push the best-gain action out of the shortlist. Now that goto is measured
+        neutral (0.0) and founding costs DoF (-0.32), the neutral goto is the
+        better branch and must still be shortlisted."""
         actions = {f"goto_{i}": True for i in range(300)}
         actions["build_city"] = True
         avail = {"unit": {102: actions}}
 
         cands = HeuristicGenerator(strategy=EXPANSIONIST).generate_candidates(state, avail)
         names = [c["action_name"] for c in cands]
-        assert "build_city" in names, f"shortlist lost the DoF-positive action: {names}"
+        assert "build_city" in names, f"shortlist lost the founding branch: {names}"
         best = HeuristicGenerator(strategy=EXPANSIONIST).select_best(cands, state)
-        assert best["action_name"] == "build_city"
+        assert best["action_name"].startswith("goto")  # 0.0 beats -0.32
 
     def test_domain_weights_keep_strategies_distinct(self, state):
-        """Same raw gains in two domains: each strategy prefers its own domain."""
-        avail = {
-            "tech": {"cur_player": {"research_tech_Alphabet_2": True}},   # +0.05
-            "gov": {0: {"set_sci_lux_tax_0_40_60": True}},                 # +0.01/city
-        }
-        tech_first = HeuristicGenerator(strategy=TECHNOLOGICAL).generate_candidates(state, avail)
-        assert tech_first[0]["ctrl_type"] == "tech"
-
-        # The economical strategy weights the gov domain far above tech
-        # (1.4 vs 0.9), but the raw gap is larger than the weight ratio, so
-        # verify the weights are applied rather than ordering by preference.
+        """Same raw gains, different domain weights -> different valuations."""
         gen_tech = HeuristicGenerator(strategy=TECHNOLOGICAL)
         gen_econ = HeuristicGenerator(strategy=ECONOMIC)
         research = {"ctrl_type": "tech", "projected_dof_delta": {"tech_2": 0.05},
                     "action_name": "research_tech_Alphabet_2", "is_reversible": False}
-        tax = {"ctrl_type": "gov", "projected_dof_delta": {"city_1": 0.01},
-               "action_name": "set_sci_lux_tax_0_40_60", "is_reversible": True}
-        assert gen_tech.weighted_dof_gain(research) > gen_econ.weighted_dof_gain(research)
-        assert gen_econ.weighted_dof_gain(tax) > gen_tech.weighted_dof_gain(tax)
+        build = {"ctrl_type": "city", "projected_dof_delta": {"city_1": 0.10},
+                 "action_name": "build_unit", "is_reversible": True}
+        # Weights differ per domain, so the two strategies value the same
+        # candidates differently.
+        assert gen_tech.weighted_dof_gain(research) != gen_econ.weighted_dof_gain(research)
+        assert gen_tech.weighted_dof_gain(build) != gen_econ.weighted_dof_gain(build)
 
 
 class TestRealVocabularyDofDelta:
@@ -631,11 +665,13 @@ class TestRealVocabularyDofDelta:
             },
         )
 
-    def test_unit_found_city_gains_dof(self, state):
+    def test_unit_found_city_costs_dof(self, state):
+        """Measured: founding trades a flexible Settler for a size-1 city
+        (-0.3228), so the projected delta must be negative."""
         delta = estimate_dof_delta(
             CivAction(ctrl_type='unit', actor_id=102, action_name='found_city'), state
         )
-        assert delta.get('unit_102', 0) > 0
+        assert delta.get('unit_102', 0) < 0
 
     def test_unit_attack_loses_dof(self, state):
         delta = estimate_dof_delta(
@@ -643,18 +679,20 @@ class TestRealVocabularyDofDelta:
         )
         assert delta.get('unit_102', 0) < 0
 
-    def test_gov_actions_touch_cities(self, state):
-        delta = estimate_dof_delta(
-            CivAction(ctrl_type='gov', actor_id=0,
-                      action_name='set_sci_lux_tax_0_40_60'), state
-        )
-        assert 'city_1' in delta
+    def test_gov_actions_are_measured_neutral(self, state):
+        """Tax and government changes were guessed at +0.01/+0.02 per city;
+        measured on a live game they leave the index unchanged (0.0000)."""
+        for name in ('set_sci_lux_tax_0_40_60', 'change_gov_Anarchy'):
+            delta = estimate_dof_delta(
+                CivAction(ctrl_type='gov', actor_id=0, action_name=name), state
+            )
+            assert sum(delta.values()) == pytest.approx(0.0), name
 
-    def test_dipl_action_targets_diplomacy_entity(self, state):
+    def test_dipl_treaty_is_measured_neutral(self, state):
         delta = estimate_dof_delta(
             CivAction(ctrl_type='dipl', actor_id=2, action_name='accept_treaty_2'), state
         )
-        assert delta.get('diplomacy_2', 0) > 0
+        assert sum(delta.values()) == pytest.approx(0.0)
 
     def test_tech_and_player_have_no_entity_delta(self, state):
         assert estimate_dof_delta(
@@ -664,26 +702,17 @@ class TestRealVocabularyDofDelta:
             CivAction(ctrl_type='player', actor_id='message', action_name='chat'),
             state) == {}
 
-    def test_research_attaches_delta_to_the_named_tech(self, state):
-        """The action name's trailing integer is the tech id: research must
-        register as DoF progress on that entity, otherwise a whole controller
-        is DoF-invisible and the agent can never 'invest in science'."""
-        state = SystemStateMatrix(
-            entities={
-                'tech_2': EntityState(entity_id='tech_2', current_dof=0.4),
-                'tech_7': EntityState(entity_id='tech_7', current_dof=0.4),
-            },
-        )
+    def test_research_is_measured_neutral(self, state):
+        """Research was guessed at +0.05; measured it moves the index by 0.0000."""
         delta = estimate_dof_delta(
             CivAction(ctrl_type='tech', actor_id='cur_player',
                       action_name='research_tech_Alphabet_2'), state
         )
-        assert delta.get('tech_2', 0) > 0
-        assert 'tech_7' not in delta
+        assert sum(delta.values()) == pytest.approx(0.0)
 
     def test_research_for_unknown_tech_id_is_ignored(self, state):
         delta = estimate_dof_delta(
             CivAction(ctrl_type='tech', actor_id='cur_player',
                       action_name='research_tech_Alphabet_999'), state
         )
-        assert delta == {}
+        assert sum(delta.values()) == pytest.approx(0.0)

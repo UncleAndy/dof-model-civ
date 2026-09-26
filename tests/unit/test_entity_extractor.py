@@ -173,11 +173,11 @@ class TestUnitExtraction:
         assert settler.agency_index < 0.3
 
     def test_unit_collapse_detection(self, extractor, sample_observation, sample_info):
-        """Unit with very low health should have low time-to-collapse."""
-        # Modify health to be critically low
+        """A unit down to its last hit point (1 HP of 10) is collapsing: low DoF
+        and a one-turn time-to-collapse."""
         sample_observation['unit']['105'] = {
             'type_rule_name': 'Warrior',
-            'health': 5,
+            'health': 1,          # hit points, not percent (Warrior ceiling = 10)
             'moves_left': 0,
             'max_moves': 2,
             'x': 10,
@@ -288,15 +288,26 @@ class TestTotalDofIndex:
     """Test Nash log-product index computation."""
 
     def test_positive_entities_positive_index(self, extractor, sample_observation, sample_info):
-        """System with viable entities should have negative but finite index."""
+        """System with viable entities has a positive, finite index.
+
+        DoF is an option count: each live entity contributes ln(count) and a
+        well-equipped entity is worth more than one option, so the log-product is
+        positive. (Under the old normalised scoring this was negative, which made
+        the index decrease as the system grew.)
+        """
         result = extractor.extract(sample_observation, sample_info, turn=10)
         index = compute_total_dof_index(result.state)
-        # All entities have DoF > 0, so ln(DoF) < 0 → sum is negative
-        assert index < 0
+        assert index > 0
         assert math.isfinite(index)
 
     def test_more_entities_changes_index(self, extractor, sample_observation, sample_info):
-        """Adding entities should change (increase magnitude of) the index."""
+        """Adding a live entity must NOT lower the index.
+
+        DoF is an option count (>= 1), so a new city with options contributes a
+        non-negative term. Scoring DoF as a normalised [0, 1] value instead made
+        every added entity strictly reduce Σ ln(DoF) — which punished expansion
+        (Axiom 1/6) and rewarded collapse.
+        """
         result1 = extractor.extract(sample_observation, sample_info, turn=10)
         index1 = compute_total_dof_index(result1.state)
 
@@ -317,8 +328,186 @@ class TestTotalDofIndex:
         result2 = extractor.extract(sample_observation, sample_info, turn=10)
         index2 = compute_total_dof_index(result2.state)
 
-        # Adding an entity with DoF in (0, 1) makes ln(DoF) negative → index more negative
-        assert index2 < index1  # more entities = more negative (lower) index
+        assert index2 > index1  # a new entity with options raises the index
+
+
+class TestPopulationEconomics:
+    """Population is the DoF engine: a city must outrank a settler, a settler must
+    not grow, and its people must erode while it wanders.
+
+    The previous model had it backwards (size-1 city 0.105 vs settler 0.145), so
+    founding a city measured as a DoF LOSS and the agent refused to expand.
+    """
+
+    @staticmethod
+    def _unit(utype: str, health: int = 100, moves: int = 1, max_moves: int = 1):
+        return {'unit': {'1': {
+            'type_rule_name': utype, 'health': health, 'moves_left': moves,
+            'max_moves': max_moves, 'x': 0, 'y': 0, 'owner': 0, 'activity': 0}}}
+
+    @staticmethod
+    def _city(pop: int, food: int = 0, production: int = 0, gold: int = 0,
+              happiness: int = 0, defense: int = 0):
+        return {'city': {'1': {
+            'population': pop, 'food': food, 'production': production,
+            'gold': gold, 'happiness': happiness, 'defense': defense,
+            'x': 0, 'y': 0, 'owner': 0, 'turn_last_built': 0, 'prod_process': 0}}}
+
+    def _dof_of(self, obs, turn=1):
+        extractor = GameStateExtractor(my_player_id=0)
+        result = extractor.extract(obs, {}, turn)
+        return list(result.state.entities.values())[0].current_dof
+
+    def test_settler_type_name_is_plural_in_the_ruleset(self, extractor):
+        """Real rulesets name the founder "Settlers"; a singular-only match made
+        the population model silently never apply."""
+        from env.config import POPULATION_UNIT_TYPES
+
+        assert "settlers" in POPULATION_UNIT_TYPES
+        # Both spellings must be treated as population-carrying.
+        for name in ("Settler", "Settlers", "settlers"):
+            dof = self._dof_of(self._unit(name), 1)
+            assert dof >= 0.10, name  # mobility bonus proves the branch applied
+
+    def test_health_is_hit_points_not_percentage(self, extractor):
+        """A real start state reports `Settlers health=20`, `Workers health=10`.
+        Dividing by 100 made living units look collapsed (DoF 0.03-0.07)."""
+        full_hp_worker = self._dof_of(self._unit('Workers', health=10), 1)
+        wounded_worker = self._dof_of(self._unit('Workers', health=3), 1)
+        assert full_hp_worker > 0.3            # full HP is not "10% health"
+        assert wounded_worker < full_hp_worker
+
+    def test_null_max_moves_does_not_crash(self, extractor):
+        """CivRealm nulls fields (``max_moves: null``) in some captures."""
+        obs = {'unit': {'1': {'type_rule_name': 'Workers', 'health': 10,
+                              'moves_left': None, 'max_moves': None,
+                              'x': 0, 'y': 0, 'owner': 0, 'activity': 0}}}
+        result = extractor.extract(obs, {}, 1)
+        assert result.state.entities['unit_1'].current_dof > 0.0
+
+    def test_plural_unit_types_get_strategic_value(self, extractor):
+        """'Workers'/'Settlers' must not fall through to the unknown bucket."""
+        workers = self._dof_of(self._unit('Workers', health=10), 1)
+        unknown = self._dof_of(self._unit('Zzz Unknown', health=10), 1)
+        assert workers > unknown
+
+    def test_city_outranks_settler(self, extractor):
+        """A size-1 city is worth more than a fresh settler: the city is where
+        population can grow."""
+        city = self._dof_of(self._city(1), 1)
+        settler = self._dof_of(self._unit('Settler'), 1)
+        assert city > settler
+
+    def test_city_dof_grows_with_population(self, extractor):
+        small = self._dof_of(self._city(1), 1)
+        medium = self._dof_of(self._city(4, food=6, production=6, happiness=2), 1)
+        large = self._dof_of(self._city(10, food=12, production=15, happiness=3,
+                                        defense=2), 1)
+        assert small < medium < large
+
+    def test_unit_never_out_dofs_a_city(self, extractor):
+        """A single unit is capability-bound, not a population engine."""
+        from env.config import UNIT_MAX_DOF
+
+        warrior = self._dof_of(self._unit('Warrior', moves=3, max_moves=3), 1)
+        city = self._dof_of(self._city(1), 1)
+        assert warrior <= UNIT_MAX_DOF
+        assert warrior < city
+
+    def test_settler_people_decay_with_age(self, extractor):
+        """Its people cannot grow; they only erode the longer it wanders."""
+        extractor = GameStateExtractor(my_player_id=0)
+        obs = self._unit('Settler')
+        fresh = list(extractor.extract(obs, {}, 1).state.entities.values())[0]
+        extractor.extract(obs, {}, 1)
+        aged = list(extractor.extract(obs, {}, 40).state.entities.values())[0]
+        assert aged.current_dof < fresh.current_dof
+
+    def test_settler_decay_has_a_floor(self, extractor):
+        """People remain even after a long time: the floor keeps it above zero."""
+        from env.config import SETTLER_DECAY_FLOOR, SETTLER_BASE
+
+        extractor = GameStateExtractor(my_player_id=0)
+        obs = self._unit('Settler')
+        extractor.extract(obs, {}, 1)
+        ancient = list(extractor.extract(obs, {}, 500).state.entities.values())[0]
+        assert ancient.current_dof > 0.0
+        assert ancient.current_dof <= 0.10 + SETTLER_BASE * SETTLER_DECAY_FLOOR + 1e-9
+
+    def test_settler_is_risk_discounted(self, extractor):
+        """A wounded settler in the field is worth less — it can be captured."""
+        healthy = self._dof_of(self._unit('Settler', health=100), 1)
+        wounded = self._dof_of(self._unit('Settler', health=40), 1)
+        assert wounded < healthy
+
+    def test_settler_keeps_a_mobility_bonus(self, extractor):
+        """Its one real advantage over a city is that it can move."""
+        from env.config import SETTLER_MOBILITY_BONUS
+
+        settler = self._dof_of(self._unit('Settler'), 1)
+        assert settler >= SETTLER_MOBILITY_BONUS
+
+
+class TestDofIndexScaling:
+    """The index must count options, not normalised scores."""
+
+    @staticmethod
+    def _entity(entity_id: str, dof: float):
+        from env.entity_extractor import EntityState
+
+        return EntityState(entity_id=entity_id, current_dof=dof)
+
+    def test_index_is_positive_for_live_entities(self):
+        from env.entity_extractor import EntityState, SystemStateMatrix
+
+        state = SystemStateMatrix(entities={
+            'unit_1': self._entity('unit_1', 0.9),
+            'city_1': self._entity('city_1', 0.5),
+        })
+        assert compute_total_dof_index(state) > 0
+
+    def test_adding_an_entity_never_lowers_the_index(self):
+        from env.entity_extractor import EntityState, SystemStateMatrix
+
+        one = SystemStateMatrix(entities={'unit_1': self._entity('unit_1', 0.6)})
+        two = SystemStateMatrix(entities={
+            'unit_1': self._entity('unit_1', 0.6),
+            'unit_2': self._entity('unit_2', 0.6),
+        })
+        assert compute_total_dof_index(two) > compute_total_dof_index(one)
+
+    def test_entity_with_about_one_option_is_index_neutral(self):
+        """An entity at the count-of-1 boundary contributes exactly ln(1)=0."""
+        from env.config import DOF_SCALE
+        from env.entity_extractor import EntityState, SystemStateMatrix
+
+        state = SystemStateMatrix(entities={
+            'unit_1': self._entity('unit_1', 1.0 / DOF_SCALE),
+        })
+        assert compute_total_dof_index(state) == pytest.approx(0.0, abs=1e-9)
+
+    def test_collapsed_entity_is_catastrophic(self):
+        from env.config import EPSILON
+        from env.entity_extractor import EntityState, SystemStateMatrix
+
+        healthy = SystemStateMatrix(
+            entities={'unit_1': self._entity('unit_1', 0.5)})
+        collapsing = SystemStateMatrix(
+            entities={'unit_1': self._entity('unit_1', EPSILON)})
+
+        assert compute_total_dof_index(collapsing) < compute_total_dof_index(healthy) - 10
+
+    def test_collapse_source_is_excluded(self):
+        from env.entity_extractor import EntityState, SystemStateMatrix
+
+        state = SystemStateMatrix(entities={
+            'unit_1': self._entity('unit_1', 0.5),
+            'aggressor_1': EntityState(entity_id='aggressor_1', current_dof=0.9,
+                                       is_collapse_source=True),
+        })
+        without = SystemStateMatrix(entities={'unit_1': self._entity('unit_1', 0.5)})
+        assert compute_total_dof_index(state) == pytest.approx(
+            compute_total_dof_index(without))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -500,7 +689,16 @@ class TestUnitDofIsNotConsumedByActing:
 
     def test_zero_capacity_unit_keeps_health_component(self, extractor):
         """A unit with no movement capacity still has DoF from health/value; it
-        must not be driven to zero by the mobility term."""
+        must not be driven to zero by the mobility term, and must stay below the
+        settlement that produces population."""
+        from env.config import UNIT_MAX_DOF
+
         immobile = extractor.extract(self._unit(moves_left=0, max_moves=0), {}, turn=1)
         dof = immobile.state.entities['unit_7'].current_dof
-        assert dof > 0.5  # 0.40 health + 0.20 retreat? + 0.25 value, mobility 0
+        assert 0.2 < dof < UNIT_MAX_DOF
+        city = extractor.extract(
+            {'city': {'1': {'population': 1, 'food': 0, 'production': 0, 'gold': 0,
+                            'happiness': 0, 'defense': 0, 'x': 0, 'y': 0,
+                            'owner': 0, 'turn_last_built': 0, 'prod_process': 0}}},
+            {}, turn=1)
+        assert dof < city.state.entities['city_1'].current_dof
