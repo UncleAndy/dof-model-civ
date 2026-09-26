@@ -18,7 +18,15 @@ import numpy as np
 import pytest
 
 from env import config as cfg
-from env.entity_extractor import GameStateExtractor, is_population_carrier
+from env.action_mapper import CivAction, estimate_dof_delta
+from env.entity_extractor import (
+    BridgeCalibration,
+    EntityState,
+    GameStateExtractor,
+    SystemStateMatrix,
+    city_options,
+    is_population_carrier,
+)
 from env.site_eval import (
     CITY_RADIUS_SQ,
     WORKABLE_OFFSETS,
@@ -26,6 +34,7 @@ from env.site_eval import (
     counterfactual_growth_sink_per_turn,
     evaluate_site,
     growth_box,
+    hypothetical_city_obs,
     size_at_horizon,
     tile_output,
 )
@@ -166,6 +175,63 @@ class TestCounterfactualGrowth:
         site = evaluate_site(rich, 4, 4, size=1, vals=VALS)
         rate = counterfactual_growth_sink_per_turn(site, VALS)
         assert rate > cfg.UNDEPLOYED_CARRIER_SINK_PER_TURN
+
+
+class TestSiteIsPricedWithTheCityFormula:
+    """Город на площадке считается той же формулой, что и настоящий город."""
+
+    def _site(self, tiles):
+        return evaluate_site(make_map(tiles=tiles), 4, 4, size=1, vals=VALS)
+
+    def test_hypothetical_city_is_a_size_one_capital(self):
+        site = self._site({(4, 4): (3, 0, 0), (3, 4): (3, 0, 0), (5, 4): (2, 1, 0)})
+        probe = hypothetical_city_obs(site)
+        assert probe["size"] == 1
+        assert probe["granary_size"] == 20.0          # 10 × (1 + 1)
+        assert probe["surplus_food"] == site.food     # валовая еда, как поле стенда
+        assert probe["improvements"] == [True]        # бесплатный Palace столицы
+        assert hypothetical_city_obs(site, capital=False)["improvements"] == []
+
+    def test_richer_site_prices_a_more_valuable_city(self):
+        poor = self._site({(4, 4): (2, 0, 0), (3, 4): (1, 0, 0), (5, 4): (1, 0, 0)})
+        rich = self._site({(4, 4): (4, 2, 3), (3, 4): (3, 2, 2), (5, 4): (3, 1, 2)})
+        v_poor = city_options(hypothetical_city_obs(poor), garrison=0)
+        v_rich = city_options(hypothetical_city_obs(rich), garrison=0)
+        assert v_rich > v_poor > 0
+
+
+class TestFoundingDeltaIsSiteSpecific:
+    def _state(self, *, viable: bool) -> SystemStateMatrix:
+        bridge = BridgeCalibration(new_city_options=3.0)
+        if viable:
+            bridge.new_city_options_by_unit["unit_7"] = 9.0
+        else:
+            bridge.nonviable_carrier_sites.append("unit_7")
+        return SystemStateMatrix(
+            entities={"unit_7": EntityState(entity_id="unit_7", entity_type="unit",
+                                            dof_count=4.0, current_dof=0.4)},
+            bridge=bridge,
+        )
+
+    def test_delta_uses_the_units_own_site(self):
+        action = CivAction(ctrl_type="unit", actor_id=7, action_name="build_city")
+        delta = estimate_dof_delta(action, self._state(viable=True))
+        # 9.0 (город на ЭТОЙ площадке) − 4.0 (носитель), а не 3.0 из среднего.
+        assert delta == {"unit_7": pytest.approx(5.0)}
+
+    def test_nonviable_site_is_excised_not_penalised(self):
+        action = CivAction(ctrl_type="unit", actor_id=7, action_name="build_city")
+        assert estimate_dof_delta(action, self._state(viable=False)) == {}
+
+    def test_falls_back_to_the_empire_estimate_without_a_site(self):
+        bridge = BridgeCalibration(new_city_options=3.0)
+        state = SystemStateMatrix(
+            entities={"unit_7": EntityState(entity_id="unit_7", entity_type="unit",
+                                            dof_count=4.0, current_dof=0.4)},
+            bridge=bridge,
+        )
+        action = CivAction(ctrl_type="unit", actor_id=7, action_name="build_city")
+        assert estimate_dof_delta(action, state) == {"unit_7": pytest.approx(-1.0)}
 
 
 @pytest.mark.skipif(not OBS_FILE.exists(), reason="нет реального наблюдения")
