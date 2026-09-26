@@ -103,6 +103,13 @@ class TestEffectTable:
         # А на пустыне это НЕ измерено — и потому не обобщается.
         assert tile_effect("Irrigation", "Desert", (), self.VALS) is None
 
+    def test_measured_roads_place_the_extra_without_output(self):
+        # Замерено на трёх террейнах: дорога ставит экстру Road, выхода не даёт
+        # (в этой версии стенда дорога — только перемещение).
+        for terrain in ("Grassland", "Plains", "Hills"):
+            assert tile_effect("Road", terrain, (), self.VALS) == (0.0, 0.0, 0.0)
+        assert tile_effect("Road", "Forest", (), self.VALS) is None
+
     def test_extra_already_present_is_worthless(self):
         assert tile_effect("Coal", "Hills", ("Coal",), self.VALS) == (0.0, 0.0, 0.0)
 
