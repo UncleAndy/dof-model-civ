@@ -1,0 +1,20 @@
+services:
+  freeciv-web:
+    image: civrealm/freeciv-web:1.4
+    container_name: freeciv-web
+    ports:
+      - "8181:80"
+      - "4002:4002"
+      - "6000-6009:6000-6009"
+      - "7000-7009:7000-7009"
+      - "8989:8080"
+      - "1240:1240"
+    user: docker
+    volumes:
+      # Пробрасываем глобальный список пользователей
+      - ./tomcat-users.xml:/var/lib/tomcat10/conf/tomcat-users.xml:ro
+      # Отключаем блокировку по IP для Manager App
+      - ./context.xml:/var/lib/tomcat10/webapps/manager/META-INF/context.xml:ro
+      # Отключаем блокировку по IP для Host Manager (если нужен)
+      - ./context.xml:/var/lib/tomcat10/webapps/host-manager/META-INF/context.xml:ro
+    restart: always

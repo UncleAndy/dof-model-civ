@@ -134,7 +134,12 @@ class TestCoreWiring:
         actions = runner._core_actions(candidates)
         assert actions[0].action_id == "unit_1_build_city"
         assert actions[0].is_reversible is False
-        assert list(actions[0].dof_delta) == [("unit_1", 0.3)]
+        # Deltas are projected in options; the core works in the DOF-SPEC [0, 1]
+        # range, so the bridge converts them with the same shared reference it
+        # uses for the entities themselves.
+        from env.config import CORE_DOF_SCALE
+
+        assert list(actions[0].dof_delta) == [("unit_1", 0.3 / CORE_DOF_SCALE)]
 
     def test_core_rejects_irreversible_low_gain_and_skips_when_all_negative(self, runner):
         """DOF-Core: irreversible actions pay a context-switch penalty, and when

@@ -30,6 +30,7 @@ import os
 import signal
 import sys
 import time
+import traceback
 import warnings
 
 warnings.filterwarnings("ignore")
@@ -64,6 +65,12 @@ def _parse_cli(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--settle", type=float, default=10.0,
                         help="seconds between matches (gives Publite2 time to "
                              "restart a recycled slot before it is reused)")
+    parser.add_argument("--pace", type=float, default=0.0,
+                        help="seconds to sleep between decisions — use for a slow, "
+                             "watchable demo game an observer can join")
+    parser.add_argument("--trace", action="store_true",
+                        help="print every decision and every turn end, so an observer "
+                             "can correlate the agent's play with the map")
     parser.add_argument("--max-decisions-per-turn", type=int, default=20,
                         help="cap decisions issued inside one turn before the turn "
                              "is ended explicitly")
@@ -101,6 +108,7 @@ import gymnasium
 from civrealm.configs import fc_args
 from civrealm.agents import RandomAgent, BaseAgent
 
+from env.config import AXIOM4_PENALTY_OPTIONS, CORE_DOF_SCALE
 from env.entity_extractor import GameStateExtractor, compute_total_dof_index
 from brain.generator.heuristics import ALL_STRATEGIES, DEFENSIVE, HeuristicGenerator
 from metrics.tracker import MatchMetrics, agent_turns
@@ -192,11 +200,19 @@ def _to_action(candidate: dict):
 
 
 def _core_entities(state) -> list:
-    """SystemStateMatrix -> Rust core entity list."""
+    """SystemStateMatrix → Rust core entity list.
+
+    The core carries `current_dof` in the DOF-SPEC [0, 1] field range (its
+    `apply_action` clamps at 1.0), while the extractor works in options. Every
+    value the core sees is therefore divided by one shared reference, so the
+    ordering and the sign of every net delta are identical to the option-space
+    computation (Σ ln(x/c) = Σ ln(x) − n·ln c, and n is the same on both sides of
+    every comparison the bridge makes).
+    """
     return [
         CoreEntity(
             entity_id=e.entity_id,
-            current_dof=e.current_dof,
+            current_dof=min(1.0, e.dof_count / CORE_DOF_SCALE),
             is_collapse_source=e.is_collapse_source,
             is_reversible=e.time_to_collapse_mks > 1e14,
         )
@@ -205,12 +221,13 @@ def _core_entities(state) -> list:
 
 
 def _core_actions(candidates: list[dict]) -> list:
-    """DOF candidates -> Rust core action list."""
+    """DOF candidates → Rust core action list (deltas in the core's own units)."""
     return [
         CoreAction(
             action_id=c["option_id"],
             description=c.get("description", ""),
-            dof_delta=list(c.get("projected_dof_delta", {}).items()),
+            dof_delta=[(k, v / CORE_DOF_SCALE)
+                       for k, v in c.get("projected_dof_delta", {}).items()],
             is_reversible=bool(c.get("is_reversible", True)),
             duration_turns=1.0,
         )
@@ -220,7 +237,7 @@ def _core_actions(candidates: list[dict]) -> list:
 
 def build_agent(agent_type: str, extractor: GameStateExtractor,
                 lookahead: int = 3, context_switch_penalty: float = 0.5,
-                max_candidates: int = 8):
+                max_candidates: int = 8, trace: bool = False):
     """Create the agent for a given agent_type.
 
     ``lookahead`` / ``context_switch_penalty`` configure the DOF-Core engine;
@@ -240,8 +257,13 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
         gen = HeuristicGenerator(strategy=strategy)
         gen.max_candidates = max_candidates
         core = (
-            DOFCalculusCore(lookahead_horizon=lookahead,
-                            context_switch_penalty=context_switch_penalty)
+            DOFCalculusCore(
+                lookahead_horizon=lookahead,
+                # The penalty is configured in options (the unit every delta is
+                # projected in) and converted into the core's own scale, so it
+                # stays comparable with the deltas it is weighed against.
+                context_switch_penalty=context_switch_penalty / CORE_DOF_SCALE,
+            )
             if HAVE_DOF_CORE else None
         )
 
@@ -253,15 +275,30 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                 if not cands:
                     return None
 
+                if trace and cands:
+                    preview = " ".join(
+                        f"{c['action_name']}({sum(c['projected_dof_delta'].values()):+.2f}"
+                        f"{',rev' if c['is_reversible'] else ',IRR'})"
+                        for c in cands[:6]
+                    )
+                    print(f"        candidates: {preview}", flush=True)
+
                 if core is None:
                     # Python fallback: same objective, no Rust veto.
                     best = gen.select_best(cands, dof.state)
                     return _to_action(best) if best else None
 
                 decision = core.select_best(_core_entities(dof.state), _core_actions(cands))
-                if decision.chosen_action_id is None:
-                    # Every option had a negative net delta, or was vetoed:
-                    # declining to act is the DOF-correct choice.
+                if decision.chosen_action_id is None or decision.net_delta <= 0:
+                    # DOF-SPEC Decision Calculus §4: select a path only if its
+                    # projected gain STRICTLY exceeds the transition cost
+                    # (NetDelta > 0). Accepting net_delta == 0 let the agent spend
+                    # whole games on measured-neutral actions (irrigation/road on
+                    # one unit, forever) because a zero-gain option was always
+                    # available and the core only declined on negative deltas.
+                    if trace and decision.chosen_action_id is not None:
+                        print(f"        declined {decision.chosen_action_id} "
+                              f"(net_delta={decision.net_delta:+.3f} <= 0)", flush=True)
                     return None
 
                 for cand in cands:
@@ -304,7 +341,7 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
               timeout: int = 240, seed: int | None = None,
               include_series: bool = False, max_decisions_per_turn: int = 20,
               lookahead: int = 3, context_switch_penalty: float = 0.5,
-              max_candidates: int = 8,
+              max_candidates: int = 8, pace: float = 0.0, trace: bool = False,
               ) -> MatchMetrics:
     """Play one game on ``port`` and return its metrics, one record per turn.
 
@@ -323,11 +360,20 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
     signal.alarm(timeout)
     try:
         agent = build_agent(agent_type, extractor, lookahead,
-                           context_switch_penalty, max_candidates)
+                           context_switch_penalty, max_candidates, trace)
 
         fc_args["client_port"] = port
         env = gymnasium.make("civrealm/FreecivBase-v0")
         obs, info = env.reset(client_port=port, seed=seed)
+
+        # Which civilisation the env is playing is decided when the game is
+        # created, NOT by the agent — hardcoding player 0 silently made every
+        # own-civilisation test fail (garrison counts, the founding estimate, and
+        # therefore whether expansion looked like a gain at all).
+        try:
+            extractor.my_player_id = env.get_playerid()
+        except Exception:  # noqa: BLE001 - the id is optional context, not a blocker
+            pass
         metrics.seed = seed
         metrics.engine = "rust-core" if HAVE_DOF_CORE else "python"
 
@@ -337,6 +383,8 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
         done = False
 
         while not done and turns_played < turns:
+            if pace:
+                time.sleep(pace)
             action = agent.act(obs, info)
             phase, key = _turn_phase(action, used_actors, decisions_this_turn,
                                      max_decisions_per_turn)
@@ -346,6 +394,9 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
                 decisions_this_turn += 1
                 end_turn = False
                 metrics.record_decision(turns_played + 1, action)
+                if trace:
+                    print(f"      turn {turns_played + 1}: "
+                          f"{action[0]}/{action[1]}/{action[2]}", flush=True)
             else:
                 end_turn = True
                 action = None  # stepping None is what ends the turn
@@ -374,13 +425,18 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
                     compute_total_dof_index(extraction.state),
                 )
                 if turns_played % 10 == 0:
-                    print(f" [turn {turns_played}/{turns}]", end="", flush=True)
+                    index = compute_total_dof_index(extraction.state)
+                    print(f" [turn {turns_played}/{turns} ent={len(entities)} "
+                          f"idx={index:.2f}]", end="", flush=True)
 
         metrics.finished = True
     except MatchTimeout as exc:
         metrics.error = f"timeout: {exc}"
     except Exception as exc:  # noqa: BLE001 - report, never crash the tournament
         metrics.error = f"{type(exc).__name__}: {exc}"
+        # A one-line summary is what the report shows; the traceback is what
+        # makes the failure fixable, so keep it right next to the match.
+        print(traceback.format_exc(), file=sys.stderr, flush=True)
     finally:
         signal.alarm(0)
         if env is not None:
@@ -477,7 +533,7 @@ def main():
                 metrics = run_match(agent, args.turns, port, args.timeout, seed,
                                     args.save_series, args.max_decisions_per_turn,
                                     args.lookahead, args.context_switch_penalty,
-                                    args.max_candidates)
+                                    args.max_candidates, args.pace, args.trace)
                 if not metrics.error:
                     consecutive_errors = 0
                     break

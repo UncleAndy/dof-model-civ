@@ -65,44 +65,53 @@ class TestReversibility:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class TestDofDelta:
-    """Test DoF delta estimation."""
+    """DoF delta estimation, in options, from the calibrated model."""
 
     @pytest.fixture
     def sample_state(self):
+        from env.entity_extractor import BridgeCalibration
+
         return SystemStateMatrix(
             entities={
                 'unit_103': EntityState(
-                    entity_id='unit_103',
-                    current_dof=0.6,
-                ),
+                    entity_id='unit_103', current_dof=0.38, dof_options=3.81),
                 'city_1': EntityState(
-                    entity_id='city_1',
-                    current_dof=0.7,
-                ),
+                    entity_id='city_1', current_dof=0.41, dof_options=8.14),
+                'tech_2': EntityState(
+                    entity_id='tech_2', current_dof=0.10, dof_options=1.0),
             },
+            bridge=BridgeCalibration(
+                new_city_options=4.85,
+                improvement_gain={'city_1': 2.33},
+                unit_type_options={'Bomber': 6.54, 'Settlers': 3.81},
+                improvement_options={'Temple': 1.40},
+                tech_research_gain={'tech_2': 1.85},
+            ),
         )
 
-    def test_build_city_delta_is_measured_negative(self, sample_state):
-        """Founding a city exchanges a flexible Settler for a less flexible
-        size-1 city: measured Δindex = -0.3228 on a live game, not the +0.30 the
-        bridge used to guess."""
-        action = CivAction(ctrl_type='unit', actor_id='103', action_name='build_city')
+    def test_founding_is_a_derived_gain(self, sample_state):
+        """Founding exchanges the settler for a size-1 city, so the delta is the
+        difference between them in THIS state — a gain, because a city is where
+        population (the DoF engine) grows. A constant measured under the old
+        model (-0.3228) would have kept the old, inverted incentive."""
+        action = CivAction(ctrl_type='unit', actor_id='103', action_name='found_city')
         delta = estimate_dof_delta(action, sample_state)
-        assert 'unit_103' in delta
-        assert delta['unit_103'] < 0  # measured trade of flexibility
+        assert delta['unit_103'] == pytest.approx(4.85 - 3.81)
 
-    def test_attack_negative_delta(self, sample_state):
-        action = CivAction(ctrl_type='unit', actor_id='103', action_name='attack')
-        delta = estimate_dof_delta(action, sample_state)
-        assert 'unit_103' in delta
-        assert delta['unit_103'] < 0  # risk of loss decreases DoF
+    def test_unmeasured_actions_get_no_invented_number(self, sample_state):
+        """`attack` was guessed at -0.1. There is no measurement and no structural
+        derivation for it, so it must project nothing at all: the modelled cost of
+        an attack is its irreversibility, applied by the core on that flag."""
+        delta = estimate_dof_delta(
+            CivAction(ctrl_type='unit', actor_id='103', action_name='attack'), sample_state)
+        assert delta == {}
+        assert classify_reversibility('attack') is False
 
     def test_goto_is_measured_neutral(self, sample_state):
         """`goto` was guessed at +0.01; measured on a live game it changes
         nothing in the index (Δindex = 0.0000)."""
         action = CivAction(ctrl_type='unit', actor_id='103', action_name='goto_3')
         delta = estimate_dof_delta(action, sample_state)
-        assert 'unit_103' in delta
         assert delta['unit_103'] == pytest.approx(0.0)
 
     def test_fortify_is_measured_neutral(self, sample_state):
@@ -110,25 +119,36 @@ class TestDofDelta:
         delta = estimate_dof_delta(action, sample_state)
         assert delta['unit_103'] == pytest.approx(0.0)
 
-    def test_city_build_unit_positive_delta(self, sample_state):
-        action = CivAction(ctrl_type='city', actor_id='1', action_name='build_unit')
+    def test_producing_a_unit_adds_its_options(self, sample_state):
+        """`produce_Bomber` creates a new entity with its own option space, priced
+        by the same unit formula from the observation's own type catalogue."""
+        action = CivAction(ctrl_type='city', actor_id='1', action_name='produce_Bomber')
         delta = estimate_dof_delta(action, sample_state)
-        assert 'city_1' in delta
-        assert delta['city_1'] > 0
+        assert delta['city_1'] == pytest.approx(6.54)
 
-    def test_war_negative_delta(self, sample_state):
-        state = SystemStateMatrix(
-            entities={
-                'diplomacy_2': EntityState(
-                    entity_id='diplomacy_2',
-                    current_dof=0.5,
-                ),
-            },
-        )
-        action = CivAction(ctrl_type='diplomacy', actor_id='2', action_name='declare_war')
-        delta = estimate_dof_delta(action, state)
-        assert 'diplomacy_2' in delta
-        assert delta['diplomacy_2'] < 0
+    def test_producing_an_improvement_raises_the_city_factor(self, sample_state):
+        action = CivAction(ctrl_type='city', actor_id='1', action_name='produce_Temple')
+        delta = estimate_dof_delta(action, sample_state)
+        assert delta['city_1'] == pytest.approx(2.33)
+
+    def test_selling_an_improvement_costs_the_same_gain(self, sample_state):
+        action = CivAction(ctrl_type='city', actor_id='1',
+                           action_name='city_sell_improvement_Temple')
+        delta = estimate_dof_delta(action, sample_state)
+        assert delta['city_1'] == pytest.approx(-2.33)
+
+    def test_research_prices_what_the_technology_unlocks(self, sample_state):
+        action = CivAction(ctrl_type='tech', actor_id='cur_player',
+                           action_name='research_tech_Alphabet_2')
+        delta = estimate_dof_delta(action, sample_state)
+        assert delta['tech_2'] == pytest.approx(1.85)
+
+    def test_war_has_no_invented_delta(self, sample_state):
+        """Declaring war is unmeasured as a DoF change; what the model knows about
+        it is that it is irreversible."""
+        action = CivAction(ctrl_type='dipl', actor_id='2', action_name='declare_war')
+        assert estimate_dof_delta(action, sample_state) == {}
+        assert classify_reversibility('declare_war') is False
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -138,17 +158,18 @@ class TestDofDelta:
 class TestResourceDelta:
     """Test resource delta estimation."""
 
-    def test_city_build_unit_consumes_production(self):
-        action = CivAction(ctrl_type='city', actor_id='1', action_name='build_unit')
+    def test_city_production_order_consumes_production(self):
+        action = CivAction(ctrl_type='city', actor_id='1', action_name='produce_Bomber')
         delta = estimate_resource_delta(action)
         assert 'city_1' in delta
         assert delta['city_1'].get('production', 0) < 0
 
-    def test_city_research_consumes_bulbs(self):
-        action = CivAction(ctrl_type='city', actor_id='1', action_name='research_tech')
+    def test_city_buy_production_consumes_gold(self):
+        action = CivAction(ctrl_type='city', actor_id='1',
+                           action_name='city_buy_production')
         delta = estimate_resource_delta(action)
         assert 'city_1' in delta
-        assert delta['city_1'].get('bulbs', 0) < 0
+        assert delta['city_1'].get('gold', 0) < 0
 
     def test_unit_build_city_consumes_production(self):
         action = CivAction(ctrl_type='unit', actor_id='103', action_name='build_city')
@@ -527,12 +548,24 @@ class TestRealVocabularyHeuristics:
 
     @pytest.fixture
     def state(self):
+        from env.entity_extractor import BridgeCalibration
+
         return SystemStateMatrix(
             entities={
-                'unit_102': EntityState(entity_id='unit_102', current_dof=0.6),
-                'city_1': EntityState(entity_id='city_1', current_dof=0.7),
-                'tech_2': EntityState(entity_id='tech_2', current_dof=0.4),
+                'unit_102': EntityState(entity_id='unit_102', current_dof=0.6,
+                                        dof_options=4.0),
+                'city_1': EntityState(entity_id='city_1', current_dof=0.7,
+                                      dof_options=8.0),
+                'tech_2': EntityState(entity_id='tech_2', current_dof=0.4,
+                                      dof_options=1.0),
             },
+            bridge=BridgeCalibration(
+                new_city_options=4.85,
+                improvement_gain={'city_1': 2.33},
+                unit_type_options={'Bomber': 6.54},
+                improvement_options={'Temple': 1.40},
+                tech_research_gain={'tech_2': 0.50},
+            ),
         )
 
     def test_candidates_are_executable_and_capped(self, state):
@@ -558,12 +591,11 @@ class TestRealVocabularyHeuristics:
         assert names.index("fortify") < names.index("attack_15")
 
     def test_expansionist_prefers_city_founding(self, state):
-        """Founding is a distinct branch, ranked by measured DoF cost.
+        """Founding is a distinct branch, priced from the state as a GAIN.
 
-        Both branches are DoF-negative; the measured founding (-0.32) is worse
-        than the estimated attack (-0.1), so attack ranks first. What matters is
-        that DOF-Core *sees* the founding branch and can veto it — the previous
-        bridge hid this by claiming +0.30.
+        A size-1 city outranks the settler it replaces (population is the DoF
+        engine), so the founding branch is DoF-positive and must be visible to
+        DOF-Core — which then weighs it against its own irreversibility penalty.
         """
         avail = {
             "unit": {102: {"found_city": True, "attack_15": True}},
@@ -572,7 +604,7 @@ class TestRealVocabularyHeuristics:
         names = [c["action_name"] for c in cands]
         assert set(names) == {"found_city", "attack_15"}
         founding = next(c for c in cands if c["action_name"] == "found_city")
-        assert founding["projected_dof_delta"]["unit_102"] < 0
+        assert founding["projected_dof_delta"]["unit_102"] > 0
         assert founding["is_reversible"] is False
 
     def test_technological_prefers_research(self, state):
@@ -586,30 +618,28 @@ class TestRealVocabularyHeuristics:
     def test_dof_gain_outranks_reversibility(self, state):
         """DoF gain is the objective; reversibility only breaks ties.
 
-        Uses an unmeasured positive fallback (`city/build_unit`, +0.1) against a
-        measured-neutral advisory action, so the positive-gain branch must win
-        even though it is the less reversible one.
+        A production order (irreversible in the bridge's classification, positive
+        in DoF) must outrank a reversible advisory action with no gain.
         """
         avail = {
-            "city": {1: {"build_unit": True}},
+            "city": {1: {"produce_Bomber": True}},
             "tech": {"cur_player": {"set_tech_goal_Banking_7": True}},
         }
         cands = HeuristicGenerator(strategy=TECHNOLOGICAL).generate_candidates(state, avail)
         assert len(cands) == 2
-        assert cands[0]["action_name"] == "build_unit"
+        assert cands[0]["action_name"] == "produce_Bomber"
         assert cands[0]["projected_dof_delta"]["city_1"] > 0
 
     def test_measured_neutral_actions_are_not_preferred_over_gain(self, state):
-        """`research_tech` is measured neutral (0.0), `city/build_unit` is a
-        positive fallback: the positive branch wins on DoF."""
+        """Set a technology goal (no immediate gain) vs build something: the
+        branch with a real DoF gain wins."""
         avail = {
-            "tech": {"cur_player": {"research_tech_Alphabet_2": True}},
-            "city": {1: {"build_unit": True}},
+            "tech": {"cur_player": {"set_tech_goal_Banking_7": True}},
+            "city": {1: {"produce_Bomber": True}},
         }
-        best = HeuristicGenerator(strategy=TECHNOLOGICAL).select_best(
-            HeuristicGenerator(strategy=TECHNOLOGICAL).generate_candidates(state, avail),
-            state)
-        assert best["action_name"] == "build_unit"
+        gen = HeuristicGenerator(strategy=TECHNOLOGICAL)
+        best = gen.select_best(gen.generate_candidates(state, avail), state)
+        assert best["action_name"] == "produce_Bomber"
 
     def test_reversible_wins_at_equal_gain(self, state):
         """Axiom 4 as a tie-break: at equal (here measured-zero) gain, prefer the
@@ -625,9 +655,9 @@ class TestRealVocabularyHeuristics:
 
     def test_best_gain_action_survives_a_goto_flood(self, state):
         """Regression: hundreds of reversible goto_* used to fill the top-5 and
-        push the best-gain action out of the shortlist. Now that goto is measured
-        neutral (0.0) and founding costs DoF (-0.32), the neutral goto is the
-        better branch and must still be shortlisted."""
+        push the best-gain action out of the shortlist. The founding branch (a
+        gain in the calibrated model) must still be shortlisted, and must win
+        against a flood of measured-neutral movement."""
         actions = {f"goto_{i}": True for i in range(300)}
         actions["build_city"] = True
         avail = {"unit": {102: actions}}
@@ -636,7 +666,7 @@ class TestRealVocabularyHeuristics:
         names = [c["action_name"] for c in cands]
         assert "build_city" in names, f"shortlist lost the founding branch: {names}"
         best = HeuristicGenerator(strategy=EXPANSIONIST).select_best(cands, state)
-        assert best["action_name"].startswith("goto")  # 0.0 beats -0.32
+        assert best["action_name"] == "build_city"  # a real gain beats 0.0
 
     def test_domain_weights_keep_strategies_distinct(self, state):
         """Same raw gains, different domain weights -> different valuations."""
@@ -657,27 +687,41 @@ class TestRealVocabularyDofDelta:
 
     @pytest.fixture
     def state(self):
+        from env.entity_extractor import BridgeCalibration
+
         return SystemStateMatrix(
             entities={
-                'unit_102': EntityState(entity_id='unit_102', current_dof=0.6),
-                'city_1': EntityState(entity_id='city_1', current_dof=0.7),
-                'diplomacy_2': EntityState(entity_id='diplomacy_2', current_dof=0.5),
+                'unit_102': EntityState(entity_id='unit_102', current_dof=0.6,
+                                        dof_options=6.0),
+                'city_1': EntityState(entity_id='city_1', current_dof=0.7,
+                                      dof_options=8.0),
+                'tech_2': EntityState(entity_id='tech_2', current_dof=0.1,
+                                      dof_options=1.0),
             },
+            bridge=BridgeCalibration(
+                new_city_options=7.5,
+                improvement_gain={'city_1': 2.0},
+                tech_research_gain={'tech_2': 0.7},
+            ),
         )
 
-    def test_unit_found_city_costs_dof(self, state):
-        """Measured: founding trades a flexible Settler for a size-1 city
-        (-0.3228), so the projected delta must be negative."""
+    def test_unit_found_city_gains_dof(self, state):
+        """Founding trades the settler for a size-1 city, and the city is worth
+        more (population is the DoF engine): the projection is a gain, derived
+        from this state's own numbers."""
         delta = estimate_dof_delta(
             CivAction(ctrl_type='unit', actor_id=102, action_name='found_city'), state
         )
-        assert delta.get('unit_102', 0) < 0
+        assert delta['unit_102'] == pytest.approx(7.5 - 6.0)
 
-    def test_unit_attack_loses_dof(self, state):
+    def test_unit_attack_has_no_invented_delta(self, state):
+        """An attack's DoF effect is unmeasured; its modelled cost is that it is
+        irreversible."""
         delta = estimate_dof_delta(
             CivAction(ctrl_type='unit', actor_id=102, action_name='attack_15'), state
         )
-        assert delta.get('unit_102', 0) < 0
+        assert delta == {}
+        assert classify_reversibility('attack_15') is False
 
     def test_gov_actions_are_measured_neutral(self, state):
         """Tax and government changes were guessed at +0.01/+0.02 per city;
@@ -695,20 +739,26 @@ class TestRealVocabularyDofDelta:
         assert sum(delta.values()) == pytest.approx(0.0)
 
     def test_tech_and_player_have_no_entity_delta(self, state):
-        assert estimate_dof_delta(
+        """Choosing a research goal is advisory (the doc's §5.1: it changes the
+        plan, not the immediate option space), and `chat` carries nothing at all —
+        the player controller has no entity to attribute a change to."""
+        goal = estimate_dof_delta(
             CivAction(ctrl_type='tech', actor_id='cur_player',
-                      action_name='set_tech_goal_Alphabet_2'), state) == {}
+                      action_name='set_tech_goal_Alphabet_2'), state)
+        assert set(goal.values()) == {0.0}
         assert estimate_dof_delta(
             CivAction(ctrl_type='player', actor_id='message', action_name='chat'),
             state) == {}
 
-    def test_research_is_measured_neutral(self, state):
-        """Research was guessed at +0.05; measured it moves the index by 0.0000."""
+    def test_research_is_priced_from_what_it_unlocks(self, state):
+        """Research used to be a 0.0000 action (and before that a +0.05 guess).
+        With the gate model it is priced from the technology's own unlocked set,
+        per turn, attributed to that technology's entity."""
         delta = estimate_dof_delta(
             CivAction(ctrl_type='tech', actor_id='cur_player',
                       action_name='research_tech_Alphabet_2'), state
         )
-        assert sum(delta.values()) == pytest.approx(0.0)
+        assert delta['tech_2'] == pytest.approx(0.7)
 
     def test_research_for_unknown_tech_id_is_ignored(self, state):
         delta = estimate_dof_delta(

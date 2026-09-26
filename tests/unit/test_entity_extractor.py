@@ -238,12 +238,38 @@ class TestTechExtraction:
         tech_entities = [e for e in result.state.entities if e.startswith('tech_')]
         assert len(tech_entities) == 2
 
-    def test_advanced_tech_higher_dof(self, extractor, sample_observation, sample_info):
-        """Tech with more progress should have higher DoF."""
+    def test_known_tech_outranks_an_unknown_one(self, extractor, sample_observation,
+                                                sample_info):
+        """A technology is a gate: while unknown it is worth exactly one option
+        (the possibility itself); once known it is worth what it unlocks. Two
+        unknown technologies are therefore equal, and the previously used
+        `progress` field — which the real observation does not even carry — no
+        longer decides their value."""
+        sample_observation['tech']['10']['inv_state'] = 1
+        sample_observation['tech']['10']['sup_improvements'] = [
+            {'name': 'Temple', 'build_cost': 30, 'upkeep': 1}]
         result = extractor.extract(sample_observation, sample_info, turn=10)
-        bronze = result.state.entities['tech_10']
-        writing = result.state.entities['tech_11']
-        assert bronze.current_dof > writing.current_dof
+        known = result.state.entities['tech_10']
+        unknown = result.state.entities['tech_11']
+        assert known.dof_count > unknown.dof_count
+        assert unknown.dof_count == pytest.approx(1.0)  # the possibility itself
+
+    def test_tech_defers_to_the_same_unit_and_improvement_formulas(self, extractor):
+        """A technology that has opened a strong unit is worth more than one that
+        opened nothing, and its value is the sum of what it unlocked."""
+        obs = {'tech': {
+            '1': {'name': 'Advanced Flight', 'inv_state': 1,
+                  'sup_units': [{'rule_name': 'Bomber', 'hp': 20, 'attack_strength': 12,
+                                 'defense_strength': 1, 'firepower': 2, 'move_rate': 24,
+                                 'vision_radius_sq': 2, 'build_cost': 120}],
+                  'sup_improvements': []},
+            '2': {'name': 'Chemistry', 'inv_state': 1, 'sup_units': [],
+                  'sup_improvements': []},
+        }}
+        result = extractor.extract(obs, {}, turn=1)
+        strong = result.state.entities['tech_1']
+        empty = result.state.entities['tech_2']
+        assert strong.dof_count > empty.dof_count == pytest.approx(1.0)
 
     def test_tech_not_autonomous(self, extractor, sample_observation, sample_info):
         """Technologies are not autonomous (researched by cities)."""
@@ -358,6 +384,12 @@ class TestPopulationEconomics:
         result = extractor.extract(obs, {}, turn)
         return list(result.state.entities.values())[0].current_dof
 
+    def _options_of(self, obs, turn=1):
+        """Options (the authoritative DoF count) of the single extracted entity."""
+        extractor = GameStateExtractor(my_player_id=0)
+        result = extractor.extract(obs, {}, turn)
+        return list(result.state.entities.values())[0].dof_count
+
     def test_settler_type_name_is_plural_in_the_ruleset(self, extractor):
         """Real rulesets name the founder "Settlers"; a singular-only match made
         the population model silently never apply."""
@@ -371,10 +403,10 @@ class TestPopulationEconomics:
 
     def test_health_is_hit_points_not_percentage(self, extractor):
         """A real start state reports `Settlers health=20`, `Workers health=10`.
-        Dividing by 100 made living units look collapsed (DoF 0.03-0.07)."""
+        Dividing by 100 made living units look collapsed."""
         full_hp_worker = self._dof_of(self._unit('Workers', health=10), 1)
         wounded_worker = self._dof_of(self._unit('Workers', health=3), 1)
-        assert full_hp_worker > 0.3            # full HP is not "10% health"
+        assert full_hp_worker > 0.25            # full HP is not "10% health"
         assert wounded_worker < full_hp_worker
 
     def test_null_max_moves_does_not_crash(self, extractor):
@@ -385,33 +417,55 @@ class TestPopulationEconomics:
         result = extractor.extract(obs, {}, 1)
         assert result.state.entities['unit_1'].current_dof > 0.0
 
-    def test_plural_unit_types_get_strategic_value(self, extractor):
-        """'Workers'/'Settlers' must not fall through to the unknown bucket."""
-        workers = self._dof_of(self._unit('Workers', health=10), 1)
-        unknown = self._dof_of(self._unit('Zzz Unknown', health=10), 1)
-        assert workers > unknown
+    def test_future_components_come_from_real_flags(self, extractor):
+        """The future component is read from the observation's own flags: a unit
+        that can work terrain, convert, or carry others has more potential, and a
+        population carrier has the largest future of all (it can found a city
+        where population grows)."""
+        from env.entity_extractor import unit_options
+
+        def spec(**extra):
+            obs = self._unit('Workers', health=10)
+            obs['unit']['1'].update(extra)
+            return obs['unit']['1']
+
+        plain = unit_options(spec())[2]
+        worker = unit_options(spec(type_worker=True))[2]
+        converter = unit_options(spec(type_worker=False, type_converted_to=52,
+                                      type_convert_time=1))[2]
+        transport = unit_options(spec(type_worker=False, type_can_transport=True))[2]
+        carrier = unit_options(spec(type_rule_name='Settlers', health=20,
+                                    type_hp=20))[2]
+
+        assert plain == 0.0            # an ordinary unit has no future component
+        assert worker > plain          # terrain-changing potential
+        assert converter > plain       # a conversion path
+        assert transport > plain       # multiplying other units' options
+        assert carrier > worker        # founding a city is the largest potential
 
     def test_city_outranks_settler(self, extractor):
         """A size-1 city is worth more than a fresh settler: the city is where
-        population can grow."""
-        city = self._dof_of(self._city(1), 1)
-        settler = self._dof_of(self._unit('Settler'), 1)
-        assert city > settler
+        population can grow. Compared in options — the authoritative count — since
+        the [0, 1] score field is normalised against each entity's own ceiling."""
+        assert self._options_of(self._city(1), 1) > self._options_of(self._unit('Settler'), 1)
 
     def test_city_dof_grows_with_population(self, extractor):
-        small = self._dof_of(self._city(1), 1)
-        medium = self._dof_of(self._city(4, food=6, production=6, happiness=2), 1)
-        large = self._dof_of(self._city(10, food=12, production=15, happiness=3,
-                                        defense=2), 1)
+        small = self._options_of(self._city(1), 1)
+        medium = self._options_of(self._city(4, food=6, production=6, happiness=2), 1)
+        large = self._options_of(self._city(10, food=12, production=15, happiness=3,
+                                            defense=2), 1)
         assert small < medium < large
 
     def test_unit_never_out_dofs_a_city(self, extractor):
-        """A single unit is capability-bound, not a population engine."""
-        from env.config import UNIT_MAX_DOF
+        """A city is the population engine: even a modest working settlement holds
+        more options than the best-armed unit, and a city's own ceiling (CITY_CEIL)
+        is the higher one."""
+        from env.config import CITY_CEIL, DOF_SCALE
 
-        warrior = self._dof_of(self._unit('Warrior', moves=3, max_moves=3), 1)
-        city = self._dof_of(self._city(1), 1)
-        assert warrior <= UNIT_MAX_DOF
+        warrior = self._options_of(self._unit('Warrior', moves=3, max_moves=3), 1)
+        city = self._options_of(
+            self._city(1, food=0, production=5, happiness=1), 1)
+        assert warrior <= DOF_SCALE < CITY_CEIL
         assert warrior < city
 
     def test_settler_people_decay_with_age(self, extractor):
@@ -425,27 +479,48 @@ class TestPopulationEconomics:
 
     def test_settler_decay_has_a_floor(self, extractor):
         """People remain even after a long time: the floor keeps it above zero."""
-        from env.config import SETTLER_DECAY_FLOOR, SETTLER_BASE
+        from env.config import (CARRIER_DECAY_FLOOR, CARRIER_DECAY_PER_TURN,
+                                DOF_SCALE, W_FUTURE_UNIT, UNIT_FUTURE_SETTLE_W)
 
         extractor = GameStateExtractor(my_player_id=0)
         obs = self._unit('Settler')
         extractor.extract(obs, {}, 1)
         ancient = list(extractor.extract(obs, {}, 500).state.entities.values())[0]
-        assert ancient.current_dof > 0.0
-        assert ancient.current_dof <= 0.10 + SETTLER_BASE * SETTLER_DECAY_FLOOR + 1e-9
+        assert ancient.dof_count > 0.0
+        # The eroded floor of the future component, plus the live current one.
+        floor_future = (W_FUTURE_UNIT * UNIT_FUTURE_SETTLE_W * CARRIER_DECAY_FLOOR)
+        assert ancient.current_dof <= (0.15 + floor_future) + 1e-9
+        assert CARRIER_DECAY_PER_TURN > 0.0
 
     def test_settler_is_risk_discounted(self, extractor):
         """A wounded settler in the field is worth less — it can be captured."""
-        healthy = self._dof_of(self._unit('Settler', health=100), 1)
-        wounded = self._dof_of(self._unit('Settler', health=40), 1)
+        healthy = self._options_of(self._unit('Settler', health=100), 1)
+        wounded = self._options_of(self._unit('Settler', health=40), 1)
         assert wounded < healthy
 
-    def test_settler_keeps_a_mobility_bonus(self, extractor):
-        """Its one real advantage over a city is that it can move."""
-        from env.config import SETTLER_MOBILITY_BONUS
+    def test_carrier_potential_dominates_its_own_total(self, extractor):
+        """What makes a settler special is not its current capability but that its
+        future component is nearly half of its value — an ordinary soldier's is a
+        few per cent. That potential is realised by founding a city."""
+        from env.entity_extractor import unit_options
 
-        settler = self._dof_of(self._unit('Settler'), 1)
-        assert settler >= SETTLER_MOBILITY_BONUS
+        settler = self._unit('Settler')['unit']['1']
+        # The real civ2civ3 Settlers also carry the worker and conversion flags.
+        settler.update({'type_worker': True, 'type_converted_to': 52,
+                        'type_convert_time': 1})
+        soldier = self._unit('Warrior', health=10, moves=1, max_moves=1)['unit']['1']
+        soldier.update({'type_attack_strength': 1, 'type_defense_strength': 1,
+                        'type_firepower': 1, 'type_hp': 10})
+
+        s_opts, s_cur, s_fut = unit_options(settler)
+        w_opts, w_cur, w_fut = unit_options(soldier)
+        assert s_fut > 0.4 and w_fut < 0.15                # potentials differ sharply
+        assert w_cur > s_cur                               # soldier's CURRENT is higher
+        # The carrier's value is mostly *potential*: nearly half of its options
+        # come from what it can still become (a city), not from what it is.
+        from env.config import DOF_SCALE, W_FUTURE_UNIT
+
+        assert DOF_SCALE * W_FUTURE_UNIT * s_fut / s_opts > 0.4
 
 
 class TestDofIndexScaling:
@@ -687,18 +762,19 @@ class TestUnitDofIsNotConsumedByActing:
         assert (fast.state.entities['unit_7'].current_dof
                 > slow.state.entities['unit_7'].current_dof)
 
-    def test_zero_capacity_unit_keeps_health_component(self, extractor):
-        """A unit with no movement capacity still has DoF from health/value; it
-        must not be driven to zero by the mobility term, and must stay below the
+    def test_zero_capacity_unit_keeps_its_components(self, extractor):
+        """A unit with no movement capacity still has DoF from its other
+        capabilities; it must not be driven to zero, and must stay below the
         settlement that produces population."""
-        from env.config import UNIT_MAX_DOF
+        from env.config import CITY_CEIL, DOF_SCALE
 
         immobile = extractor.extract(self._unit(moves_left=0, max_moves=0), {}, turn=1)
-        dof = immobile.state.entities['unit_7'].current_dof
-        assert 0.2 < dof < UNIT_MAX_DOF
+        dof = immobile.state.entities['unit_7'].dof_count
+        assert 0.5 < dof < DOF_SCALE
         city = extractor.extract(
             {'city': {'1': {'population': 1, 'food': 0, 'production': 0, 'gold': 0,
                             'happiness': 0, 'defense': 0, 'x': 0, 'y': 0,
                             'owner': 0, 'turn_last_built': 0, 'prod_process': 0}}},
             {}, turn=1)
-        assert dof < city.state.entities['city_1'].current_dof
+        city_opts = city.state.entities['city_1'].dof_count
+        assert dof < city_opts <= CITY_CEIL
