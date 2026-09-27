@@ -6,9 +6,11 @@ import pytest
 from metrics.duel import (
     MIRROR_MIN_GAMES,
     ab_verdict,
+    cumulative,
     mirror_verdict,
     paired_summary,
 )
+from baselines.run_duel import _dead_side
 
 
 class TestPairedSummary:
@@ -65,3 +67,54 @@ class TestAbVerdict:
     def test_the_difference_can_favour_y(self):
         v = ab_verdict([-5.0, -6.0, -4.5, -5.5])
         assert v['verdict'] == 'difference' and 'в пользу Y' in v['reason']
+
+
+class TestCumulative:
+    """Траектория счёта: прирост есть только там, где счёт менялся."""
+
+    SERIES = [{"turn": 3, "delta": 2.0}, {"turn": 7, "delta": 3.0},
+              {"turn": 12, "delta": -1.0}]
+
+    def test_the_whole_trajectory_sums_up(self):
+        assert cumulative(self.SERIES) == pytest.approx(4.0)
+
+    def test_a_horizon_keeps_only_what_happened_by_then(self):
+        assert cumulative(self.SERIES, upto=3) == pytest.approx(2.0)
+        assert cumulative(self.SERIES, upto=7) == pytest.approx(5.0)
+        assert cumulative(self.SERIES, upto=6) == pytest.approx(2.0)
+
+    def test_an_empty_series_is_zero_not_an_error(self):
+        assert cumulative([]) == 0.0
+
+    def test_a_falling_score_is_kept(self):
+        # Город потерян — счёт падает; выбрасывать такие события значит подгонять.
+        assert cumulative([{"turn": 1, "delta": 5.0},
+                           {"turn": 2, "delta": -4.0}]) == pytest.approx(1.0)
+
+    def test_broken_entries_do_not_crash_the_analysis(self):
+        assert cumulative([{"turn": "нет"}, None, {"delta": 1.0}]) == pytest.approx(1.0)
+
+
+class TestDeadSide:
+    """«Пассивная политика» и «отказ инструмента» — разные вещи.
+
+    Пассивная политика (любопытство ВЫКЛ) делает редкие, но настоящие выборы —
+    на живых данных 0.04–0.05 решения/ход. Ровно 0.00 при полном числе ходов и
+    rc=0 значит, что ход стороне не достался: державу не взяли.
+    """
+
+    def test_a_side_that_never_acted_is_dead(self):
+        assert _dead_side({"turns": 50, "decisions_per_turn_mean": 0.0}) is True
+
+    def test_a_merely_passive_side_is_alive(self):
+        assert _dead_side({"turns": 50, "decisions_per_turn_mean": 0.04}) is False
+
+    def test_an_erroring_side_is_not_reported_as_dead(self):
+        # У неё своя причина выпадения; смешивать диагнозы нельзя.
+        assert _dead_side({"error": "таймаут", "decisions_per_turn_mean": 0.0}) is False
+
+    def test_an_absent_record_is_not_called_dead(self):
+        assert _dead_side(None) is False
+
+    def test_missing_field_counts_as_never_acted(self):
+        assert _dead_side({"turns": 50}) is True

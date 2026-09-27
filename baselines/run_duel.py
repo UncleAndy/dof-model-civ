@@ -182,6 +182,23 @@ def _usable(rec: dict | None, min_turns: int, require_active: bool = False) -> b
     return True
 
 
+def _dead_side(rec: dict | None) -> bool:
+    """Сторона не сделала НИ ОДНОГО решения за весь матч — отказ инструмента.
+
+    Отличать от «пассивной политики»: пассивная политика — это НОЛЬ ЦЕЛЫХ решений
+    при живой державе, но она всё же делает выборы, и на живых данных её темп был
+    0.04–0.05 решения/ход. Ровно 0.00 при `rc=0` и полном числе ходов означает, что
+    сторона крутила цикл, но **ход ей не доставался** (та же природа, что у дефекта
+    follower'а: державу не взяли). Это не данные о политике, и — в отличие от
+    пассивности — остаётся браком даже при `--allow-passive`: там речь о «пусть
+    бездействие будет частью эффекта», а не о «пусть сломанный инструмент войдёт
+    в интервал разницей, которой в игре не было».
+    """
+    if not rec or rec.get("error"):
+        return False
+    return float(rec.get("decisions_per_turn_mean") or 0.0) <= 0.0
+
+
 def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--games", type=int, default=3)
@@ -211,7 +228,9 @@ def main() -> int:
     p.add_argument("--allow-passive", dest="require_both_active",
                    action="store_false",
                    help="не фильтровать пассивную сторону (нужно, когда бездействие — "
-                        "сама политика, напр. no-op в роли противника)")
+                        "сама политика, напр. любопытство ВЫКЛ). Сторона с РОВНО "
+                        "нулём решений отбраковывается всё равно: это отказ "
+                        "инструмента (ход не достался), а не пассивность")
     p.add_argument("--swap", action="store_true",
                    help="переставлять стороны между играми: иначе позиция "
                         "host/follower (порядок ходов) войдёт в результат как эффект")
@@ -259,21 +278,27 @@ def main() -> int:
             game_no += 1
             g = _run_game(args, game_no)
             attempts += 1
-            if (_usable(g["a"], args.min_turns, args.require_both_active)
-                    and _usable(g["b"], args.min_turns, args.require_both_active)):
+            ok = (_usable(g["a"], args.min_turns, args.require_both_active)
+                  and _usable(g["b"], args.min_turns, args.require_both_active)
+                  and not (_dead_side(g["a"]) or _dead_side(g["b"])))
+            if ok:
                 break
             if attempts > args.retries:
                 print(f"  игра не состоялась даже после {attempts} попыток "
                       f"(стенд) — оставляю как отброшенную", flush=True)
                 break
-            print(f"  игра не состоялась (стенд отдал {g['slot']} без игры) — "
-                  f"повтор, попытка {attempts + 1}", flush=True)
+            why = ("сторона не сделала ни одного решения — ход не достался "
+                   "(отказ инструмента)") if (_dead_side(g["a"]) or _dead_side(g["b"])) \
+                else (f"стенд отдал {g['slot']} без игры")
+            print(f"  игра не состоялась ({why}) — повтор, попытка {attempts + 1}",
+                  flush=True)
             time.sleep(args.settle)
         games.append(g)
 
     good = [g for g in games
             if _usable(g["a"], args.min_turns, args.require_both_active)
-            and _usable(g["b"], args.min_turns, args.require_both_active)]
+            and _usable(g["b"], args.min_turns, args.require_both_active)
+            and not (_dead_side(g["a"]) or _dead_side(g["b"]))]
     bad = [g for g in games if g not in good]
     if bad:
         passive = [g for g in bad

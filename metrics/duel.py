@@ -52,6 +52,31 @@ def mirror_verdict(diffs: list[float], min_games: int = MIRROR_MIN_GAMES) -> dic
                        f'интервала, дизайн смещён (порядок ходов/старт)')}
 
 
+def cumulative(series: list[dict], upto: int | None = None) -> float:
+    """Накопленный счёт по траектории `[{turn, delta}, …]`.
+
+    Траектория — это НЕ «счёт в каждый момент»: сервер отдаёт прирост только когда
+    счёт меняется, поэтому между событиями роста нет, и это норма, а не пропуск
+    данных. `upto` ограничивает суммирование ходом включительно (для сравнения
+    вариантов на фиксированных горизонтах, а не только в конце матча).
+    """
+    total = 0.0
+    for event in series or ():
+        if not isinstance(event, dict):
+            continue
+        try:
+            turn = int(event.get('turn', 0))
+        except (TypeError, ValueError):
+            continue
+        if upto is not None and turn > upto:
+            continue
+        try:
+            total += float(event.get('delta', 0.0) or 0.0)
+        except (TypeError, ValueError):
+            continue
+    return total
+
+
 def ab_verdict(diffs: list[float], min_games: int = MIRROR_MIN_GAMES) -> dict:
     """Вердикт очной ставки: различаются ли варианты X и Y.
 

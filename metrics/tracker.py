@@ -346,6 +346,11 @@ class MatchMetrics:
             "score_first": self.score_first,
             "score_events": self.score_events,
             "score_max_step": self.score_max_step,
+            # Траектория, а не только конечная точка. Нужна потому, что счёт
+            # грубый и редкий: на коротком горизонте различие в поведении может
+            # не успеть стать различием в итоговом счёте, и тогда видно только
+            # «сколько и когда очки приходили».
+            "score_series": list(self.score_series),
         }
         payload.update(self._series_payload())
         return payload
