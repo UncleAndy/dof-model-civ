@@ -1,0 +1,86 @@
+{
+  "meta": {
+    "agents": [
+      "dof_expansionist"
+    ],
+    "episodes": 1,
+    "turns": 25,
+    "timeout": 240,
+    "match_timeout_s": 240,
+    "step_timeout_s": 20,
+    "curiosity": true,
+    "false_claim": "",
+    "lookahead": 3,
+    "context_switch_penalty": 0.5,
+    "max_candidates": 8,
+    "max_decisions_per_turn": 20,
+    "save_series": false,
+    "seed_base": null,
+    "elapsed_s": 23.9
+  },
+  "results": {
+    "dof_expansionist": [
+      {
+        "agent": "dof_expansionist",
+        "seed": null,
+        "engine": "rust-core",
+        "turns": 25,
+        "avg_dof": 0.16711656773828643,
+        "final_dof": 0.1782470873786408,
+        "avg_total_dof_index": 26.38948197891958,
+        "final_total_dof_index": 31.17916797929537,
+        "min_entities": 95,
+        "max_entities": 103,
+        "actions_issued": 1,
+        "decisions_per_turn_mean": 0.04,
+        "skipped_turns": 24,
+        "irreversible_actions": 1,
+        "irreversibility_ratio": 1.0,
+        "error": "",
+        "wedge_action": null,
+        "curiosity": true,
+        "experiments_total": 1,
+        "pairs_total": 1,
+        "experiment_families": {
+          "build_city": 1
+        },
+        "port": 6310,
+        "start_fingerprint": "474d0ed2eb91",
+        "revealed_cells": 21,
+        "start_xy": [
+          61,
+          37
+        ],
+        "empty_action_turns": 0,
+        "reconciled": {
+          "match": 5010,
+          "new": 42
+        },
+        "entity_kinds_max": {
+          "unit": 12,
+          "city": 1,
+          "tech": 87,
+          "diplomacy": 3
+        },
+        "corrected_keys": [],
+        "false_claims": [],
+        "correction_log": [],
+        "score_cum": 2.0,
+        "score_gain": 2.0,
+        "score_first": 0.0,
+        "score_events": 2,
+        "score_max_step": 1.0,
+        "score_series": [
+          {
+            "turn": 1,
+            "delta": 1.0
+          },
+          {
+            "turn": 10,
+            "delta": 1.0
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,4 @@
+{"city": "121", "production_kind": 6, "prod_shield": 3, "prod_process": 0.075, "shield_stock": 3, "turns_to_prod_complete": 13, "buy_cost": 142, "cost_from_process": 40.0, "cost_from_buy": 73.0, "turns_expected": 13, "kind": "probe", "turn": 1, "wanted": "Settlers"}
+{"city": "121", "production_kind": 6, "prod_shield": 3, "prod_process": 0.6, "shield_stock": 6, "turns_to_prod_complete": 2, "buy_cost": 8, "cost_from_process": 5.0, "cost_from_buy": 9.0, "turns_expected": 0, "kind": "probe", "turn": 2, "wanted": "Warriors"}
+{"city": "121", "production_kind": 6, "prod_shield": 3, "prod_process": 0.9, "shield_stock": 9, "turns_to_prod_complete": 1, "buy_cost": 2, "cost_from_process": 3.333, "cost_from_buy": 9.0, "turns_expected": 0, "kind": "probe", "turn": 3, "wanted": "Workers"}
+{"kind": "probe", "turn": 4, "wanted": "Granary"}

@@ -46,6 +46,11 @@ class Choice:
     reason: str = ""
     nodes: int = 0
     best_candidate: Candidate | None = None
+    #: состав кандидатов в исходном состоянии: {вид: сколько}. Без него «нет
+    #: улучшения» неотличимо от «нет кандидатов» — а это разные факты: первый
+    #: означает «всё, что есть, невыгодно», второй — «набор пуст, и это вопрос к
+    #: проводнику ценностей, а не к поиску».
+    candidate_kinds: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass
@@ -93,6 +98,10 @@ def choose(state: ForecastState, vals: Valuations, *,
     root = _Node(state=state, path=[], value=0.0, discount=1.0, first=None)
     frontier = [root]
     nodes = 0
+    root_cands = candidates(state, vals, max_moves=max_moves)
+    kinds: dict[str, int] = {}
+    for cand in root_cands:
+        kinds[cand.kind] = kinds.get(cand.kind, 0) + 1
 
     for _depth in range(max(1, horizon)):
         nxt: list[_Node] = []
@@ -126,11 +135,15 @@ def choose(state: ForecastState, vals: Valuations, *,
         frontier = nxt
 
     best = max(frontier, key=lambda n: n.value)
+    composition = ", ".join(f"{k} {v}" for k, v in sorted(kinds.items())) or "нет"
     if best.value <= min_improvement or best.first is None:
         return Choice(action=None, value=best.value, path=[],
                       reason=(f"нет строгого улучшения (лучшее значение "
-                              f"{best.value:+.4f} ≤ {min_improvement:+.4f})"),
-                      nodes=nodes, best_candidate=best.first)
+                              f"{best.value:+.4f} ≤ {min_improvement:+.4f}; "
+                              f"кандидаты: {composition})"),
+                      nodes=nodes, best_candidate=best.first,
+                      candidate_kinds=kinds)
     return Choice(action=best.first.action, value=best.value, path=best.path,
                   reason=f"улучшение {best.value:+.4f} по пути {len(best.path)} ход(ов)",
-                  nodes=nodes, best_candidate=best.first)
+                  nodes=nodes, best_candidate=best.first,
+                  candidate_kinds=kinds)

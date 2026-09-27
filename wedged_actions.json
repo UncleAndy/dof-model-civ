@@ -1,0 +1,22 @@
+{
+  "city/city_buy_production": {
+    "ctrl_type": "city",
+    "action_name": "city_buy_production",
+    "family": "city_buy_production",
+    "first_turn": 9,
+    "seen": 1,
+    "context": {
+      "agent": "dof_expansionist"
+    }
+  },
+  "city/city_change_specialist": {
+    "ctrl_type": "city",
+    "action_name": "city_change_specialist_0",
+    "family": "city_change_specialist",
+    "first_turn": 9,
+    "seen": 1,
+    "context": {
+      "agent": "dof_expansionist"
+    }
+  }
+}

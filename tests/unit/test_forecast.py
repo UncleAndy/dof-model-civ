@@ -187,6 +187,69 @@ class TestDiscount:
         assert choice.best_candidate.kind == "research"
 
 
+class TestOnlyOfferedActions:
+    """Прогноз выбирает ТОЛЬКО то, что сервер предлагает сейчас.
+
+    Урок живого прогона: 25 ходов подряд прогноз выбирал `build_city` юниту,
+    которому сервер этого не предлагает (город нельзя основывать ближе двух клеток
+    к другому — правило `citymindist`, которого модель площадки не знает), и
+    сторона простояла весь матч. Фильтр «предложено ли» обязателен.
+    """
+
+    def test_an_actor_that_already_decided_this_turn_is_skipped(self):
+        """Правило «один актёр — одно решение за ход», и прогноз обязан его видеть.
+
+        Без этого прогноз, вызванный второй раз за тот же ход, предлагает ход уже
+        решившему актору, раннер его отбрасывает — и счётчик решений расходится с
+        тем, что ушло на провод (измерено: 61 «действие» при 31 отправленном).
+        """
+        vals = _vals(viable_tiles={(0, 0)}, reach_tiles=[(0, 0)])
+        vals.excluded = lambda ctrl, actor: (ctrl, str(actor)) == ("unit", "unit_1")
+        assert [c for c in candidates(_base_state(), vals) if c.kind == "found"] == []
+
+    def test_the_city_record_id_keeps_its_live_type_in_the_comparison(self):
+        """Живьём id актёра — целое, в фикстурах строка; сравнивать надо по строке.
+
+        На этом правило «один актёр за ход» молча не срабатывало: ключ города живой
+        целый (`121`), а сравнение шло со строкой `'121'`. Ошибка невидима — просто
+        прогноз предлагал ход тому, кто уже решил, и счётчик врал.
+        """
+        from brain.forecast.live import build_context
+        from tests.unit.test_forecast_pricing import (_city, _extractor, _obs,
+                                                      _settler, _dof_state)
+
+        info_dict = {"available_actions": {"city": {"121": {"produce_Settlers": True}},
+                                           "unit": {}, "tech": {}}}
+        ctx = build_context(_obs(city=_city(), units=_settler()), info_dict,
+                            _dof_state(), _extractor(),
+                            exclude_actors={("city", 121)})   # целое, как живьём
+        assert ctx.vals.excluded("city", "city_121") is True
+        assert ctx.vals.excluded("city", "city_999") is False
+
+    def test_a_free_actor_is_still_proposed(self):
+        vals = _vals(viable_tiles={(0, 0)}, reach_tiles=[(0, 0)])
+        vals.excluded = lambda ctrl, actor: (ctrl, str(actor)) == ("city", "city_9")
+        assert [c for c in candidates(_base_state(), vals) if c.kind == "found"]
+
+    def test_founding_is_not_proposed_when_the_server_forbids_it(self):
+        vals = _vals(viable_tiles={(0, 0)}, reach_tiles=[(0, 0)])
+        vals.allowed = lambda kind, _a, _n: kind != "found"
+        assert [c for c in candidates(_base_state(), vals) if c.kind == "found"] == []
+
+    def test_movement_is_not_proposed_when_goto_is_not_offered(self):
+        vals = _vals(viable_tiles={(3, 0)},
+                     reach_tiles=[(0, 0), (1, 0), (2, 0), (3, 0)])
+        vals.allowed = lambda kind, _a, _n: kind != "move"
+        assert [c for c in candidates(_base_state(), vals) if c.kind == "move"] == []
+
+    def test_nothing_offered_means_no_decision(self):
+        vals = _vals(viable_tiles={(0, 0)}, reach_tiles=[(0, 0), (1, 0)])
+        vals.allowed = lambda _k, _a, _n: False
+        choice = choose(_base_state(), vals)
+        assert choice.action is None
+        assert "нет строгого улучшения" in choice.reason
+
+
 class TestState:
     def test_index_is_a_product_of_options(self):
         state = ForecastState(dof={"a": 2.0, "b": 4.0})

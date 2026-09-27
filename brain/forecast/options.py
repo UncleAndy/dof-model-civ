@@ -13,6 +13,7 @@
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -45,8 +46,22 @@ class Valuations:
     works: Callable[[tuple[int, int]], list[tuple[str, float, str | None]]]
     #: носитель ли населения (только ему основание и цена площадки)
     is_carrier: Callable[[str], bool]
-    #: ценность раскрытия клетки (сужение полосы). Ноль — пока не откалибровано.
+    #: ценность раскрытия клетки, в единицах индекса (разрыв Дженсена по
+    #: измеренному разбросу ценностей клеток, `info.py`). Ноль для уже раскрытой
+    #: клетки — разглядывать в ней нечего.
     info_gain: Callable[[tuple[int, int]], float] = lambda _tile: 0.0
+    #: МОЖЕТ ли сервер это предложить прямо сейчас: (вид, сущность, имя) → bool.
+    #: Обязательный фильтр, а не украшение: модель площадки не знает правил стенда
+    #: (например `citymindist = 2` — город нельзя основать рядом с другим), и без
+    #: этой проверки прогноз выбирает действия, которых сервер не предлагает.
+    #: Урок живой: первый прогон 25 раз подряд выбрал `build_city` юниту, которому
+    #: он недоступен, и сторона простояла весь матч.
+    allowed: Callable[[str, str, str], bool] = lambda _kind, _actor, _name: True
+    #: Решил ли этот актёр в ЭТОМ ходу. Правило «один актёр — одно решение за ход»
+    #: (конвенция civrealm); без него прогноз, вызванный второй раз за тот же ход,
+    #: предлагает ход уже решившему актёру, раннер его отбрасывает — и счётчики
+    #: решений перестают соответствовать тому, что ушло на провод.
+    excluded: Callable[[str, str], bool] = lambda _ctrl, _actor: False
 
 
 @dataclass
@@ -64,9 +79,13 @@ def _best_destination(state: ForecastState, unit_id: str, vals: Valuations,
                       *, max_moves: int) -> tuple[tuple[int, int] | None, float, float]:
     """Лучшая достижимая клетка для юнита: (клетка, её ценность, ценность текущей).
 
-    Ценность клетки для носителя — это ценность города на ней; для не-носителя —
-    только информация. Движение «в никуда» ценности не имеет и кандидатом не
-    становится (иначе агент ходил бы без причины).
+    Ценность клетки для носителя — логарифм опций города на ней (шкала индекса, в
+    которой принимается решение); для не-носителя — только цена раскрытия. Оба
+    слагаемых в одной шкале, иначе сравнение клеток было бы сравнением опций с
+    логарифмами.
+
+    Движение «в никуда» ценности не имеет и кандидатом не становится (иначе агент
+    ходил бы без причины).
     """
     here = state.positions.get(unit_id)
     if here is None:
@@ -76,7 +95,9 @@ def _best_destination(state: ForecastState, unit_id: str, vals: Valuations,
     def value(tile: tuple[int, int]) -> float:
         score = 0.0
         if carrier and vals.site_viable(tile):
-            score += float(vals.city_dof(tile))
+            dof = float(vals.city_dof(tile))
+            if dof > 1.0:
+                score += math.log(dof)
         score += float(vals.info_gain(tile))
         return score
 
@@ -121,7 +142,8 @@ def candidates(state: ForecastState, vals: Valuations, *,
         # предлагается — иначе агент «ходит» без причины.
         if best_value <= current:
             continue
-        effect = tr.move(state, unit_id, tile)
+        effect = tr.move(state, unit_id, tile,
+                         info_gain=float(vals.info_gain(tile)))
         out.append(Candidate(action=("unit", unit_id, "goto"),
                              effect=effect, kind="move",
                              score_hint=best_value - current,
@@ -159,7 +181,15 @@ def candidates(state: ForecastState, vals: Valuations, *,
                                  score_hint=effect.delta,
                                  extra={"city": city_id, "tile_delta": tile_delta}))
 
-    return out
+    # Обязательный фильтр: прогноз вправе выбирать только то, что сервер реально
+    # предлагает. Правила стенда (например минимальная дистанция между городами)
+    # модели площадки неизвестны — их знает провод.
+    offered = [c for c in out
+               if vals.allowed(c.kind, c.action[1], c.action[2])]
+    # И только тем, кто в этом ходу ещё не решал: иначе предложение уйдёт актёру,
+    # чей ход уже сделан, раннер его отбросит — а счётчики решений разойдутся с тем,
+    # что реально ушло на провод (измерено: 61 «действие» при 31 отправленном).
+    return [c for c in offered if not vals.excluded(c.action[0], c.action[1])]
 
 
 def tech_name(tech_id: str) -> str:

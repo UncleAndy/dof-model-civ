@@ -53,30 +53,48 @@ def add_entity(state: ForecastState, entity_id: str, dof: float, *,
 
 
 def index_delta(state: ForecastState, entity_id: str, delta: float) -> float:
-    """Изменение индекса от прибавки `delta` к уже существующей сущности."""
+    """Изменение индекса от прибавки `delta` к уже существующей сущности.
+
+    Нижняя граница — 1.0, а не EPSILON: живая сущность имеет хотя бы одну опцию
+    (шкала — число опций, см. `state.py`). Верхней границы нет.
+
+    ОТОЗВАНО: здесь стоял потолок `min(1.0, …)` — остаток нормализованной шкалы.
+    На шкале опций он означал, что прибавка к городу с 8 опциями «уменьшает» его
+    значение до ln 1, то есть работа, улучшающая клетку, выглядела бы вредной для
+    того самого города, которому она помогает. Ловится тестом «прибавка к городу
+    поднимает индекс».
+    """
     if delta == 0.0 or entity_id not in state.dof:
         return 0.0
-    before = state.dof[entity_id]
-    after = min(1.0, max(EPSILON, before + delta))
+    before = max(float(state.dof[entity_id]), EPSILON)
+    after = max(1.0, before + float(delta))
     state.dof[entity_id] = after
-    return math.log(after) - math.log(max(before, EPSILON))
+    return math.log(after) - math.log(before)
 
 
-def move(state: ForecastState, unit_id: str, target: tuple[int, int]) -> Effect:
+def move(state: ForecastState, unit_id: str, target: tuple[int, int], *,
+         info_gain: float = 0.0) -> Effect:
     """Ход юнита: меняется позиция и раскрытие клетки, куда он встал.
 
-    Немедленного изменения индекса нет: ценность хода — в том, что станет
-    доступно на новой клетке (площадка, основание города, информация). Именно
-    поэтому цена хода не может считаться «дельтой действия»: её даёт преемник.
+    «Дельта действия» обычно нулевая: ценность хода — в том, что станет доступно
+    на новой клетке (площадка, основание города). Её даёт преемник, а не сам ход.
+
+    Исключение — `info_gain`: ценность РАСКРЫТИЯ клетки, куда юнит встал. Это не
+    выдумка, а разрыв Дженсена по измеренному разбросу ценностей клеток
+    (`info.py`). Без него ход в туман имеет нулевую дельту, поиск принимает только
+    строгое улучшение — и агент не идёт в туман никогда, хотя именно там лежат
+    площадки под города.
 
     Раскрытой считается только клетка, на которую юнит встал, — это достоверно.
     Остальное раскрытие за ход предсказать нельзя, и оно не приписывается.
     """
     new = state.clone()
     target = (int(target[0]), int(target[1]))
+    newly_revealed = target not in state.revealed
     new.positions[unit_id] = target
     new.revealed.add(target)
-    return Effect(state=new, delta=0.0, delay=0, reversible=True,
+    delta = float(info_gain) if newly_revealed else 0.0
+    return Effect(state=new, delta=delta, delay=0, reversible=True,
                   note=f"ход {unit_id} → {target}")
 
 

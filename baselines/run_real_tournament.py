@@ -93,6 +93,14 @@ def _parse_cli(argv: list[str]) -> argparse.Namespace:
                              "(Axiom 4); core default 0.5")
     parser.add_argument("--max-candidates", type=int, default=8,
                         help="max branches handed to DOF-Core per decision")
+    parser.add_argument("--forecast", dest="forecast", action="store_true",
+                        default=True,
+                        help="решение принимает ПРОГНОЗ (brain/forecast): перебор "
+                             "вариантов с перевыводом возможностей в будущем "
+                             "состоянии, дисконт за ход, вето/штраф по аксиомам")
+    parser.add_argument("--no-forecast", dest="forecast", action="store_false",
+                        help="прежний путь: ядро оценивает один шаг по сегодняшнему "
+                             "меню (для сравнения, а не для результатов)")
     parser.add_argument("--seed-base", type=int, default=None,
                         help="if set, episode i calls env.reset(seed=seed_base+i). "
                              "NOTE: observed ineffective on the standard stand -- "
@@ -283,7 +291,7 @@ def _frozen_probe(obs: dict, my_player_id) -> list[str]:
     """
     lines: list[str] = []
     try:
-        from env.entity_extractor import is_population_carrier, spec_field
+        from env.entity_extractor import is_population_carrier, num, spec_field
         from env.site_eval import evaluate_site, tile_output
     except Exception:  # noqa: BLE001
         return lines
@@ -333,6 +341,261 @@ def _frozen_probe(obs: dict, my_player_id) -> list[str]:
     return lines
 
 
+def _forecast_decide(obs, info, dof, extractor, avail) -> tuple[bool, tuple | None]:
+    """Прогноз решает ход: `(взял_ли_решение, действие)`.
+
+    Различать «прогноз решил не действовать» и «прогноз недоступен» обязательно:
+    первое — законный исход DOF-Core (нет строгого улучшения), и подменять его
+    прежним путём нельзя; второе — сбой, и тогда работает прежний путь.
+    """
+    if not ARGS.forecast:
+        return False, None
+    try:
+        from brain.forecast import choose
+        from brain.forecast.live import build_context
+
+        ctx = build_context(obs, info, dof, extractor,
+                            exclude_actors=set(_USED_ACTORS[0])
+                            if _USED_ACTORS else None)
+        _learn_type_cost(ctx, obs)      # вторая половина прошлого замера
+        if not _FORECAST_NOTES_PRINTED and ctx.notes:
+            _FORECAST_NOTES_PRINTED.append(True)
+            for note in ctx.notes:
+                print(f"        [прогноз] {note}", flush=True)
+        choice = choose(ctx.state, ctx.vals)
+    except Exception as exc:  # noqa: BLE001 - сбой прогноза не должен ломать матч
+        _FORECAST_ERRORS.append(f"{type(exc).__name__}: {exc}")
+        if len(_FORECAST_ERRORS) <= 3:
+            print(f"        [прогноз] сбой: {type(exc).__name__}: {exc}", flush=True)
+        return False, None
+
+    _FORECAST_STATS["decisions"] += 1
+    if choice.action is None:
+        # Замер спрашивается ПЕРВЫМ — и именно тогда, когда кандидатов нет вовсе:
+        # город предлагает только неоцениваемые типы, и потратить ход на замер
+        # единственный способ выйти из круга «не знаем цену → не строим → не узнаём».
+        probe = _probe_decision(ctx, extractor, info)
+        if probe is not None:
+            _FORECAST_STATS["probes"] += 1
+            if _FORECAST_STATS["probes"] <= 3:
+                print(f"        [прогноз] пустой ход потрачен на замер: "
+                      f"{probe[0]}/{probe[1]}/{probe[2]}", flush=True)
+            return True, probe
+        if not choice.candidate_kinds:
+            # Это НЕ отказ от действия, а конец хода: кандидатов нет, потому что
+            # все актёры этого хода уже решили (или в мире действительно нечего
+            # делать). Смешивать эти два факта нельзя — «отказ 30» перестаёт
+            # отличаться от «инструмент не работал».
+            _FORECAST_STATS["idle"] += 1
+            return True, None
+        _FORECAST_STATS["declined"] += 1
+        _tally_reason(choice.reason)
+        return True, None
+    wire = _to_wire_action(choice.action, avail)
+    if wire is None:
+        # Прогноз назвал действие, которого сервер не предлагает: не подменяем его
+        # другим и не «додумываем» — ход закрывается без действия.
+        _FORECAST_STATS["unmappable"] += 1
+        if _FORECAST_STATS["unmappable"] <= 3:
+            print(f"        [прогноз] выбрал {choice.action}, но сервер такого "
+                  f"не предлагает — ход без действия", flush=True)
+        return True, None
+    _FORECAST_STATS["acted"] += 1
+    return True, wire
+
+
+def _to_wire_action(action: tuple[str, str, str], avail: dict) -> tuple | None:
+    """Перевести выбор прогноза в действие, которое сервер СЕЙЧАС предлагает.
+
+    Прогноз мыслит сущностями и целями; провод знает только свои имена. Поэтому
+    выбор сопоставляется с предложенным набором, и если соответствия нет — лучше
+    не действовать, чем сделать не то.
+    """
+    ctrl, actor, name = action
+    unit_actions = as_dict(as_dict(avail).get("unit"))
+    city_actions = as_dict(as_dict(avail).get("city"))
+    tech_actions = as_dict(as_dict(avail).get("tech"))
+
+    def offered_actor(pool: dict, entity_id: str) -> tuple[object, dict] | None:
+        bare = entity_id.split("_", 1)[1] if "_" in entity_id else entity_id
+        for key, actions in pool.items():
+            if str(key) == str(bare):
+                return key, as_dict(actions)
+        return None
+
+    if ctrl == "unit":
+        found = offered_actor(unit_actions, actor)
+        if found is None:
+            return None
+        key, actions = found
+        if name.startswith("goto"):
+            # Координат цели у `goto_N` нет: берём первый предложенный вариант —
+            # ценность хода прогноз посчитал, а конкретную цель выбирает сервер.
+            for cand_name, params in actions.items():
+                if cand_name.startswith("goto") and params:
+                    return ("unit", key, cand_name)
+            return None
+        if actions.get(name):
+            return ("unit", key, name)
+        return None
+
+    if ctrl == "city":
+        found = offered_actor(city_actions, actor)
+        if found is None:
+            return None
+        key, actions = found
+        for cand_name, params in actions.items():
+            if cand_name == name or (name.startswith("produce_")
+                                     and cand_name == name):
+                if params:
+                    return ("city", key, cand_name)
+        return None
+
+    if ctrl == "tech":
+        cur = tech_actions.get("cur_player")
+        for cand_name, params in (cur if isinstance(cur, dict) else {}).items():
+            if cand_name.startswith("research_tech") and params:
+                return ("tech", "cur_player", cand_name)
+        return None
+
+    return None
+
+
+#: Диагностика прогноза: сколько решений он принял и сколько отклонил.
+_FORECAST_STATS: dict[str, int] = {"decisions": 0, "acted": 0, "declined": 0,
+                                   "unmappable": 0, "probes": 0, "idle": 0}
+_FORECAST_ERRORS: list[str] = []
+#: примечания прогноза печатаются один раз за матч (цена раскрытия, немеренные типы)
+_FORECAST_NOTES_PRINTED: list[bool] = []
+#: Замер (проба), который предстоит засчитать: [семейство, модель]. Заполняется,
+#: когда прогноз отказывается действовать и вместо пустого хода идёт замер.
+_PENDING_PROBE: list = []
+#: Тип, который мы ПОСТАВИЛИ замером: [имя]. На следующем ходу из записи города
+#: читается стоимость этого типа (`shield_stock / prod_process`). Имя держим мы,
+#: потому что запись города несёт только номер вида производства, а не имя.
+_PROBE_TARGET: list = []
+#: (ctrl, актёр) решения, уже принятые в ЭТОМ ходу — прогноз обязан их видеть,
+#: иначе предлагает ход тому, кто уже решил, и счётчики расходятся с проводом.
+_USED_ACTORS: list = []
+
+
+def _learn_type_cost(ctx, obs) -> None:
+    """Прочитать срок поставленного замера и записать стоимость типа в склад.
+
+    Это вторая половина замера: постановка (в `_probe_decision`) плюс чтение числа у
+    мира. Без второй половины замер — просто потраченный ход.
+
+    Ограничение названо прямо: запись города не называет тип, поэтому стоимость
+    приписывается тому типу, который мы поставили. Если город успел переключиться,
+    склад получит расхождение и скажет «не знаем» — не «среднее».
+    """
+    target = _PROBE_TARGET[0] if _PROBE_TARGET else None
+    if not target:
+        return
+    facts = getattr(ctx, "facts", None)
+    if facts is None:
+        return
+    from env.measured_facts import cost_from_city
+
+    for record in (as_dict(obs.get("city")) or {}).values():
+        cost = cost_from_city(record)
+        if cost is None:
+            continue
+        _PROBE_TARGET.clear()
+        try:
+            wrote = facts.observe_type(target, cost=cost, source="probe-in-agent")
+            if wrote:
+                facts.save()
+                print(f"        [прогноз] замер состоялся: {target} — стоимость "
+                      f"{cost:.1f}", flush=True)
+        except Exception:  # noqa: BLE001
+            pass
+        return
+
+
+def _probe_decision(ctx, extractor, info) -> tuple | None:
+    """Ход на замер вместо пустого хода — под тем же бюджетом, что и любопытство.
+
+    Почему это вообще нужно агенту, а не только мерному скрипту: стоимость типа
+    нельзя вывести из наблюдения (её измеряют, поставив производство и прочитав
+    `prod_process`/`shield_stock`), а опции типа узнаются лишь тогда, когда юнит
+    появится живьём. Пока цены нет, тип не предлагается — и получается круг «не
+    знаем → не строим → не узнаём». Если ход иначе пуст, потратить его на замер
+    единственный способ круг разорвать.
+
+    Бюджет тот же, что у неизмеренных действий проекта: `exploration_budget`,
+    три попытки на семейство. Порядок типов — по алфавиту, чтобы прогон был
+    воспроизводим.
+    """
+    model = getattr(extractor, "model", None)
+    offers = getattr(ctx, "probe_offers", None) or {}
+    if model is None or not offers:
+        return None
+    from env.experiments import exploration_budget, family_of
+
+    for type_name in sorted(offers):
+        ctrl, actor, action = offers[type_name]
+        family = family_of(action)
+        attempts = int(getattr(model, "experiment_attempts", {}).get(family, 0))
+        if exploration_budget(attempts) <= 0.0:
+            continue
+        _PENDING_PROBE[:] = [family, model]
+        _PROBE_TARGET[:] = [type_name]
+        return (ctrl, actor, action)
+    return None
+
+
+def _note_probe_taken() -> None:
+    """Засчитать замер: действие действительно ушло на сервер."""
+    if not _PENDING_PROBE:
+        return
+    family, model = _PENDING_PROBE[0], _PENDING_PROBE[1]
+    _PENDING_PROBE.clear()
+    try:
+        model.record_experiment(family, turn=0)
+    except Exception:  # noqa: BLE001
+        pass
+#: почему прогноз отказался. Без разбора причин «отказ 25» неотличим от «прогноз
+#: сломан»: причина — часть результата, а не отладка.
+_FORECAST_REASONS: dict[str, int] = {}
+
+
+def _tally_reason(reason: str) -> None:
+    """Свести причину отказа к сопоставимому виду (числа в причине разные)."""
+    text = (reason or "?").strip()
+    low = text.lower()
+    if "строгого улучшения" in low or "нет улучшения" in low:
+        # Состав кандидатов сохраняем: «нет улучшения» и «нет кандидатов» —
+        # разные факты, и различать их надо в отчёте, а не догадкой.
+        tail = text.split("кандидаты:", 1)[-1].strip() if "кандидаты:" in text else "?"
+        key = f"нет строгого улучшения (кандидаты: {tail[:60]})"
+    elif "вето" in low:
+        key = "вето (аксиома 3/4)"
+    elif "необратим" in low:
+        key = "необратимость"
+    elif "нет кандидат" in low or "нечего" in low:
+        key = "нет ни одного кандидата"
+    else:
+        key = text[:70]
+    _FORECAST_REASONS[key] = _FORECAST_REASONS.get(key, 0) + 1
+
+
+def _print_forecast_summary() -> None:
+    print(f"\n  прогноз: решений {_FORECAST_STATS['decisions']} "
+          f"(выдано действий {_FORECAST_STATS['acted']}, отказов "
+          f"{_FORECAST_STATS['declined']}, из них на замер "
+          f"{_FORECAST_STATS['probes']}, конец хода (кандидатов нет) "
+          f"{_FORECAST_STATS['idle']}, не сопоставлено "
+          f"{_FORECAST_STATS['unmappable']}), сбоев "
+          f"{len(_FORECAST_ERRORS)}", flush=True)
+    if _FORECAST_REASONS:
+        top = sorted(_FORECAST_REASONS.items(), key=lambda kv: -kv[1])[:5]
+        for reason, count in top:
+            print(f"    отказ ×{count}: {reason}", flush=True)
+    if _FORECAST_ERRORS:
+        print(f"  прогноз, первые сбои: {_FORECAST_ERRORS[:3]}", flush=True)
+
+
 def build_agent(agent_type: str, extractor: GameStateExtractor,
                 lookahead: int = 3, context_switch_penalty: float = 0.5,
                 max_candidates: int = 8, trace: bool = False):
@@ -369,6 +632,16 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
             def act(self, obs, info):
                 dof = extractor.extract(obs, info, info.get("turn", 0))
                 avail = info.get("available_actions", {})
+
+                # ПРОГНОЗ: перебор вариантов с перевыводом возможностей в будущем
+                # состоянии (brain/forecast). Он решает ход; прежний путь ниже
+                # остаётся как fallback на случай сбоя прогноза, а не как
+                # альтернативное мнение: два решателя одновременно — это не
+                # сравнение, а неопределённость.
+                decided, wire = _forecast_decide(obs, info, dof, extractor, avail)
+                if decided:
+                    return wire
+
                 cands = gen.generate_candidates(dof.state, avail)
                 if not cands:
                     # Самоотчёт: сервер предложил действия, а кандидатов ноль.
@@ -694,6 +967,7 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
                               f"контроллеры {offered or 'ни одного'} "
                               f"(в наблюдении ключ available_actions: "
                               f"{'available_actions' in (obs or {})})", flush=True)
+                _USED_ACTORS[:] = [set(used_actors)]   # ДО решения: прогноз смотрит
                 action = agent.act(obs, info)
                 phase, key = _turn_phase(action, used_actors, decisions_this_turn,
                                          max_decisions_per_turn)
@@ -716,15 +990,38 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
                         seen = getattr(metrics, "no_choice_turns", 0) + 1
                         metrics.no_choice_turns = seen
                         if seen <= 5 or seen % 25 == 0:
+                            # Что именно предложено: без этого «нет кандидатов»
+                            # неотличимо от «сервер не предложил производство».
+                            parts = []
+                            for ctrl, actors in info_actions.items():
+                                if not isinstance(actors, dict):
+                                    continue
+                                total = sum(len(as_dict(a)) for a in actors.values())
+                                valid = sum(1 for a in actors.values()
+                                            for params in as_dict(a).values() if params)
+                                parts.append(f"{ctrl} {valid}/{total}")
+                            city_valid = []
+                            for actor, acts in as_dict(info_actions.get("city")).items():
+                                truthy = [name for name, params in as_dict(acts).items()
+                                          if params and name.startswith("produce_")]
+                                if truthy:
+                                    city_valid.append(f"{actor}: {len(truthy)} "
+                                                      f"produce → {truthy[:3]}")
                             print(f"      [выбор-пуст {seen}] ход {turns_played + 1}: "
-                                  f"предложено действий {n_offered}, агент не выбрал "
-                                  f"ни одного", flush=True)
+                                  f"предложено действий {n_offered} "
+                                  f"({'; '.join(parts)}), агент не выбрал ни одного; "
+                                  f"годное производство: "
+                                  f"{city_valid or 'НЕТ'}", flush=True)
                     action = None  # stepping None is what ends the turn
                     decisions_this_turn = 0
                     used_actors = set()
 
                 stepped = True  # from here a hang belongs to the chosen action
                 obs, reward, terminated, truncated, info = env.step(action)
+                # Замер засчитывается только ПОСЛЕ шага: отклонённое сервером
+                # действие ничему не учит, и тратить на него бюджет любопытства
+                # нельзя (то же правило, что для неизмеренных действий проекта).
+                _note_probe_taken()
             except MatchTimeout as exc:
                 if not stepped or step_budget < STEP_TIMEOUT - 1e-6:
                     # Either the match budget ran out, or the agent itself hung:
@@ -799,10 +1096,26 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
                           f"idx={index:.2f}]", end="", flush=True)
 
         metrics.finished = True
+        if ARGS.forecast:
+            # Итог прогноза: без него «0 решений» снова было бы неотличимо от
+            # «прогноз не работал и всё делал fallback».
+            _print_forecast_summary()
     except MatchTimeout as exc:
         metrics.error = f"timeout: {exc}"
     except Exception as exc:  # noqa: BLE001 - report, never crash the tournament
         metrics.error = f"{type(exc).__name__}: {exc}"
+        # Матч умер не по таймауту. Виновный выбор надо назвать — но НЕ любой ценой:
+        # клин на невиновном действии хуже отсутствия записи, потому что навсегда
+        # убирает законное действие. Поэтому пишем только те отказы, что похожи на
+        # отказ стенда (`AssertionError` в контроллере, таймаут), и молчим про
+        # ошибки нашего собственного аргумента (`KeyError`/`TypeError`/`NameError`) —
+        # они означают, что чинить надо нас, а не вычёркивать действие.
+        if isinstance(exc, (AssertionError, TimeoutError, OSError)):
+            try:
+                _record_wedge(metrics, locals().get("action"),
+                              int(locals().get("turns_played", -1)) + 1)
+            except Exception:  # noqa: BLE001
+                pass
         # A one-line summary is what the report shows; the traceback is what
         # makes the failure fixable, so keep it right next to the match.
         print(traceback.format_exc(), file=sys.stderr, flush=True)

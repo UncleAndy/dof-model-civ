@@ -1,0 +1,91 @@
+{
+  "meta": {
+    "agents": [
+      "dof_expansionist"
+    ],
+    "episodes": 1,
+    "turns": 30,
+    "timeout": 240,
+    "match_timeout_s": 240,
+    "step_timeout_s": 20,
+    "curiosity": true,
+    "false_claim": "",
+    "lookahead": 3,
+    "context_switch_penalty": 0.5,
+    "max_candidates": 8,
+    "max_decisions_per_turn": 20,
+    "save_series": false,
+    "seed_base": null,
+    "elapsed_s": 20.7
+  },
+  "results": {
+    "dof_expansionist": [
+      {
+        "agent": "dof_expansionist",
+        "seed": null,
+        "engine": "rust-core",
+        "turns": 30,
+        "avg_dof": 0.1646372634574334,
+        "final_dof": 0.17234579500000002,
+        "avg_total_dof_index": 25.48647683339448,
+        "final_total_dof_index": 29.448826604672906,
+        "min_entities": 94,
+        "max_entities": 100,
+        "actions_issued": 9,
+        "decisions_per_turn_mean": 0.3,
+        "skipped_turns": 23,
+        "irreversible_actions": 1,
+        "irreversibility_ratio": 0.1111111111111111,
+        "error": "",
+        "wedge_action": null,
+        "curiosity": true,
+        "experiments_total": 9,
+        "pairs_total": 1,
+        "experiment_families": {
+          "build_city": 1,
+          "join_city": 1,
+          "city_work": 3,
+          "city_unwork": 3,
+          "produce_Temple": 1
+        },
+        "port": 6311,
+        "start_fingerprint": "c14a4442009a",
+        "revealed_cells": 21,
+        "start_xy": [
+          66,
+          27
+        ],
+        "empty_action_turns": 0,
+        "reconciled": {
+          "match": 5553,
+          "new": 41,
+          "experiment": 9
+        },
+        "entity_kinds_max": {
+          "unit": 9,
+          "city": 1,
+          "tech": 87,
+          "diplomacy": 3
+        },
+        "corrected_keys": [],
+        "false_claims": [],
+        "correction_log": [],
+        "score_cum": 4.0,
+        "score_gain": 4.0,
+        "score_first": 0.0,
+        "score_events": 2,
+        "score_max_step": 2.0,
+        "score_series": [
+          {
+            "turn": 1,
+            "delta": 2.0
+          },
+          {
+            "turn": 28,
+            "delta": 2.0
+          }
+        ]
+      }
+    ]
+  }
+}
