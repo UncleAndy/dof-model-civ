@@ -50,3 +50,28 @@ def mirror_verdict(diffs: list[float], min_games: int = MIRROR_MIN_GAMES) -> dic
             'reason': (f'разница систематическая: {s["mean"]:+.2f}, '
                        f'95% CI [{lo:+.2f}, {hi:+.2f}], игр {s["n"]} — ноль вне '
                        f'интервала, дизайн смещён (порядок ходов/старт)')}
+
+
+def ab_verdict(diffs: list[float], min_games: int = MIRROR_MIN_GAMES) -> dict:
+    """Вердикт очной ставки: различаются ли варианты X и Y.
+
+    `diffs` — парные разницы (X минус Y) по играм, причём сторона неважна: если
+    между играми сторона переставляется, позиционное преимущество вычитается
+    вместе с картой. Разница «нет различия» — это тоже результат, и он не
+    выдаётся за «эффекта нет»: интервал сообщает, какой эффект данные исключают.
+    """
+    s = paired_summary(diffs)
+    if s['n'] < min_games:
+        return {'ok': False, 'verdict': 'no_data', 'summary': s,
+                'reason': (f'пригодных игр {s["n"]} < {min_games}: вердикта нет '
+                           f'(«мало данных», а не «различий нет»)')}
+    lo, hi = s['ci']
+    if lo <= 0.0 <= hi:
+        return {'ok': True, 'verdict': 'no_difference', 'summary': s,
+                'reason': (f'различие не показано: {s["mean"]:+.2f}, '
+                           f'95% CI [{lo:+.2f}, {hi:+.2f}], игр {s["n"]} — ноль '
+                           f'внутри интервала')}
+    who = 'X' if s['mean'] > 0 else 'Y'
+    return {'ok': True, 'verdict': 'difference', 'summary': s,
+            'reason': (f'различие есть и в пользу {who}: {s["mean"]:+.2f}, '
+                       f'95% CI [{lo:+.2f}, {hi:+.2f}], игр {s["n"]}')}

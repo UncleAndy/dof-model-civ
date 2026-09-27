@@ -40,7 +40,11 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from metrics.stats import mean  # noqa: E402
-from metrics.duel import MIRROR_MIN_GAMES, mirror_verdict  # noqa: E402
+from metrics.duel import (  # noqa: E402
+    MIRROR_MIN_GAMES,
+    ab_verdict,
+    mirror_verdict,
+)
 
 # ── Порог вердикта: задан ДО данных ─────────────────────────────────────────
 #: Меньше этого числа игр вердикта нет: разница по двум играм — это не дизайн,
@@ -68,11 +72,13 @@ def _slot_from_pool(wait: int = 120):
         signal.setitimer(signal.ITIMER_REAL, 0)
 
 
-def _worker_cmd(side: str, args, slot: int, out_path: Path, username: str) -> list[str]:
-    """Команда одного игрока. Всё, чего раннер не знает (`--aifill`, `--minp`,
-    `--begin_turn_timeout`), он передаёт в civrealm как есть."""
-    policy = args.policy_a if side == "a" else args.policy_b
-    extra = (args.extra_a if side == "a" else args.extra_b) or ""
+def _worker_cmd(args, slot: int, out_path: Path, username: str,
+                policy: str, extra: str) -> list[str]:
+    """Команда одного игрока с ЯВНО заданной конфигурацией (вариант X или Y).
+
+    Конфигурация передаётся явно, а не выводится из стороны: между играми стороны
+    переставляются (`--swap`), чтобы позиция host/follower не смешивала результат.
+    """
     cmd = [
         sys.executable, str(ROOT / "baselines" / "run_real_tournament.py"),
         "--only", policy, "--episodes", "1", "--turns", str(args.turns),
@@ -105,17 +111,32 @@ def _run_game(args, game_no: int) -> dict:
     for p in (out_a, out_b):
         p.unlink(missing_ok=True)
 
-    print(f"[игра {game_no}] слот {slot}: {args.policy_a} (A) против "
-          f"{args.policy_b} (B), ходов {args.turns}", flush=True)
+    # Варианты: X = policy_a(+extra_a), Y = policy_b(+extra_b). Между играми стороны
+    # ПЕРЕСТАВЛЯЮТСЯ, чтобы позиция host/follower (порядок ходов) не смешивала
+    # результат: сравнение делается по варианту, а не по стороне.
+    x = {"policy": args.policy_a, "extra": args.extra_a or ""}
+    y = {"policy": args.policy_b, "extra": args.extra_b or ""}
+    swap = bool(args.swap) and game_no % 2 == 0
+    cfg_a, cfg_b = (y, x) if swap else (x, y)
+    x_side = "b" if swap else "a"
+
+    print(f"[игра {game_no}] слот {slot}: "
+          f"A = {cfg_a['policy']}{' ' + cfg_a['extra'] if cfg_a['extra'] else ''} "
+          f"({args.name_a}), B = {cfg_b['policy']}"
+          f"{' ' + cfg_b['extra'] if cfg_b['extra'] else ''} ({args.name_b})"
+          f"{'  [стороны переставлены]' if swap else ''}, ходов {args.turns}",
+          flush=True)
     env = dict(os.environ)
     with open(log_a, "wb") as fa:
-        pa = subprocess.Popen(_worker_cmd("a", args, slot, out_a, args.name_a),
-                              stdout=fa, stderr=subprocess.STDOUT, env=env)
+        pa = subprocess.Popen(
+            _worker_cmd(args, slot, out_a, args.name_a, cfg_a["policy"], cfg_a["extra"]),
+            stdout=fa, stderr=subprocess.STDOUT, env=env)
     # Почти одновременно: host обязан быть жив, когда входит второй игрок.
     time.sleep(args.launch_gap)
     with open(log_b, "wb") as fb:
-        pb = subprocess.Popen(_worker_cmd("b", args, slot, out_b, args.name_b),
-                              stdout=fb, stderr=subprocess.STDOUT, env=env)
+        pb = subprocess.Popen(
+            _worker_cmd(args, slot, out_b, args.name_b, cfg_b["policy"], cfg_b["extra"]),
+            stdout=fb, stderr=subprocess.STDOUT, env=env)
 
     deadline = time.time() + args.game_timeout
     for proc, name in ((pa, "A"), (pb, "B")):
@@ -139,7 +160,8 @@ def _run_game(args, game_no: int) -> dict:
         return None
 
     a, b = load(out_a, "a"), load(out_b, "b")
-    return {"game": game_no, "slot": slot, "a": a, "b": b,
+    return {"game": game_no, "slot": slot, "a": a, "b": b, "swap": swap,
+            "x_side": x_side,
             "log_a": str(log_a), "log_b": str(log_b)}
 
 
@@ -190,6 +212,9 @@ def main() -> int:
                    action="store_false",
                    help="не фильтровать пассивную сторону (нужно, когда бездействие — "
                         "сама политика, напр. no-op в роли противника)")
+    p.add_argument("--swap", action="store_true",
+                   help="переставлять стороны между играми: иначе позиция "
+                        "host/follower (порядок ходов) войдёт в результат как эффект")
     p.add_argument("--retries", type=int, default=2,
                    help="повторы несостоявшейся игры (стенд отдал слот без игры)")
     p.add_argument("--follower-take-player", dest="follower_take_player",
@@ -206,10 +231,20 @@ def main() -> int:
     print("ДУЭЛЬ: наши политики в одной игре")
     print("=" * 84)
     mirror = (args.policy_a == args.policy_b and args.extra_a == args.extra_b)
+    if mirror:
+        args.swap = False  # сравнивать нечего: конфигурации совпадают
     print(f"  режим: {'ЗЕРКАЛО (одна политика против себя — контроль дизайна)' if mirror else 'ОЧНАЯ СТАВКА'}")
+    if not mirror:
+        print(f"  X = {args.policy_a} {args.extra_a or ''}".rstrip())
+        print(f"  Y = {args.policy_b} {args.extra_b or ''}".rstrip())
+        print(f"  стороны: {'переставляются между играми' if args.swap else 'НЕ переставляются (--swap выключен)'}")
     print(f"  ходов на игру: {args.turns}   игр: {args.games}   "
           f"begin_turn_timeout: {args.begin_turn_timeout} с")
     print(f"  порог вердикта (задан заранее): игр не меньше {MIRROR_MIN_GAMES}")
+    if mirror:
+        print("  ВНИМАНИЕ: для зеркала смотрите и объём действий (решений/ход) — "
+              "разница в объёме сама двигает счёт, поэтому игра с почти "
+              "бездействующей стороной это отказ инструмента, а не результат")
 
     games = []
     game_no = 0
@@ -258,36 +293,44 @@ def main() -> int:
         return out
 
     print()
-    print(f"{'игра':>5}{'слот':>7}{'счёт A':>9}{'счёт B':>9}{'Δ':>7}"
-          f"{'индекс A':>10}{'индекс B':>10}{'решений A/B':>13}")
+    print(f"{'игра':>5}{'слот':>7}{'X':>8}{'Y':>8}{'Δ X−Y':>9}"
+          f"{'решений X/Y':>14}{'сторона X':>11}")
     print("-" * 84)
     diffs = []
     for g in good:
         a, b = g["a"], g["b"]
-        da = float(a.get("score_gain") or 0.0)
-        db = float(b.get("score_gain") or 0.0)
-        diffs.append(da - db)
-        dec_a = float(a.get("decisions_per_turn_mean") or 0)
-        dec_b = float(b.get("decisions_per_turn_mean") or 0)
-        print(f"{g['game']:>5}{g['slot']:>7}{da:>9.1f}{db:>9.1f}{da - db:>+7.1f}"
-              f"{float(a.get('avg_total_dof_index') or 0):>10.2f}"
-              f"{float(b.get('avg_total_dof_index') or 0):>10.2f}"
-              f"{dec_a:>8.2f}/{dec_b:<4.2f}")
+        # Раскладываем записи по ВАРИАНТАМ, а не по сторонам: при перестановке
+        # сторон вариант X может играть за B, и сравнение не должно от этого зависеть.
+        x_rec, y_rec = (a, b) if g["x_side"] == "a" else (b, a)
+        sx = float(x_rec.get("score_gain") or 0.0)
+        sy = float(y_rec.get("score_gain") or 0.0)
+        diffs.append(sx - sy)
+        dec_x = float(x_rec.get("decisions_per_turn_mean") or 0)
+        dec_y = float(y_rec.get("decisions_per_turn_mean") or 0)
+        print(f"{g['game']:>5}{g['slot']:>7}{sx:>8.1f}{sy:>8.1f}{sx - sy:>+9.1f}"
+              f"{f'{dec_x:.2f}/{dec_y:.2f}':>14}"
+              f"{'A' if g['x_side'] == 'a' else 'B':>11}")
 
     summary: dict = {"games": len(games), "usable": len(good), "mirror": mirror}
-    mv = mirror_verdict(diffs)
+    mv = mirror_verdict(diffs) if mirror else ab_verdict(diffs)
     summary.update({"diff_mean": mv['summary']['mean'],
-                    "diff_ci": mv['summary']['ci']})
-    print(f"\nпарная разница по счёту: среднее {mv['summary']['mean']:+.2f}, "
+                    "diff_ci": mv['summary']['ci'],
+                    "verdict_kind": mv['verdict']})
+    print(f"\nпарная разница (X − Y) по счёту: среднее {mv['summary']['mean']:+.2f}, "
           f"95% CI [{mv['summary']['ci'][0]:+.2f}, {mv['summary']['ci'][1]:+.2f}], "
           f"игр {mv['summary']['n']}")
     if mv['verdict'] == 'no_data':
         verdict = f"ВЕРДИКТА НЕТ: {mv['reason']}"
     elif mv['verdict'] == 'clean':
         verdict = f"ЗЕРКАЛО ЧИСТОЕ: {mv['reason']} — дизайн годится для дуэлей"
-    else:
+    elif mv['verdict'] == 'biased':
         verdict = (f"ДИЗАЙН СМЕЩЁН: {mv['reason']} — результаты дуэлей на этом "
                    f"дизайне ничего не значат")
+    elif mv['verdict'] == 'no_difference':
+        verdict = (f"РАЗЛИЧИЕ НЕ ПОКАЗАНО: {mv['reason']}. Это результат: данные "
+                   f"исключают эффект больше указанного интервала")
+    else:
+        verdict = f"РАЗЛИЧИЕ ЕСТЬ: {mv['reason']}"
     print(verdict)
     if mirror:
         # Ошибку симметрии интересно видеть и по индексу, но индекс канало-зависим:

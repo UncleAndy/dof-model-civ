@@ -3,7 +3,12 @@ from __future__ import annotations
 
 import pytest
 
-from metrics.duel import MIRROR_MIN_GAMES, mirror_verdict, paired_summary
+from metrics.duel import (
+    MIRROR_MIN_GAMES,
+    ab_verdict,
+    mirror_verdict,
+    paired_summary,
+)
 
 
 class TestPairedSummary:
@@ -39,3 +44,24 @@ class TestMirrorVerdict:
     def test_the_verdict_states_the_numbers_not_an_opinion(self):
         v = mirror_verdict([10.0, 11.0, 9.5, 10.5])
         assert '95% CI' in v['reason'] and 'игр 4' in v['reason']
+
+
+class TestAbVerdict:
+    """Сравнение вариантов X и Y: и здесь «нет различия» — результат."""
+
+    def test_too_few_games_means_no_verdict(self):
+        v = ab_verdict([2.0, 2.0])
+        assert v['verdict'] == 'no_data'
+
+    def test_no_difference_is_reported_as_absence_of_evidence(self):
+        v = ab_verdict([2.0, -1.0, 0.5, -1.5])
+        assert v['verdict'] == 'no_difference'
+        assert 'не показано' in v['reason']
+
+    def test_a_difference_names_the_winning_side(self):
+        v = ab_verdict([5.0, 6.0, 4.5, 5.5])
+        assert v['verdict'] == 'difference' and 'в пользу X' in v['reason']
+
+    def test_the_difference_can_favour_y(self):
+        v = ab_verdict([-5.0, -6.0, -4.5, -5.5])
+        assert v['verdict'] == 'difference' and 'в пользу Y' in v['reason']
