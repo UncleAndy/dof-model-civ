@@ -127,6 +127,11 @@ def _parse_cli(argv: list[str]) -> argparse.Namespace:
                         help="also persist per-step DoF/entity/action series "
                              "(larger JSON, enables trajectory analysis)")
     parser.add_argument("--output", type=str, help="write per-episode metrics to JSON")
+    parser.add_argument("--dump-candidates", dest="dump_candidates", type=int,
+                        default=0, metavar="N",
+                        help="напечатать кандидатов прогноза (вид, действие, "
+                             "доф, срок, дисконт) за первые N ходов — для замера "
+                             "порогов, а не для догадок")
     args, rest = parser.parse_known_args(argv)
     sys.argv = [sys.argv[0]] + rest
     return args
@@ -344,6 +349,155 @@ def _frozen_probe(obs: dict, my_player_id) -> list[str]:
     return lines
 
 
+_CANDIDATE_DUMPS: list = []
+_TECH_NUMBERS_SEEN: list = []
+
+
+def _dump_candidates(ctx, info) -> None:
+    """Напечатать ЧИСЛА кандидатов прогноза: вид, действие, ΔDoF, срок, дисконт.
+
+    Зачем: вопрос «почему исследование редко выбирается» без этих чисел решается
+    догадкой. Здесь видно ровно то, из чего поиск выбирает: `add_entity` даёт
+    Δ = ln(опции), срок уходит в дисконт γ^срок, а необратимость снимает штраф.
+    Печатается до `ARGS.dump_candidates` ходов, одна запись на ход (прогноз
+    вызывается за ход дважды — второй раз это конец хода).
+    """
+    if not ARGS.dump_candidates:
+        return
+    turn = (info or {}).get("turn")
+    if len(_CANDIDATE_DUMPS) >= ARGS.dump_candidates:
+        return
+    if _CANDIDATE_DUMPS and _CANDIDATE_DUMPS[-1] == turn:
+        return
+    _CANDIDATE_DUMPS.append(turn)
+    try:
+        from brain.forecast.options import candidates
+        from brain.forecast.search import FORECAST_GAMMA, IRREVERSIBLE_PENALTY
+        cands = candidates(ctx.state, ctx.vals)
+    except Exception as exc:  # noqa: BLE001
+        print(f"        [кандидаты] сбой: {type(exc).__name__}: {exc}", flush=True)
+        return
+    rows = []
+    for cand in cands:
+        penalty = 0.0 if cand.effect.reversible else IRREVERSIBLE_PENALTY
+        discounted = (cand.effect.delta - penalty) * (FORECAST_GAMMA ** cand.effect.delay)
+        rows.append((discounted, cand))
+    rows.sort(key=lambda kv: kv[0], reverse=True)
+    print(f"        [кандидаты] ход {turn}: всего {len(cands)} "
+          f"(по видам: " + ", ".join(
+              f"{k} {sum(1 for _c in cands if _c.kind == k)}"
+              for k in sorted({c.kind for c in cands})) + ")", flush=True)
+    # Печатаем верх списка И, отдельно, все исследования/улучшения — даже если они
+    # в самом низу: вопрос «почему наука не выбирается» требует её ЧИСЕЛ, а не
+    # отсутствия в топе.
+    shown = rows[:8]
+    for row in rows[8:]:
+        if row[1].kind in ("research", "improve"):
+            shown.append(row)
+    for discounted, cand in shown:
+        # Для появления/исследования дельта = ln(опции) — печатаем и сами опции,
+        # чтобы порог считался по числам мира, а не по логарифмам.
+        options = ""
+        if cand.kind in ("produce", "research"):
+            options = f" опций={math.exp(cand.effect.delta):.2f}"
+        elif cand.kind == "improve":
+            options = f" прирост_города={(cand.extra or {}).get('gain')}"
+        print(f"          {cand.kind:8s} {cand.action[0]}/{cand.action[1]}/"
+              f"{cand.action[2]} Δ={cand.effect.delta:+.4f}"
+              f" срок={cand.effect.delay}{options}"
+              f" дисконт={discounted:+.4f}", flush=True)
+
+
+def _dump_tech_numbers(obs, extractor, info) -> None:
+    """ЧИСЛА технологии — даже когда кандидата на неё нет вовсе.
+
+    Без этой строки «почему наука не выбирается» решается догадкой. Здесь видно
+    каждое слагаемое: стоимость, накопленное, торговля, ставка, наука за ход по
+    ИЗМЕРЕННОМУ драйверу, срок и открываемый набор. Отдельно называется причина,
+    по которой семейство пусто, — а их две и они разные: «наука/ход = 0» (миру
+    нечем исследовать) и «срок не публикуется» (цена неизвестна).
+    """
+    if not ARGS.dump_candidates:
+        return
+    turn = (info or {}).get("turn")
+    if _TECH_NUMBERS_SEEN and _TECH_NUMBERS_SEEN[-1] == turn:
+        return
+    _TECH_NUMBERS_SEEN.append(turn)
+    try:
+        from brain.forecast.live import _player_record
+        my_id = getattr(extractor, "my_player_id", None)
+        player = _player_record(obs, my_id)
+
+        def number(value):
+            try:
+                return float(value or 0.0)
+            except (TypeError, ValueError):
+                return 0.0
+
+        cost = number(player.get("researching_cost"))
+        done = number(player.get("bulbs_researched"))
+        rate = number(player.get("science"))
+        trade = 0.0
+        for city in (obs.get("city") or {}).values():
+            if not isinstance(city, dict):
+                continue
+            try:
+                if int(city.get("owner", my_id)) != int(my_id):
+                    continue
+            except (TypeError, ValueError):
+                continue
+            trade += number(city.get("prod_trade"))
+        per_turn = round(trade * rate / 100.0)
+        current = player.get("researching")
+        turns = (max(1, int(math.ceil(max(0.0, cost - done) / per_turn)))
+                 if per_turn > 0 and cost > 0 else None)
+        unlocked = None
+        try:
+            from brain.forecast.live import _record_by_id
+            from env.entity_extractor import tech_options
+            record = _record_by_id(obs.get("tech"), current)
+            if record:
+                base = number((getattr(extractor, "model", None).values()
+                               if getattr(extractor, "model", None) else {})
+                              .get("TECH_BASE_OPTIONS"))
+                unlocked = float(tech_options(
+                    record, as_known=True,
+                    model=getattr(extractor, "model", None))) - base
+                if unlocked <= 0.0:
+                    # Ловушка «пустая запись»: если технологии приписан ноль
+                    # открываемого, надо видеть, ЧТО это за запись, иначе
+                    # «наука не оценивается» остаётся догадкой.
+                    print(f"          запись найдена, но открываемого 0: "
+                          f"имя={record.get('name')!r} "
+                          f"юнитов={len(record.get('sup_units') or [])} "
+                          f"улучшений={len(record.get('sup_improvements') or [])} "
+                          f"полей={sorted(record.keys())[:8]}", flush=True)
+            else:
+                layer = obs.get("tech") or {}
+                keys = [str(k) for k in list(layer.keys())[:12]]
+                print(f"          запись технологии {current!r} НЕ НАЙДЕНА; "
+                      f"ключи слоя ({len(layer)}): {keys}", flush=True)
+        except Exception:  # noqa: BLE001
+            unlocked = None
+        value = None
+        if unlocked and unlocked > 0 and turns:
+            value = math.log(unlocked) * (0.8 ** turns)
+        print(f"        [технология] ход {turn}: исследуется {current!r} "
+              f"стоимость={cost:.0f} накоплено={done:.0f} торговля={trade:.0f} "
+              f"ставка={rate:.0f}% наука/ход={per_turn} срок={turns if turns else '—'}"
+              f" открывает={('%.2f' % unlocked) if unlocked else '—'} опций "
+              f"вклад_в_индекс={('%.4f' % value) if value else '—'}", flush=True)
+        if per_turn <= 0:
+            print("          причина: наука за ход = 0 (миру нечем исследовать) — "
+                  "цена технологии не публикуется, и это не «недооценка»", flush=True)
+        elif turns is None:
+            print("          причина: стоимость технологии неизвестна из наблюдения",
+                  flush=True)
+    except Exception as exc:  # noqa: BLE001
+        print(f"        [технология] сбой диагностики: {type(exc).__name__}: {exc}",
+              flush=True)
+
+
 def _forecast_decide(obs, info, dof, extractor, avail) -> tuple[bool, tuple | None]:
     """Прогноз решает ход: `(взял_ли_решение, действие)`.
 
@@ -361,6 +515,8 @@ def _forecast_decide(obs, info, dof, extractor, avail) -> tuple[bool, tuple | No
                             exclude_actors=set(_USED_ACTORS[0])
                             if _USED_ACTORS else None)
         _watch_tech(ctx, obs, info)
+        _dump_candidates(ctx, info)
+        _dump_tech_numbers(obs, extractor, info)
         _learn_type_cost(ctx, obs)      # вторая половина прошлого замера
         if not _FORECAST_NOTES_PRINTED and ctx.notes:
             _FORECAST_NOTES_PRINTED.append(True)
@@ -433,11 +589,12 @@ def _to_wire_action(action: tuple[str, str, str], avail: dict) -> tuple | None:
             return None
         key, actions = found
         if name.startswith("goto"):
-            # Координат цели у `goto_N` нет: берём первый предложенный вариант —
-            # ценность хода прогноз посчитал, а конкретную цель выбирает сервер.
-            for cand_name, params in actions.items():
-                if cand_name.startswith("goto") and params:
-                    return ("unit", key, cand_name)
+            # `goto_<dir8>` — шаг в конкретном направлении: подставить другой
+            # значит увести юнита не туда, куда прогноз считал ценность. Поэтому
+            # берётся ИМЕННО выбранное имя; если сервер его не предлагает — ход
+            # закрывается без действия (как и любое несопоставимое действие).
+            if actions.get(name):
+                return ("unit", key, name)
             return None
         if actions.get(name):
             return ("unit", key, name)

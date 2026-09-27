@@ -1,0 +1,50 @@
+{
+  "games": 2,
+  "usable": 2,
+  "mirror": true,
+  "diff_mean": 0.5,
+  "diff_ci": [
+    -18.558999999999997,
+    19.558999999999997
+  ],
+  "verdict_kind": "no_data",
+  "verdict": "ВЕРДИКТА НЕТ: пригодных игр 2 < 3: вердикта нет (это «мало данных», а не «дизайн чист»)",
+  "games_detail": [
+    {
+      "game": 1,
+      "slot": 6328,
+      "a": {
+        "score_gain": 2.0,
+        "turns": 25,
+        "avg_total_dof_index": 24.6919416957446,
+        "decisions_per_turn_mean": 1.04,
+        "error": ""
+      },
+      "b": {
+        "score_gain": 3.0,
+        "turns": 25,
+        "avg_total_dof_index": 25.901588040587168,
+        "decisions_per_turn_mean": 1.04,
+        "error": ""
+      }
+    },
+    {
+      "game": 2,
+      "slot": 6329,
+      "a": {
+        "score_gain": 4.0,
+        "turns": 25,
+        "avg_total_dof_index": 26.68191877144771,
+        "decisions_per_turn_mean": 1.04,
+        "error": ""
+      },
+      "b": {
+        "score_gain": 2.0,
+        "turns": 25,
+        "avg_total_dof_index": 23.45617501924208,
+        "decisions_per_turn_mean": 1.04,
+        "error": ""
+      }
+    }
+  ]
+}

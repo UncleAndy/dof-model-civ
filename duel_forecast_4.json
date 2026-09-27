@@ -1,0 +1,86 @@
+{
+  "games": 4,
+  "usable": 4,
+  "mirror": true,
+  "diff_mean": -0.25,
+  "diff_ci": [
+    -1.0455,
+    0.5455
+  ],
+  "verdict_kind": "clean",
+  "verdict": "ЗЕРКАЛО ЧИСТОЕ: разница неотличима от нуля: -0.25, 95% CI [-1.05, +0.55], игр 4 — дизайн годится для дуэлей",
+  "games_detail": [
+    {
+      "game": 1,
+      "slot": 6330,
+      "a": {
+        "score_gain": 3.0,
+        "turns": 25,
+        "avg_total_dof_index": 24.084819091030422,
+        "decisions_per_turn_mean": 1.04,
+        "error": ""
+      },
+      "b": {
+        "score_gain": 3.0,
+        "turns": 25,
+        "avg_total_dof_index": 20.005993008408662,
+        "decisions_per_turn_mean": 1.08,
+        "error": ""
+      }
+    },
+    {
+      "game": 2,
+      "slot": 6302,
+      "a": {
+        "score_gain": 2.0,
+        "turns": 25,
+        "avg_total_dof_index": 21.92431084000462,
+        "decisions_per_turn_mean": 1.08,
+        "error": ""
+      },
+      "b": {
+        "score_gain": 2.0,
+        "turns": 25,
+        "avg_total_dof_index": 21.460087564739478,
+        "decisions_per_turn_mean": 1.08,
+        "error": ""
+      }
+    },
+    {
+      "game": 3,
+      "slot": 6304,
+      "a": {
+        "score_gain": 2.0,
+        "turns": 25,
+        "avg_total_dof_index": 21.9877452540251,
+        "decisions_per_turn_mean": 1.08,
+        "error": ""
+      },
+      "b": {
+        "score_gain": 2.0,
+        "turns": 25,
+        "avg_total_dof_index": 24.8573052896829,
+        "decisions_per_turn_mean": 1.08,
+        "error": ""
+      }
+    },
+    {
+      "game": 4,
+      "slot": 6305,
+      "a": {
+        "score_gain": 2.0,
+        "turns": 25,
+        "avg_total_dof_index": 24.65175819971616,
+        "decisions_per_turn_mean": 1.08,
+        "error": ""
+      },
+      "b": {
+        "score_gain": 3.0,
+        "turns": 25,
+        "avg_total_dof_index": 25.34521151676903,
+        "decisions_per_turn_mean": 1.04,
+        "error": ""
+      }
+    }
+  ]
+}

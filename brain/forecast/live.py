@@ -8,8 +8,18 @@
 * работы — существующим измеренным путём (`extractor._terrain_work_gains`),
   который адресует выгоду **городу**, а не клетке; нулевой измеренный эффект так и
   остаётся нулём;
-* достижимость — квадратом радиуса `move_rate` (как в `_site_move_gains`), потому
-  что координат цели у `goto_N` нет и точный маршрут неизвестен.
+* достижимость — квадратом радиуса `move_rate` (как в `_site_move_gains`): это
+  цена ПОТЕНЦИАЛА площадок, а не маршрут. Для самого движения берётся не она, а
+  точная цель каждой предложенной сервером команды `goto_N` — см. ниже.
+
+**Отозвано (2026-09-27, измерено по исходнику стенда).** Здесь стояло: «координат
+цели у `goto_N` нет, точный маршрут неизвестен». Неверно. `ActGoto` в
+`civrealm/freeciv/units/unit_actions.py` строит имя как `"goto_%i" % dir8`, а сама
+команда — это `ORDER_MOVE` с `"dir": dir8` и `dest_tile = mapstep(ptile, dir8)`,
+то есть **один шаг в направлении dir8** (0=СЗ, 1=С, 2=СВ, 3=З, 4=В, 5=ЮЗ, 6=Ю, 7=ЮВ).
+Значит цель хода вычислима: `(x + DIR_DX[N], y + DIR_DY[N])`, X замыкается, по Y —
+полюс (`map_pos_to_tile` возвращает None). Движение перестало быть семейством.
+
 
 Всё, что здесь не заполнено, помечено как «пока не подключено» — с причиной.
 """
@@ -33,6 +43,38 @@ WORK_ACTION_EXTRA = {
     "build_road": "Road", "road": "Road", "railroad": "Railroad",
     "farmland": "Farmland",
 }
+
+#: Направления freeciv (`map_const.DIR_DX/DIR_DY`), индекс — dir8 в имени `goto_N`.
+#: Скопированы, а не импортированы: этот модуль обязан оставаться проверяемым без
+#: живого стенда. Порядок: 0 СЗ, 1 С, 2 СВ, 3 З, 4 В, 5 ЮЗ, 6 Ю, 7 ЮВ.
+DIR_DX = (-1, 0, 1, -1, 1, -1, 0, 1)
+DIR_DY = (-1, -1, -1, 0, 0, 1, 1, 1)
+
+
+def direction_target(pos: tuple[int, int], dir8: int,
+                     shape: tuple[int, int] | None) -> tuple[int, int] | None:
+    """Клетка, на которую встанет юнит, выполнив `goto_<dir8>`, или None.
+
+    Арифметика — из стенда (`map_ctrl.mapstep` → `map_pos_to_tile`): X замыкается
+    (цилиндр), по Y — полюс, за краем клетки нет. Внутри `map_pos_to_tile`
+    переполнение по X идёт через `y -= 1`, но индекс `x + y*xsize` даёт ту же
+    клетку, что и простое `x %= xsize` при том же y, — проверено арифметикой.
+    """
+    try:
+        d = int(dir8)
+    except (TypeError, ValueError):
+        return None
+    if not 0 <= d < len(DIR_DX):
+        return None
+    x, y = int(pos[0]) + DIR_DX[d], int(pos[1]) + DIR_DY[d]
+    if shape is not None:
+        w, h = int(shape[0]), int(shape[1])
+        if w > 0:
+            x %= w
+        if h > 0 and not 0 <= y < h:
+            return None
+    return (x, y)
+
 
 
 @dataclass
@@ -128,8 +170,13 @@ def reach_tiles(pos: tuple[int, int], move_rate: int,
                 map_shape: tuple[int, int] | None = None) -> list[tuple[int, int]]:
     """Достижимые клетки за ход: квадрат радиуса `move_rate` вокруг юнита.
 
-    Точный маршрут неизвестен (`goto_N` без координат), поэтому берётся верхняя
-    граница достижимости — та же, что использует `_site_move_gains`.
+    Это цена ПОТЕНЦИАЛА (какие площадки вообще можно рассмотреть), а не маршрут;
+    точные цели хода берутся из предложенных `goto_<dir8>` (см. `direction_target`).
+
+    Замыкание — по X, как у карты-цилиндра: по Y клеток за краем НЕТ, и «взять
+    чужую клетку с другого края» здесь так же неверно, как в оценке площадки
+    (правка осей 2026-09-27). Раньше здесь стояло `ty %= h` — остаток той же
+    ошибки, из-за которой город у полюса собирал еду с противоположного края.
     """
     x, y = pos
     tiles: list[tuple[int, int]] = []
@@ -142,9 +189,42 @@ def reach_tiles(pos: tuple[int, int], move_rate: int,
                 w, h = map_shape
                 if w and h:
                     tx %= w
-                    ty %= h
+                    if not 0 <= ty < h:
+                        continue
             tiles.append((tx, ty))
     return tiles
+
+
+def _record_by_id(pool: Any, wanted: Any) -> dict:
+    """Запись из словаря-слоя по идентификатору — НЕ по типу ключа.
+
+    Ловушка живых ключей, уже третья в проекте: живьём `obs['tech']` ключуется
+    ЧИСЛАМИ (`{2: {...}}`), в фикстурах строками. Прямой `.get(str(id))` на живом
+    наблюдении молча возвращает `{}` — и семейство технологии оказывается пустым
+    не потому, что наука недооценена, а потому, что запись не нашлась. Измерено
+    2026-09-27: `research` не появлялся среди кандидатов ни разу за 15 ходов, а
+    диагностика печатала «открывает=—» при живой записи технологии в наблюдении.
+
+    Правило то же, что и везде: смотрим ЗНАЧЕНИЯ, сравниваем по `id`/`name`, и
+    только потом пробуем оба вида ключа.
+    """
+    pool = _as_dict(pool)
+    if wanted is None:
+        return {}
+    for key in (wanted, str(wanted)):
+        rec = pool.get(key)
+        if isinstance(rec, dict) and rec:
+            return rec
+    for key, rec in pool.items():
+        if not isinstance(rec, dict):
+            continue
+        for field in ("id", "name", "rule_name"):
+            value = rec.get(field)
+            if value is not None and str(value) == str(wanted):
+                return rec
+        if str(key) == str(wanted):
+            return rec
+    return {}
 
 
 def revealed_tiles(map_obs: dict) -> set[tuple[int, int]]:
@@ -257,6 +337,32 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
             return []
         return reach_tiles(pos, move_rate.get(unit_id, 1), shape)
 
+    def moves(unit_id: str) -> list[tuple[str, tuple[int, int]]]:
+        """Предложенные серверу шаги этого юнита: [(имя `goto_N`, клетка назначения)].
+
+        Цель каждой команды вычисляется из направления (`direction_target`), а не
+        выдумывается: `goto_N` — это dir8. Команды, чья цель за полюсом, отбрасываются
+        (клетки там нет). Юнит, у которого нет ни одного предложенного шага, не ходит.
+        """
+        uid = unit_id.split("_", 1)[1] if "_" in unit_id else unit_id
+        acts = _offered_for(offered_unit, uid)
+        pos = state.positions.get(unit_id)
+        if pos is None:
+            return []
+        out: list[tuple[str, tuple[int, int]]] = []
+        for name, params in acts.items():
+            if not params or not name.startswith("goto"):
+                continue
+            suffix = name.rsplit("_", 1)[-1]
+            if not suffix.isdigit():
+                # `goto` без направления (например `keep_activity`-подобные формы) —
+                # цель не определена, шагом это не считается.
+                continue
+            tile = direction_target(pos, int(suffix), shape)
+            if tile is not None:
+                out.append((name, tile))
+        return out
+
     def is_carrier(unit_id: str) -> bool:
         try:
             from env.entity_extractor import is_population_carrier
@@ -319,6 +425,11 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
             if not params or not name.startswith("produce_"):
                 continue
             type_name = name[len("produce_"):]
+            # Улучшения — ОТДЕЛЬНОЕ семейство (`improvements`): они не создают
+            # сущность, а растут опциями города. Здесь пропускаются, иначе одно и
+            # то же здание предлагалось бы дважды и считалось дважды.
+            if type_name in spec_improvements and type_name not in live_by_type:
+                continue
             priced = type_price(type_name)
             if priced is None:
                 unpriced.add(type_name)
@@ -347,22 +458,24 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
         return out
 
     player = _player_record(obs, my_id)
-    # Наука за ход — сумма `bulbs` своих городов: это число каждой клетки города,
-    # а не `player['science']`, смысл которого в наблюдении не подтверждён (на
-    # первом же снимке они расходятся в разы: город 7, игрок 60). Расхождение
-    # проверяется отдельно прогоном, а не принимается на веру.
+    # Наука за ход считается ниже по ИЗМЕРЕННОМУ драйверу. Отдельно и явно:
+    # `bulbs` города не двигают прогресс технологии (измерено: рост +0/+1 при
+    # bulbs 1…3), поэтому это поле здесь только для следа, а не для цены.
     bulbs_per_turn = 0.0
     for city in city_records.values():
         bulbs_per_turn += _num(city.get("bulbs"), 0.0)
     if bulbs_per_turn > 0.0:
-        notes.append(f"наука городов {bulbs_per_turn:.1f} за ход — но прогресс "
-                     f"технологии ей НЕ равен (измерено: рост +0/+1 при 3), "
-                     f"поэтому цена технологии не публикуется")
+        notes.append(f"сумма bulbs городов {bulbs_per_turn:.1f} — в цену технологии "
+                     f"НЕ идёт (измерено: прогресс ей не равен; драйвер — "
+                     f"round(Σ торговля × ставка / 100), см. `techs`)")
 
     # Стоимость типов из спецификаций технологий: и юнитов, и улучшений. Это
     # снимает необходимость замерять цену постановкой производства (замер улучшения
     # роняет контроллер) — стоимость публикуется миром там же, где и у юнитов.
+    # Отдельно запоминаем, какие имена пришли из `sup_improvements`: это и есть
+    # признак «тип есть улучшение», по которому юниты и улучшения не путаются.
     spec_costs: dict[str, float] = {}
+    spec_improvements: set[str] = set()
     for rec in _as_dict(obs.get("tech")).values():
         if not isinstance(rec, dict):
             continue
@@ -374,6 +487,89 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
                 cost = _num(spec.get("build_cost"), 0.0)
                 if name and cost > 0.0 and name not in spec_costs:
                     spec_costs[name] = cost
+                if name and field == "sup_improvements":
+                    spec_improvements.add(name)
+
+
+    def improvement_gain(city_id: str, name: str) -> float:
+        """Насколько улучшение поднимает опции ЭТОГО города (в шкале опций).
+
+        Не константа «улучшение = +N»: считает сама формула города — сколько у
+        города опций сейчас и сколько станет, если флаг улучшения добавится.
+        Иначе потолок первого множителя (`CITY_CAP_M1`) не виден, и город на
+        потолке получал бы надбавку за то, что у него и так есть.
+        """
+        rec = city_records.get(city_id)
+        if not isinstance(rec, dict):
+            return 0.0
+        try:
+            from env.entity_extractor import city_options
+            model = getattr(extractor, "model", None)
+            flags = list(rec.get("improvements") or [])
+            before = float(city_options(rec, model=model))
+            with_flag = dict(rec)
+            with_flag["improvements"] = flags + [True]
+            after = float(city_options(with_flag, model=model))
+        except Exception:  # noqa: BLE001
+            return 0.0
+        return max(0.0, after - before)
+
+
+    def improvements(city_id: str) -> list[tuple[str, float, int]]:
+        """Улучшения, которые город может поставить: [(имя, Δопций города, ходов)].
+
+        Улучшение — не новая сущность (иначе здание считалось бы живым и индекс
+        рос бы дважды), а рост опций САМОГО города: город с храмом удерживает
+        больше возможностей, чем без него.
+
+        Стоимость — из спецификаций технологий (`sup_improvements[].build_cost`),
+        срок — тем же правилом, что и у юнитов. Если улучшение ничего не добавляет
+        (город уже на потолке множителя), оно не предлагается: измеренное «ноль»
+        не притворяется выгодой. Замер цены постановкой производства НЕ делается:
+        он роняет контроллер (проверено), а спецификация даёт цену без боя.
+        """
+        rec = city_records.get(city_id) or {}
+        offered = _offered_for(offered_city, city_id)
+        stock = _num(rec.get("shield_stock"), 0.0)
+        shields = _num(rec.get("prod_shield"), 0.0)
+        if shields <= 0.0:
+            return []
+        out: list[tuple[str, float, int]] = []
+        for name, params in offered.items():
+            if not params or not name.startswith("produce_"):
+                continue
+            type_name = name[len("produce_"):]
+            # Юнит — не улучшение, даже если имя встретилось в спецификациях.
+            if type_name in live_by_type or catalogue["unit"].get(type_name):
+                continue
+            if type_name not in spec_improvements and not \
+                    catalogue["improvement"].get(type_name):
+                continue
+            cost = world.cost(type_name)
+            if cost is None:
+                cost = spec_costs.get(type_name)
+            if cost is None:
+                unpriced.add(type_name)
+                continue
+            gain = improvement_gain(city_id, type_name)
+            if gain <= 0.0:
+                continue
+            # Срок — ИЗМЕРЕННЫМ правилом для улучшений, а не формулой юнитов.
+            #
+            # Измерено (2026-09-27, одна проба, 15 последовательных наблюдений,
+            # два улучшения): накопленное растёт ровно на 1 щит за ход
+            # (`Δstock = 1` во всех наблюдениях, `Δготовность = 1/стоимость`), а
+            # публикуемый `prod_shield` при этом равен 5. Срок сервера совпал с
+            # `стоимость − stock`: 58 против 58.0 (City Walls 60) и 293 против
+            # 293.0 (Great Wall 300). Формула юнитов
+            # `ceil((стоимость − stock) / prod_shield)` дала бы 11.6 и 58.6 —
+            # то есть обещала бы улучшение в 5 раз быстрее, чем оно будет.
+            #
+            # Если стенд обновят, правило надо перемерить: это факт об этом
+            # наборе правил, а не «так устроено везде».
+            turns = max(1, int(math.ceil(cost - stock)))
+            out.append((type_name, gain, turns))
+        return out
 
     def techs() -> list[tuple[str, float, int]]:
         """[(имя вида `tech_<id>`, выигрыш в опциях, ходов)] — числа из мира.
@@ -414,8 +610,8 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
         per_turn = round(trade * rate / 100.0)
         if cost <= 0.0 or per_turn <= 0.0:
             return []
-        record = _as_dict(obs.get("tech")).get(str(current)) or {}
-        if not isinstance(record, dict):
+        record = _record_by_id(obs.get("tech"), current)
+        if not record:
             return []
         try:
             from env.entity_extractor import tech_options
@@ -454,10 +650,13 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
             return any(acts.get(key) for key in
                        ("build_city", "found_city", "found"))
         if kind == "move":
+            # Может ли сервер предложить ИМЕННО этот шаг: `goto_3` — это шаг в
+            # направлении 3, подменить его другим значит увести юнита не туда.
             acts = _offered_for(offered_unit, actor)
-            return any(key.startswith("goto") and value
-                       for key, value in acts.items())
+            return bool(acts.get(name))
         if kind == "produce":
+            return bool(_offered_for(offered_city, actor).get(name))
+        if kind == "improve":
             return bool(_offered_for(offered_city, actor).get(name))
         if kind == "research":
             cur = offered_tech.get("cur_player")
@@ -617,10 +816,12 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
 
     vals = Valuations(
         reach=reach,
+        moves=moves,
         site_viable=site_viable,
         city_dof=city_dof,
         city_ids=lambda: list(cities),
         productions=productions,
+        improvements=improvements,
         techs=techs,
         works=works,
         is_carrier=is_carrier,

@@ -1,0 +1,93 @@
+{
+  "meta": {
+    "agents": [
+      "dof_expansionist"
+    ],
+    "episodes": 1,
+    "turns": 18,
+    "timeout": 240,
+    "match_timeout_s": 240,
+    "step_timeout_s": 20,
+    "curiosity": true,
+    "false_claim": "",
+    "lookahead": 3,
+    "context_switch_penalty": 0.5,
+    "max_candidates": 8,
+    "max_decisions_per_turn": 20,
+    "save_series": false,
+    "seed_base": null,
+    "elapsed_s": 25.7
+  },
+  "results": {
+    "dof_expansionist": [
+      {
+        "agent": "dof_expansionist",
+        "seed": null,
+        "engine": "rust-core",
+        "turns": 18,
+        "avg_dof": 0.17283311254104983,
+        "final_dof": 0.19373623300970874,
+        "avg_total_dof_index": 27.97559200164863,
+        "final_total_dof_index": 36.228084441903526,
+        "min_entities": 95,
+        "max_entities": 103,
+        "actions_issued": 24,
+        "decisions_per_turn_mean": 1.3333333333333333,
+        "skipped_turns": 0,
+        "irreversible_actions": 6,
+        "irreversibility_ratio": 0.25,
+        "error": "",
+        "wedge_action": null,
+        "curiosity": true,
+        "experiments_total": 19,
+        "pairs_total": 1,
+        "experiment_families": {
+          "build_city": 1,
+          "produce_Settlers": 9,
+          "produce_Warriors": 9
+        },
+        "port": 6300,
+        "start_fingerprint": "27b50bf3c77c",
+        "revealed_cells": 21,
+        "start_xy": [
+          48,
+          8
+        ],
+        "empty_action_turns": 0,
+        "reconciled": {
+          "match": 5749,
+          "new": 41,
+          "experiment": 19
+        },
+        "entity_kinds_max": {
+          "unit": 12,
+          "city": 1,
+          "tech": 87,
+          "diplomacy": 3
+        },
+        "corrected_keys": [],
+        "false_claims": [],
+        "correction_log": [],
+        "score_cum": 4.0,
+        "score_gain": 4.0,
+        "score_first": 0.0,
+        "score_events": 3,
+        "score_max_step": 2.0,
+        "score_series": [
+          {
+            "turn": 1,
+            "delta": 1.0
+          },
+          {
+            "turn": 10,
+            "delta": 1.0
+          },
+          {
+            "turn": 12,
+            "delta": 2.0
+          }
+        ]
+      }
+    ]
+  }
+}

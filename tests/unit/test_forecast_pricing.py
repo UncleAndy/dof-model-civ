@@ -303,15 +303,18 @@ class TestResearchPricing:
 
 
 class TestImprovementPricing:
-    """Улучшение оценивается стоимостью из спецификаций технологий.
+    """Улучшение оценивается стоимостью из спецификаций — и уходит в СВОЁ семейство.
 
     Стоимость улучшения есть в наблюдении — в `sup_improvements[].build_cost`, там же,
     где `build_cost` у юнитов (Temple 30, Courthouse 60). Поэтому ни замер, ни
     постановка производства (которая роняет контроллер) не нужны.
+
+    Отдельное семейство — не косметика: улучшение не создаёт сущность, а растит
+    опции ГОРОДА, поэтому оно не может идти через `productions` (там появляется
+    новая живая сущность, и вклад здания удвоился бы).
     """
 
-    def test_an_improvement_is_priced_from_its_specification(self):
-        from types import SimpleNamespace
+    def _context(self):
         obs = _obs(city=_city(shield_stock=0, prod_shield=3), units=_settler())
         obs["tech"] = {"10": {"inv_state": 1, "name": "Ceremonial Burial",
                               "sup_units": [],
@@ -319,11 +322,22 @@ class TestImprovementPricing:
                                                     "build_cost": 30}]}}
         info_dict = {"available_actions": {
             "city": {"121": {"produce_Temple": True}}, "unit": {}, "tech": {}}}
-        ctx = build_context(obs, info_dict, _dof_state(improvements={"Temple": 1.4}),
-                            _extractor())
-        priced = ctx.vals.productions("city_121")
-        assert [name for name, _o, _t in priced] == ["Temple"]
-        assert priced[0][2] == 10        # ceil((30 − 0) / 3)
+        return build_context(obs, info_dict,
+                             _dof_state(improvements={"Temple": 1.4}),
+                             _extractor())
+
+    def test_an_improvement_is_priced_from_its_specification(self):
+        ctx = self._context()
+        priced = ctx.vals.improvements("city_121")
+        assert [name for name, _g, _t in priced] == ["Temple"]
+        # Срок улучшения — ИЗМЕРЕННЫМ правилом `стоимость − stock` (накопление
+        # 1 щит/ход), а не формулой юнитов: она обещала бы в 5 раз быстрее.
+        assert priced[0][2] == 30        # 30 − 0
+
+    def test_a_building_is_not_offered_through_production(self):
+        # Иначе здание считалось бы и новой сущностью, и множителем города.
+        ctx = self._context()
+        assert [name for name, _o, _t in ctx.vals.productions("city_121")] == []
 
     def test_a_specification_cost_is_not_used_for_the_forecast_units(self):
         """Стоимость из спецификаций законна и для юнитов — это второй источник."""
@@ -440,7 +454,22 @@ class TestIndexScale:
 
 class TestReach:
     def test_reach_is_the_square_of_the_move_rate_without_the_start(self):
+        # На СЕРЕДИНЕ карты — полный квадрат 3×3 без самой клетки.
+        tiles = reach_tiles((4, 4), 1, (8, 8))
+        assert (4, 4) not in tiles
+        assert len(tiles) == 8
+        assert (3, 4) in tiles and (5, 5) in tiles
+
+    def test_x_wraps_like_a_cylinder(self):
+        tiles = reach_tiles((0, 4), 1, (8, 8))
+        assert (7, 4) in tiles
+
+    def test_y_has_poles_so_reach_from_a_corner_is_smaller(self):
+        # У полюса «через край» клеток НЕТ, поэтому из угла достижимо 5 клеток,
+        # а не 8. Раньше здесь стояло 8: `ty %= h` заворачивал Y и подсовывал
+        # клетки с противоположного края — та же ошибка, что в оценке площадки
+        # (правка осей 2026-09-27). Проверка верхней границы фиксируется явно.
         tiles = reach_tiles((0, 0), 1, (8, 8))
-        assert (0, 0) not in tiles
-        assert len(tiles) == 8                       # 3×3 минус сама клетка
-        assert (7, 0) in tiles                       # карта — цилиндр
+        assert len(tiles) == 5
+        assert all(0 <= y < 8 for _x, y in tiles)
+        assert (7, 0) in tiles                       # по X цилиндр

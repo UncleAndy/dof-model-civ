@@ -137,6 +137,25 @@ def produce(state: ForecastState, city_id: str, *, unit_id: str,
                                          f"за {turns} ход(ов)")
 
 
+def improve(state: ForecastState, city_id: str, *, gain: float,
+            turns: int = 0) -> Effect:
+    """Улучшение в городе: растут опции САМОГО города, сущности не прибавляется.
+
+    Отличие от `produce` принципиальное. Юнит — новая живая сущность, у неё свой
+    набор возможностей, и её появление добавляет слагаемое в `Σ ln DoF`. Здание
+    отдельной возможностью не является: оно расширяет то, что может делать город,
+    поэтому прибавка идёт к опциям города тем же правилом, что и работа на клетке
+    (`index_delta`). Считать здание сущностью значило бы удвоить его вклад.
+
+    Необратимость: постройка — вложение, отменить его нельзя (Аксиома 4
+    применяет штраф), поэтому `reversible=False`.
+    """
+    new = state.clone()
+    delta = index_delta(new, city_id, float(gain))
+    return Effect(state=new, delta=delta, delay=max(0, int(turns)),
+                  reversible=False, note=f"улучшение в {city_id} (Δ{gain:+.2f})")
+
+
 def research(state: ForecastState, tech_id: str, *, tech_dof: float,
              turns: int = 0) -> Effect:
     """Исследование: появляется сущность технологии — её открытый набор.
