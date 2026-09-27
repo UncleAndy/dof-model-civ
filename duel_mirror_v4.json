@@ -1,0 +1,103 @@
+{
+  "games": 5,
+  "usable": 5,
+  "mirror": true,
+  "diff_mean": -1.4,
+  "diff_ci": [
+    -3.8200606934537817,
+    1.020060693453782
+  ],
+  "verdict": "ЗЕРКАЛО ЧИСТОЕ: разница неотличима от нуля: -1.40, 95% CI [-3.82, +1.02], игр 5 — дизайн годится для дуэлей",
+  "games_detail": [
+    {
+      "game": 3,
+      "slot": 6319,
+      "a": {
+        "score_gain": 4.0,
+        "turns": 20,
+        "avg_total_dof_index": 28.33081673180022,
+        "decisions_per_turn_mean": 0.8,
+        "error": ""
+      },
+      "b": {
+        "score_gain": 4.0,
+        "turns": 20,
+        "avg_total_dof_index": 24.806791578511884,
+        "decisions_per_turn_mean": 0.7,
+        "error": ""
+      }
+    },
+    {
+      "game": 4,
+      "slot": 6320,
+      "a": {
+        "score_gain": 4.0,
+        "turns": 20,
+        "avg_total_dof_index": 25.265905372780804,
+        "decisions_per_turn_mean": 0.75,
+        "error": ""
+      },
+      "b": {
+        "score_gain": 4.0,
+        "turns": 20,
+        "avg_total_dof_index": 20.1056520009217,
+        "decisions_per_turn_mean": 1.0,
+        "error": ""
+      }
+    },
+    {
+      "game": 7,
+      "slot": 6323,
+      "a": {
+        "score_gain": 0.0,
+        "turns": 20,
+        "avg_total_dof_index": 17.448963330170283,
+        "decisions_per_turn_mean": 0.05,
+        "error": ""
+      },
+      "b": {
+        "score_gain": 4.0,
+        "turns": 20,
+        "avg_total_dof_index": 22.272089243606015,
+        "decisions_per_turn_mean": 1.0,
+        "error": ""
+      }
+    },
+    {
+      "game": 8,
+      "slot": 6324,
+      "a": {
+        "score_gain": 4.0,
+        "turns": 20,
+        "avg_total_dof_index": 21.546218088743267,
+        "decisions_per_turn_mean": 0.75,
+        "error": ""
+      },
+      "b": {
+        "score_gain": 7.0,
+        "turns": 20,
+        "avg_total_dof_index": 22.134020059927998,
+        "decisions_per_turn_mean": 1.4,
+        "error": ""
+      }
+    },
+    {
+      "game": 11,
+      "slot": 6327,
+      "a": {
+        "score_gain": 4.0,
+        "turns": 20,
+        "avg_total_dof_index": 23.335493319436125,
+        "decisions_per_turn_mean": 0.85,
+        "error": ""
+      },
+      "b": {
+        "score_gain": 4.0,
+        "turns": 20,
+        "avg_total_dof_index": 22.412836735643484,
+        "decisions_per_turn_mean": 0.75,
+        "error": ""
+      }
+    }
+  ]
+}
