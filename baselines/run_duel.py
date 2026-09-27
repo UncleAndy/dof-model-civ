@@ -165,6 +165,26 @@ def _run_game(args, game_no: int) -> dict:
             "log_a": str(log_a), "log_b": str(log_b)}
 
 
+def _frozen(game: dict, side: str) -> bool:
+    """Сторона замерзла: решений нет, но ЕСТЬ доказательство, что предложения были.
+
+    Такая игра остаётся в выборке: бездействие — исход правила «строго > 0», и
+    выбрасывать его значит подменять результат. Логи читаются с диска, потому что
+    доказательство живёт именно там (клиент и раннер печатают его в поток).
+    """
+    rec = game.get(side)
+    if not _dead_side(rec):
+        return False
+    log_path = game.get(f"log_{side}")
+    if not log_path:
+        return False
+    try:
+        text = Path(log_path).read_text(errors="ignore")
+    except OSError:
+        return False
+    return _freeze_evidence(text)
+
+
 def _usable(rec: dict | None, min_turns: int, require_active: bool = False) -> bool:
     """Годится ли запись стороны.
 
@@ -183,20 +203,38 @@ def _usable(rec: dict | None, min_turns: int, require_active: bool = False) -> b
 
 
 def _dead_side(rec: dict | None) -> bool:
-    """Сторона не сделала НИ ОДНОГО решения за весь матч — отказ инструмента.
+    """Сторона не сделала НИ ОДНОГО решения за весь матч.
 
-    Отличать от «пассивной политики»: пассивная политика — это НОЛЬ ЦЕЛЫХ решений
-    при живой державе, но она всё же делает выборы, и на живых данных её темп был
-    0.04–0.05 решения/ход. Ровно 0.00 при `rc=0` и полном числе ходов означает, что
-    сторона крутила цикл, но **ход ей не доставался** (та же природа, что у дефекта
-    follower'а: державу не взяли). Это не данные о политике, и — в отличие от
-    пассивности — остаётся браком даже при `--allow-passive`: там речь о «пусть
-    бездействие будет частью эффекта», а не о «пусть сломанный инструмент войдёт
-    в интервал разницей, которой в игре не было».
+    Ровно 0.00 при полном числе ходов — это всегда исключительный случай, но
+    причины у него РАЗНЫЕ, и смешивать их нельзя (измерено 2026-09-27):
+
+    * **отказ инструмента** — сторона не получила своего игрока (ход не достался);
+      это брак, игру надо повторить;
+    * **замерзание правила** — сторона получала предложения от сервера, но ядро
+      DOF-Core отклонило все кандидаты как неулучшение (`net_delta == 0` при
+      строгом правиле «действовать только при > 0»). Это НЕ брак: это исход
+      политики, и выбрасывать его значит смещать выборку в неизвестную сторону.
+
+    Различить их можно только по доказательству из лога стороны — чем она и
+    занимается (`_freeze_evidence`).
     """
     if not rec or rec.get("error"):
         return False
     return float(rec.get("decisions_per_turn_mean") or 0.0) <= 0.0
+
+
+# Строки, которые печатает агент/раннер, когда предложения БЫЛИ, а решения нет.
+FREEZE_MARKERS = ("[вето ядра", "[нет-кандидатов", "[выбор-пуст")
+
+
+def _freeze_evidence(text: str) -> bool:
+    """Есть ли доказательство «предложения были, агент отказался».
+
+    Только по доказательству: отсутствие строк = «не знаем», и тогда сторона
+    остаётся подозреваемой в отказе инструмента. Догадка здесь недопустима —
+    от этого зависит, попадёт игра в выборку или нет.
+    """
+    return any(marker in (text or "") for marker in FREEZE_MARKERS)
 
 
 def main() -> int:
@@ -280,14 +318,15 @@ def main() -> int:
             attempts += 1
             ok = (_usable(g["a"], args.min_turns, args.require_both_active)
                   and _usable(g["b"], args.min_turns, args.require_both_active)
-                  and not (_dead_side(g["a"]) or _dead_side(g["b"])))
+                  and (not (_dead_side(g["a"]) or _dead_side(g["b"]))
+                       or _frozen(g, "a") or _frozen(g, "b")))
             if ok:
                 break
             if attempts > args.retries:
                 print(f"  игра не состоялась даже после {attempts} попыток "
                       f"(стенд) — оставляю как отброшенную", flush=True)
                 break
-            why = ("сторона не сделала ни одного решения — ход не достался "
+            why = ("сторона не сделала ни одного решения БЕЗ доказательств "
                    "(отказ инструмента)") if (_dead_side(g["a"]) or _dead_side(g["b"])) \
                 else (f"стенд отдал {g['slot']} без игры")
             print(f"  игра не состоялась ({why}) — повтор, попытка {attempts + 1}",
@@ -298,7 +337,8 @@ def main() -> int:
     good = [g for g in games
             if _usable(g["a"], args.min_turns, args.require_both_active)
             and _usable(g["b"], args.min_turns, args.require_both_active)
-            and not (_dead_side(g["a"]) or _dead_side(g["b"]))]
+            and (not (_dead_side(g["a"]) or _dead_side(g["b"]))
+                 or _frozen(g, "a") or _frozen(g, "b"))]
     bad = [g for g in games if g not in good]
     if bad:
         passive = [g for g in bad
@@ -319,9 +359,10 @@ def main() -> int:
 
     print()
     print(f"{'игра':>5}{'слот':>7}{'X':>8}{'Y':>8}{'Δ X−Y':>9}"
-          f"{'решений X/Y':>14}{'сторона X':>11}")
-    print("-" * 84)
+          f"{'решений X/Y':>14}{'сторона X':>11}{'замёрз':>9}")
+    print("-" * 93)
     diffs = []
+    freeze_rows = []
     for g in good:
         a, b = g["a"], g["b"]
         # Раскладываем записи по ВАРИАНТАМ, а не по сторонам: при перестановке
@@ -332,9 +373,25 @@ def main() -> int:
         diffs.append(sx - sy)
         dec_x = float(x_rec.get("decisions_per_turn_mean") or 0)
         dec_y = float(y_rec.get("decisions_per_turn_mean") or 0)
+        # Замерзание — исход правила, а не брак: помечаем, какой ВАРИАНТ замерз,
+        # потому что от этого зависит, смещена выборка или нет.
+        froze = []
+        if _frozen(g, "a"):
+            froze.append("X" if g["x_side"] == "a" else "Y")
+        if _frozen(g, "b"):
+            froze.append("X" if g["x_side"] == "b" else "Y")
+        if froze:
+            freeze_rows.append((g["game"], "+".join(sorted(set(froze)))))
         print(f"{g['game']:>5}{g['slot']:>7}{sx:>8.1f}{sy:>8.1f}{sx - sy:>+9.1f}"
               f"{f'{dec_x:.2f}/{dec_y:.2f}':>14}"
-              f"{'A' if g['x_side'] == 'a' else 'B':>11}")
+              f"{'A' if g['x_side'] == 'a' else 'B':>11}"
+              f"{('+'.join(sorted(set(froze))) or '—'):>9}")
+    if freeze_rows:
+        on = sum(1 for _g, who in freeze_rows if "X" in who)
+        off = sum(1 for _g, who in freeze_rows if "Y" in who)
+        print(f"\n  замерзаний в зачётных играх: {len(freeze_rows)} "
+              f"(любопытство ВКЛ: {on}, ВЫКЛ: {off}) — это исход правила "
+              f"«действовать только при net_delta > 0», игры НЕ выброшены")
 
     summary: dict = {"games": len(games), "usable": len(good), "mirror": mirror}
     mv = mirror_verdict(diffs) if mirror else ab_verdict(diffs)

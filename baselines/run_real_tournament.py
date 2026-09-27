@@ -304,6 +304,21 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                 avail = info.get("available_actions", {})
                 cands = gen.generate_candidates(dof.state, avail)
                 if not cands:
+                    # Самоотчёт: сервер предложил действия, а кандидатов ноль.
+                    # Без этого «0 решений за матч» не отличить от вето ядра —
+                    # измерено на живом стенде: сторона получала 9 действий
+                    # каждый ход и не выбирала ни одного 30 ходов подряд.
+                    self._no_cands = getattr(self, "_no_cands", 0) + 1
+                    if self._no_cands <= 5 or self._no_cands % 25 == 0:
+                        offered = {c: (len(m) if hasattr(m, "__len__") else "?")
+                                   for c, m in (avail or {}).items()}
+                        try:
+                            n_ent = len(dof.state.entities)
+                        except Exception:  # noqa: BLE001
+                            n_ent = "?"
+                        print(f"        [нет-кандидатов {self._no_cands}] "
+                              f"ход={info.get('turn')} сущностей={n_ent} "
+                              f"предложено по контроллерам={offered}", flush=True)
                     return None
 
                 if trace and cands:
@@ -330,6 +345,14 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                     if trace and decision.chosen_action_id is not None:
                         print(f"        declined {decision.chosen_action_id} "
                               f"(net_delta={decision.net_delta:+.3f} <= 0)", flush=True)
+                    # Тот же самоотчёт, но для второй причины: кандидаты были,
+                    # ядро отказалось. Печатаем всегда (редко): иначе причина
+                    # «0 решений» снова станет неразличимой.
+                    self._vetoed = getattr(self, "_vetoed", 0) + 1
+                    if self._vetoed <= 5 or self._vetoed % 25 == 0:
+                        print(f"        [вето ядра {self._vetoed}] кандидатов "
+                              f"{len(cands)}, выбор={decision.chosen_action_id}, "
+                              f"net_delta={decision.net_delta:+.3f}", flush=True)
                     return None
 
                 for cand in cands:
@@ -425,12 +448,13 @@ def _start_footprint(obs: dict) -> tuple[str, dict]:
 
 
 def _count_actions(obs: dict) -> int:
-    """Сколько действий сервер реально предложил в этом наблюдении.
+    """Сколько действий сервер предложил — ВНИМАНИЕ: считать надо по `info`.
 
-    Значение `available_actions[ctrl][actor][name]` истинно, если действие
-    доступно (CivRealm удаляет невалидные). Ноль здесь — это не «агент решил
-    ничего не делать», а «действий не дали»: такую разницу надо видеть числом,
-    а не выводить из косвенных признаков.
+    Оставлено как напоминание о пойманной ошибке: `available_actions` приходят в
+    `info` (`env.step` → `civ_controller.get_info_and_observation`), а в `obs` этого
+    ключа нет. Счёт по `obs` давал ноль ВСЕГДА, из-за чего «сервер предложил
+    ни одного» выглядело фактом о сервере, а было фактом об измерении.
+    Для настоящего счёта используйте `info['available_actions']`.
     """
     avail = as_dict(obs.get('available_actions')) or {}
     count = 0
@@ -535,6 +559,20 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
         metrics.seed = seed
         metrics.engine = "rust-core" if HAVE_DOF_CORE else "python"
 
+        # Состав мира: каких игроков видит ЭТА сторона. Внешне «мой игрок не даёт
+        # действий» и «я в другой игре, чем партнёр» неразличимы — 0 решений за 50
+        # ходов в обоих случаях. Имена игроков их различают: в одной игре обе
+        # стороны видят один и тот же список.
+        try:
+            players = as_dict(obs.get('player')) or {}
+            names = sorted(str(rec.get('name')) for rec in players.values()
+                           if isinstance(rec, dict))
+            print(f"  [состав] сторона видит игроков: {names} "
+                  f"(мой player_id={getattr(extractor, 'my_player_id', None)})",
+                  flush=True)
+        except Exception:  # noqa: BLE001 - диагностика не должна ломать матч
+            pass
+
         turns_played = 0
         decisions_this_turn = 0
         used_actors: set = set()
@@ -557,12 +595,28 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
                 remaining = max(1.0, deadline - time.time())
                 step_budget = min(STEP_TIMEOUT, remaining)
                 signal.setitimer(signal.ITIMER_REAL, step_budget)
-                if _count_actions(obs) == 0:
+                # Действия приходят в `info`, а не в `obs`: счёт по `obs` мерил не
+                # то (ключ `available_actions` там отсутствует, поэтому «пусто»
+                # получалось всегда). Меру переносим туда, где лежит источник —
+                # и печатаем и наличие ключа в наблюдении, чтобы это не вернулось.
+                info_actions = as_dict(info.get("available_actions")) or {}
+                n_offered = sum(len(as_dict(v)) for v in info_actions.values()
+                                if isinstance(v, dict))
+                if n_offered == 0:
                     # Not (necessarily) a defect: with no action left to offer the
                     # loop ends the turn, and that is how a turn normally closes.
                     # A defect is zero actions for the WHOLE match; this counter is
                     # context for reading that, not a verdict by itself.
                     metrics.empty_action_turns += 1
+                    if (metrics.empty_action_turns <= 5
+                            or metrics.empty_action_turns % 25 == 0):
+                        offered = {c: (len(as_dict(v)) if isinstance(v, dict) else v)
+                                   for c, v in info_actions.items()}
+                        print(f"      [пусто {metrics.empty_action_turns}] ход "
+                              f"{turns_played + 1}: сервер предложил "
+                              f"контроллеры {offered or 'ни одного'} "
+                              f"(в наблюдении ключ available_actions: "
+                              f"{'available_actions' in (obs or {})})", flush=True)
                 action = agent.act(obs, info)
                 phase, key = _turn_phase(action, used_actors, decisions_this_turn,
                                          max_decisions_per_turn)
@@ -577,6 +631,17 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
                               f"{action[0]}/{action[1]}/{action[2]}", flush=True)
                 else:
                     end_turn = True
+                    # Вторая половина замера: действия БЫЛИ предложены, а выбора
+                    # не сделано. Это указывает на наш код (нет кандидатов или
+                    # весь список отклонён ядром), а не на стенд — и раньше эти два
+                    # случая были неразличимы.
+                    if decisions_this_turn == 0 and n_offered > 0:
+                        seen = getattr(metrics, "no_choice_turns", 0) + 1
+                        metrics.no_choice_turns = seen
+                        if seen <= 5 or seen % 25 == 0:
+                            print(f"      [выбор-пуст {seen}] ход {turns_played + 1}: "
+                                  f"предложено действий {n_offered}, агент не выбрал "
+                                  f"ни одного", flush=True)
                     action = None  # stepping None is what ends the turn
                     decisions_this_turn = 0
                     used_actors = set()

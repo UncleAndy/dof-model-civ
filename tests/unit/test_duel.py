@@ -10,7 +10,7 @@ from metrics.duel import (
     mirror_verdict,
     paired_summary,
 )
-from baselines.run_duel import _dead_side
+from baselines.run_duel import _dead_side, _freeze_evidence, _frozen
 
 
 class TestPairedSummary:
@@ -118,3 +118,56 @@ class TestDeadSide:
 
     def test_missing_field_counts_as_never_acted(self):
         assert _dead_side({"turns": 50}) is True
+
+
+class TestFreezeEvidence:
+    """Различать «правило замерзло» и «отказ инструмента» можно только по улике.
+
+    Ноль решений бывает двух природ: сторона не получила державу (брак, игру
+    повторять) или сторона получала предложения и отказалась действовать
+    (исход правила «строго > 0», игру выбрасывать нельзя — иначе выборка смещена).
+    """
+
+    def test_a_veto_line_is_evidence(self):
+        assert _freeze_evidence("  [вето ядра 1] кандидатов 6, net_delta=+0.000")
+
+    def test_an_empty_offer_line_is_evidence(self):
+        assert _freeze_evidence("[выбор-пуст 1] ход 2: предложено действий 9")
+
+    def test_no_candidates_line_is_evidence(self):
+        assert _freeze_evidence("[нет-кандидатов 1] сущностей=93")
+
+    def test_silence_is_not_evidence(self):
+        # Молчание = «не знаем»: сторона остаётся подозреваемой в отказе инструмента.
+        assert not _freeze_evidence("Reset with port: 6300\n [turn 10/30 ...]")
+
+    def test_empty_text_is_not_evidence(self):
+        assert not _freeze_evidence("")
+        assert not _freeze_evidence(None)
+
+
+class TestFrozenGame:
+    """Замерзшая игра остаётся в выборке, сломанная — нет."""
+
+    def _game(self, tmp_path, decisions, text):
+        log = tmp_path / "duel_1_a.log"
+        log.write_text(text)
+        return {"a": {"turns": 30, "decisions_per_turn_mean": decisions},
+                "log_a": str(log)}
+
+    def test_a_dead_side_with_evidence_is_frozen(self, tmp_path):
+        g = self._game(tmp_path, 0.0, "[вето ядра 1] кандидатов 6, net_delta=+0.000\n")
+        assert _frozen(g, "a") is True
+
+    def test_a_dead_side_without_evidence_is_not_frozen(self, tmp_path):
+        g = self._game(tmp_path, 0.0, "Reset with port: 6300\n")
+        assert _frozen(g, "a") is False
+
+    def test_an_active_side_is_never_frozen(self, tmp_path):
+        g = self._game(tmp_path, 0.5, "[вето ядра 1]\n")
+        assert _frozen(g, "a") is False
+
+    def test_a_missing_log_is_not_frozen(self):
+        g = {"a": {"turns": 30, "decisions_per_turn_mean": 0.0},
+             "log_a": "/нет/такого/файла.log"}
+        assert _frozen(g, "a") is False

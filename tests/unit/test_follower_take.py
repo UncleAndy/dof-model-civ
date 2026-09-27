@@ -29,6 +29,10 @@ def _stub(username="duelb", player_num=-1, follower=True,
     s.follower_take = False
     s.take_attempts = take_attempts
     s.take_attempts_max = attempts_max
+    s.thaw_count = 0
+    s.observing = False
+    s.client = {"conn": {}}
+    s.client_is_observer = lambda: False
     s.client_frozen = True
     s.ws_client = _Ws()
     s.player_num = (lambda: player_num) if not callable(player_num) else player_num

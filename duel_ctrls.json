@@ -1,0 +1,122 @@
+{
+  "games": 6,
+  "usable": 6,
+  "mirror": false,
+  "diff_mean": 0.16666666666666666,
+  "diff_ci": [
+    -2.523002950591186,
+    2.856336283924519
+  ],
+  "verdict_kind": "no_difference",
+  "verdict": "РАЗЛИЧИЕ НЕ ПОКАЗАНО: различие не показано: +0.17, 95% CI [-2.52, +2.86], игр 6 — ноль внутри интервала. Это результат: данные исключают эффект больше указанного интервала",
+  "games_detail": [
+    {
+      "game": 1,
+      "slot": 6308,
+      "a": {
+        "score_gain": 6.0,
+        "turns": 30,
+        "avg_total_dof_index": 22.230615995214954,
+        "decisions_per_turn_mean": 0.4666666666666667,
+        "error": ""
+      },
+      "b": {
+        "score_gain": 5.0,
+        "turns": 30,
+        "avg_total_dof_index": 26.79453280474104,
+        "decisions_per_turn_mean": 0.1,
+        "error": ""
+      }
+    },
+    {
+      "game": 3,
+      "slot": 6312,
+      "a": {
+        "score_gain": 8.0,
+        "turns": 30,
+        "avg_total_dof_index": 24.756149347710807,
+        "decisions_per_turn_mean": 0.8,
+        "error": ""
+      },
+      "b": {
+        "score_gain": 5.0,
+        "turns": 30,
+        "avg_total_dof_index": 26.678111080506095,
+        "decisions_per_turn_mean": 0.06666666666666667,
+        "error": ""
+      }
+    },
+    {
+      "game": 6,
+      "slot": 6315,
+      "a": {
+        "score_gain": 9.0,
+        "turns": 30,
+        "avg_total_dof_index": 29.630929261915334,
+        "decisions_per_turn_mean": 0.26666666666666666,
+        "error": ""
+      },
+      "b": {
+        "score_gain": 8.0,
+        "turns": 30,
+        "avg_total_dof_index": 23.23296877949263,
+        "decisions_per_turn_mean": 1.0333333333333334,
+        "error": ""
+      }
+    },
+    {
+      "game": 8,
+      "slot": 6318,
+      "a": {
+        "score_gain": 5.0,
+        "turns": 30,
+        "avg_total_dof_index": 27.25625350510302,
+        "decisions_per_turn_mean": 0.1,
+        "error": ""
+      },
+      "b": {
+        "score_gain": 8.0,
+        "turns": 30,
+        "avg_total_dof_index": 28.454215285392817,
+        "decisions_per_turn_mean": 0.6,
+        "error": ""
+      }
+    },
+    {
+      "game": 9,
+      "slot": 6320,
+      "a": {
+        "score_gain": 8.0,
+        "turns": 30,
+        "avg_total_dof_index": 26.26316943690794,
+        "decisions_per_turn_mean": 1.0,
+        "error": ""
+      },
+      "b": {
+        "score_gain": 10.0,
+        "turns": 30,
+        "avg_total_dof_index": 29.14103780992855,
+        "decisions_per_turn_mean": 0.6333333333333333,
+        "error": ""
+      }
+    },
+    {
+      "game": 10,
+      "slot": 6322,
+      "a": {
+        "score_gain": 9.0,
+        "turns": 30,
+        "avg_total_dof_index": 30.06586152166728,
+        "decisions_per_turn_mean": 0.7,
+        "error": ""
+      },
+      "b": {
+        "score_gain": 6.0,
+        "turns": 30,
+        "avg_total_dof_index": 21.98442130011077,
+        "decisions_per_turn_mean": 0.8333333333333334,
+        "error": ""
+      }
+    }
+  ]
+}
