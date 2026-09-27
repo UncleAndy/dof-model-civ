@@ -1,0 +1,136 @@
+"""Прогноз: перебор вариантов с перевыводом возможностей и дисконтом за ход.
+
+Отличие от прежнего поиска — в одном: на каждом уровне набор возможностей
+**выводится заново** для состояния, которое создало предыдущее действие. Поэтому
+поиск видит последствия («идти → встать на площадку → основать город»), а не
+повторяет сегодняшнее меню.
+
+Три правила, унаследованные от DOF-Core и не смягчённые здесь:
+
+* **вето на коллапс** (Аксиома 3): ветвь, где обратимая сущность ушла в коллапс,
+  отбрасывается;
+* **штраф за необратимость** (Аксиома 4): у необратимого действия вычитается
+  штраф, а не «поправка к привлекательности»;
+* **строгое улучшение**: действие выбирается только если итоговое значение
+  строго больше нуля; ноль означает «не действовать».
+
+Порядок ветвления считается по **ценности преемника**, а не по немедленному
+эффекту: иначе ход, у которого сейчас ноль, но который открывает основание города,
+был бы срезан лучом до того, как это станет видно.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+from .options import Candidate, Valuations, candidates
+from .state import ForecastState
+
+#: Дисконт за ход прогноза. Дальняя выгода весомее нуля, но меньше ближней:
+#: при 0.8 цепочка из пяти шагов даёт 3.36, а не 5.
+FORECAST_GAMMA = 0.8
+#: Сколько кандидатов берётся в ветвление на каждом уровне.
+FORECAST_BEAM = 3
+#: Глубина прогноза в ходах.
+FORECAST_HORIZON = 3
+#: Штраф за необратимое действие (в шкале ядра) — аналог context-switch penalty.
+IRREVERSIBLE_PENALTY = 0.05
+
+
+@dataclass
+class Choice:
+    """Итог прогноза."""
+
+    action: tuple[str, str, str] | None
+    value: float
+    path: list[tuple[str, str, str]] = field(default_factory=list)
+    reason: str = ""
+    nodes: int = 0
+    best_candidate: Candidate | None = None
+
+
+@dataclass
+class _Node:
+    state: ForecastState
+    path: list[tuple[str, str, str]]
+    value: float
+    discount: float
+    first: Candidate | None = None
+
+
+def best_immediate(state: ForecastState, vals: Valuations, *,
+                   max_moves: int = 3) -> float:
+    """Лучший одношаговый выигрыш в состоянии — эвристика для порядка ветвления.
+
+    Это НЕ вердикт: она только решает, какие ветви не срезать. Решение принимает
+    полный перебор до горизонта по накопленной ценности.
+    """
+    best = 0.0
+    for cand in candidates(state, vals, max_moves=max_moves):
+        best = max(best, cand.effect.delta)
+    return best
+
+
+def _rank_key(cand: Candidate, state: ForecastState, vals: Valuations,
+              discount: float, gamma: float, max_moves: int) -> float:
+    """Порядок ветвления: немедленный эффект + дисконтированная ценность преемника."""
+    successor_value = best_immediate(cand.effect.state, vals, max_moves=max_moves)
+    return (cand.effect.delta
+            + discount * (gamma ** cand.effect.delay) * successor_value)
+
+
+def choose(state: ForecastState, vals: Valuations, *,
+           horizon: int = FORECAST_HORIZON,
+           beam: int = FORECAST_BEAM,
+           gamma: float = FORECAST_GAMMA,
+           max_moves: int = 3,
+           irreversible_penalty: float = IRREVERSIBLE_PENALTY,
+           min_improvement: float = 0.0) -> Choice:
+    """Выбрать первый шаг лучшей ветви прогноза.
+
+    Возвращает `action=None`, если ни одна ветвь не даёт строгого улучшения —
+    это законный исход (не действовать), а не сбой.
+    """
+    root = _Node(state=state, path=[], value=0.0, discount=1.0, first=None)
+    frontier = [root]
+    nodes = 0
+
+    for _depth in range(max(1, horizon)):
+        nxt: list[_Node] = []
+        for node in frontier:
+            cands = candidates(node.state, vals, max_moves=max_moves)
+            if not cands:
+                nxt.append(node)          # тупик: ветвь остаётся со своей ценностью
+                continue
+            ranked = sorted(
+                cands,
+                key=lambda c: _rank_key(c, node.state, vals, node.discount,
+                                        gamma, max_moves),
+                reverse=True,
+            )[:max(1, beam)]
+            for cand in ranked:
+                nodes += 1
+                successor = cand.effect.state
+                if successor.collapsed():      # вето Аксиомы 3
+                    continue
+                penalty = 0.0 if cand.effect.reversible else irreversible_penalty
+                gain = (cand.effect.delta - penalty) * (gamma ** cand.effect.delay)
+                nxt.append(_Node(
+                    state=successor,
+                    path=node.path + [cand.action],
+                    value=node.value + node.discount * gain,
+                    discount=node.discount * gamma,
+                    first=node.first or cand,
+                ))
+        if not nxt:
+            break
+        frontier = nxt
+
+    best = max(frontier, key=lambda n: n.value)
+    if best.value <= min_improvement or best.first is None:
+        return Choice(action=None, value=best.value, path=[],
+                      reason=(f"нет строгого улучшения (лучшее значение "
+                              f"{best.value:+.4f} ≤ {min_improvement:+.4f})"),
+                      nodes=nodes, best_candidate=best.first)
+    return Choice(action=best.first.action, value=best.value, path=best.path,
+                  reason=f"улучшение {best.value:+.4f} по пути {len(best.path)} ход(ов)",
+                  nodes=nodes, best_candidate=best.first)
