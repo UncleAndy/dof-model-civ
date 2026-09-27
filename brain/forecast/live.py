@@ -85,24 +85,15 @@ def _num(value: Any, default: float = 0.0) -> float:
 
 
 def _player_record(obs: dict, my_id: Any) -> dict:
-    """Запись своего игрока: живьём ключи ЦЕЛЫЕ, в сохранённом наблюдении строки.
+    """Запись своего игрока — правило живёт в ОДНОМ месте (`env.entity_extractor`).
 
-    Ловушка, стоившая уже нескольких прогонов: в живом потоке `obs['player']`
-    ключуется числами (`0`, `1`, …), а `obs['city']`/`available_actions` — строками;
-    поиск по одному написанию молча возвращает пусто, и дальше «нет данных»
-    выглядит как свойство мира. Поэтому пробуем оба написания, а если игрок один —
-    берём единственную запись.
+    Раньше поиск был скопирован здесь, и правка потребовалась бы дважды; живое
+    наблюдение ключует `player` числами, а `city` — строками, и на этом уже терялись
+    прогоны («нет данных» вместо ошибки).
     """
-    section = _as_dict(obs.get("player"))
-    for key in (my_id, str(my_id)):
-        record = section.get(key)
-        if isinstance(record, dict) and record:
-            return record
-    if len(section) == 1:
-        only = next(iter(section.values()))
-        if isinstance(only, dict):
-            return only
-    return {}
+    from env.entity_extractor import player_record
+
+    return player_record(obs, my_id)
 
 
 def _is_wedged(ctrl: str, action_name: str) -> bool:

@@ -293,7 +293,7 @@ def _frozen_probe(obs: dict, my_player_id) -> list[str]:
     lines: list[str] = []
     try:
         from env.entity_extractor import is_population_carrier, num, spec_field
-        from env.site_eval import evaluate_site, tile_output
+        from env.site_eval import evaluate_site, in_bounds, tile_output
     except Exception:  # noqa: BLE001
         return lines
     units = as_dict(as_dict(obs).get('unit'))
@@ -321,6 +321,8 @@ def _frozen_probe(obs: dict, my_player_id) -> list[str]:
         for dx in range(-reach, reach + 1):
             for dy in range(-reach, reach + 1):
                 try:
+                    if not in_bounds(map_obs, x + dx, y + dy):
+                        continue     # за краем карты: ни раскрытой, ни скрытой
                     if tile_output(map_obs, x + dx, y + dy)[3]:
                         known += 1
                     else:
