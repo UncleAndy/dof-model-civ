@@ -266,6 +266,73 @@ def _core_actions(candidates: list[dict]) -> list:
     ]
 
 
+def _frozen_probe(obs: dict, my_player_id) -> list[str]:
+    """Факты о точке замерзания — чтобы «нет кандидатов» перестало быть симптомом.
+
+    Печатается только когда ядро отказалось от всех кандидатов. Отвечает на три
+    вопроса, без которых любые формулы для скрытых клеток — гадание:
+
+    1. **что за юнит** (тип, носитель населения или нет, запас хода);
+    2. **сколько тумана в его достижимой зоне** (нераскрытые клетки в квадрате
+       радиуса `move_rate`) — это и есть «незнание», ради которого стоило бы идти;
+    3. **что говорит оценка площадки на месте и на лучшей достижимой**: годна ли,
+       какая еда/щиты/торговля, какова доля скрытых клеток в её рабочей зоне.
+
+    Ничего не меняет и не пишет: только читает наблюдение теми же функциями, что и
+    агент, поэтому меряет именно то, чем агент руководствуется.
+    """
+    lines: list[str] = []
+    try:
+        from env.entity_extractor import is_population_carrier, spec_field
+        from env.site_eval import evaluate_site, tile_output
+    except Exception:  # noqa: BLE001
+        return lines
+    units = as_dict(as_dict(obs).get('unit'))
+    map_obs = as_dict(as_dict(obs).get('map'))
+    vals = {}
+    if 'rules.food_cost' in (as_dict(obs).get('rules') or {}):
+        vals['FOOD_COST'] = float(as_dict(obs).get('rules')['food_cost'])
+    for unit_id, u in units.items():
+        if not isinstance(u, dict):
+            continue
+        owner = u.get('owner', my_player_id)
+        try:
+            if int(owner) != int(my_player_id):
+                continue
+        except (TypeError, ValueError):
+            continue
+        x, y = u.get('x'), u.get('y')
+        if x is None or y is None:
+            continue
+        x, y = int(x), int(y)
+        kind = str(spec_field(u, 'rule_name', '') or '?')
+        carrier = bool(is_population_carrier(u))
+        reach = max(1, int(num(spec_field(u, 'move_rate', 1), 1)))
+        hidden = known = 0
+        for dx in range(-reach, reach + 1):
+            for dy in range(-reach, reach + 1):
+                try:
+                    if tile_output(map_obs, x + dx, y + dy)[3]:
+                        known += 1
+                    else:
+                        hidden += 1
+                except Exception:  # noqa: BLE001
+                    pass
+        try:
+            here = evaluate_site(map_obs, x, y, size=1, vals=vals)
+            site_txt = (f"площадка здесь: годна={here.viable}, "
+                        f"еда={here.food:.1f} (гейт {here.gate_food:.1f}/"
+                        f"верх {here.gate_food_high:.1f}), "
+                        f"щиты={here.shields:.1f}, торговля={here.trade:.1f}, "
+                        f"скрытых в зоне {here.unknown_ratio:.0%} [{here.reason}]")
+        except Exception as exc:  # noqa: BLE001
+            site_txt = f"площадка здесь: ошибка {type(exc).__name__}"
+        lines.append(f"[замер] {kind} (unit_{unit_id}) на ({x},{y}) ход={reach} "
+                     f"носитель={carrier} скрытых/раскрытых в достижимой зоне "
+                     f"{hidden}/{known}; {site_txt}")
+    return lines
+
+
 def build_agent(agent_type: str, extractor: GameStateExtractor,
                 lookahead: int = 3, context_switch_penalty: float = 0.5,
                 max_candidates: int = 8, trace: bool = False):
@@ -319,6 +386,9 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                         print(f"        [нет-кандидатов {self._no_cands}] "
                               f"ход={info.get('turn')} сущностей={n_ent} "
                               f"предложено по контроллерам={offered}", flush=True)
+                        if self._no_cands <= 3:
+                            for line in _frozen_probe(obs, getattr(extractor, "my_player_id", None)):
+                                print("        " + line, flush=True)
                     return None
 
                 if trace and cands:
@@ -353,6 +423,13 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                         print(f"        [вето ядра {self._vetoed}] кандидатов "
                               f"{len(cands)}, выбор={decision.chosen_action_id}, "
                               f"net_delta={decision.net_delta:+.3f}", flush=True)
+                        if self._vetoed <= 2:
+                            # Раз в игру — полные факты о точке отказа: какие юниты,
+                            # сколько тумана в их достижимой зоне, что говорит
+                            # оценка площадки. Без этого формула для скрытых клеток
+                            # опиралась бы на догадку.
+                            for line in _frozen_probe(obs, getattr(extractor, "my_player_id", None)):
+                                print("        " + line, flush=True)
                     return None
 
                 for cand in cands:
