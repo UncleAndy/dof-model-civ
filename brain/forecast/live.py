@@ -84,6 +84,27 @@ def _num(value: Any, default: float = 0.0) -> float:
         return default
 
 
+def _player_record(obs: dict, my_id: Any) -> dict:
+    """Запись своего игрока: живьём ключи ЦЕЛЫЕ, в сохранённом наблюдении строки.
+
+    Ловушка, стоившая уже нескольких прогонов: в живом потоке `obs['player']`
+    ключуется числами (`0`, `1`, …), а `obs['city']`/`available_actions` — строками;
+    поиск по одному написанию молча возвращает пусто, и дальше «нет данных»
+    выглядит как свойство мира. Поэтому пробуем оба написания, а если игрок один —
+    берём единственную запись.
+    """
+    section = _as_dict(obs.get("player"))
+    for key in (my_id, str(my_id)):
+        record = section.get(key)
+        if isinstance(record, dict) and record:
+            return record
+    if len(section) == 1:
+        only = next(iter(section.values()))
+        if isinstance(only, dict):
+            return only
+    return {}
+
+
 def _is_wedged(ctrl: str, action_name: str) -> bool:
     """Известно ли, что это действие роняет матч.
 
@@ -334,10 +355,88 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
             out.append((type_name, float(options), turns))
         return out
 
+    player = _player_record(obs, my_id)
+    # Наука за ход — сумма `bulbs` своих городов: это число каждой клетки города,
+    # а не `player['science']`, смысл которого в наблюдении не подтверждён (на
+    # первом же снимке они расходятся в разы: город 7, игрок 60). Расхождение
+    # проверяется отдельно прогоном, а не принимается на веру.
+    bulbs_per_turn = 0.0
+    for city in city_records.values():
+        bulbs_per_turn += _num(city.get("bulbs"), 0.0)
+    if bulbs_per_turn > 0.0:
+        notes.append(f"наука городов {bulbs_per_turn:.1f} за ход — но прогресс "
+                     f"технологии ей НЕ равен (измерено: рост +0/+1 при 3), "
+                     f"поэтому цена технологии не публикуется")
+
+    # Стоимость типов из спецификаций технологий: и юнитов, и улучшений. Это
+    # снимает необходимость замерять цену постановкой производства (замер улучшения
+    # роняет контроллер) — стоимость публикуется миром там же, где и у юнитов.
+    spec_costs: dict[str, float] = {}
+    for rec in _as_dict(obs.get("tech")).values():
+        if not isinstance(rec, dict):
+            continue
+        for field in ("sup_units", "sup_improvements"):
+            for spec in (rec.get(field) or []):
+                if not isinstance(spec, dict):
+                    continue
+                name = str(spec.get("rule_name") or spec.get("name") or "")
+                cost = _num(spec.get("build_cost"), 0.0)
+                if name and cost > 0.0 and name not in spec_costs:
+                    spec_costs[name] = cost
+
     def techs() -> list[tuple[str, float, int]]:
-        notes.append("исследования не подключены: цена набора берётся из "
-                     "tech_research_gain и будет внесена отдельно")
-        return []
+        """[(имя вида `tech_<id>`, выигрыш в опциях, ходов)] — числа из мира.
+
+        Срок = `ceil((стоимость − накоплено) / наука_за_ход)`, где
+
+            наука_за_ход = round(Σ торговля своих городов × ставка науки / 100)
+
+        — **драйвер установлен замером**, а не выведен. Проверено на двух прогонах
+        с разной торговлей:
+
+        | торговля | ставка | рост прогресса | Σ торговля | floor | ceil | round |
+        |---|---|---|---|---|---|---|
+        | 1 | 60 | +1 (24/24) | 24/24 | 0/24 | 24/24 | 24/24 |
+        | 3 | 60 | +2 (35/35) | 0/35 | 18/35 | 17/35 | **35/35** |
+
+        Первый прогон не различал `Σ торговля` и `round(торговля × ставка)`: при
+        торговле 1 они совпадают. Второй различил. Отдельно проверены и отброшены
+        `bulbs` города (3) и `player.science` (60) — оба поля обманки: рост им не
+        равен ни в одном ходу.
+
+        Оговорка, названная прямо: при ставке 60 % произведение торговли на ставку
+        никогда не даёт ровно .5, поэтому правило округления половин проверено не
+        было (при смене ставки на 50 % это надо перенастроить).
+
+        Выигрыш берётся из открытого набора технологии (без деления на срок: срок
+        прогноз применяет сам, и деление применилось бы дважды).
+        """
+        current = player.get("researching")
+        if current is None:
+            return []
+        cost = _num(player.get("researching_cost"), 0.0)
+        done = _num(player.get("bulbs_researched"), 0.0)
+        rate = _num(player.get("science"), 0.0)
+        trade = 0.0
+        for city in city_records.values():
+            trade += _num(city.get("prod_trade"), 0.0)
+        per_turn = round(trade * rate / 100.0)
+        if cost <= 0.0 or per_turn <= 0.0:
+            return []
+        record = _as_dict(obs.get("tech")).get(str(current)) or {}
+        if not isinstance(record, dict):
+            return []
+        try:
+            from env.entity_extractor import tech_options
+            base = _num((values or {}).get("TECH_BASE_OPTIONS"), 0.0)
+            unlocked = float(tech_options(record, as_known=True,
+                                          model=getattr(extractor, "model", None))) - base
+        except Exception:  # noqa: BLE001
+            return []
+        if unlocked <= 0.0:
+            return []
+        turn_count = max(1, int(math.ceil(max(0.0, cost - done) / per_turn)))
+        return [(f"tech_{current}", unlocked, turn_count)]
 
     # Что сервер предлагает ПРЯМО СЕЙЧАС. Без этого фильтра прогноз выбирает
     # действия, которых нет: модель площадки не знает правил стенда (например
@@ -451,6 +550,10 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
                 return options, cost
         cost = world.cost(name)
         if cost is None:
+            # Стоимость типа из спецификаций технологий (`build_cost`): второй
+            # законный источник, без замера и без постановки производства.
+            cost = spec_costs.get(name)
+        if cost is None:
             return None
         options = world.options(name)
         if options:
@@ -458,7 +561,7 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
         for kind in ("unit", "improvement"):
             options = _num(catalogue[kind].get(name), 0.0)
             if options > 0.0:
-                return options, cost
+                return options, float(cost)
         return None
 
     # Цена раскрытия: разрыв Дженсена по ИЗМЕРЕННОМУ разбросу ценностей площадок.

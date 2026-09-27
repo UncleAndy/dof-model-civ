@@ -27,6 +27,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import signal
 import sys
@@ -352,11 +353,12 @@ def _forecast_decide(obs, info, dof, extractor, avail) -> tuple[bool, tuple | No
         return False, None
     try:
         from brain.forecast import choose
-        from brain.forecast.live import build_context
+        from brain.forecast.live import _player_record, build_context
 
         ctx = build_context(obs, info, dof, extractor,
                             exclude_actors=set(_USED_ACTORS[0])
                             if _USED_ACTORS else None)
+        _watch_tech(ctx, obs, info)
         _learn_type_cost(ctx, obs)      # вторая половина прошлого замера
         if not _FORECAST_NOTES_PRINTED and ctx.notes:
             _FORECAST_NOTES_PRINTED.append(True)
@@ -477,6 +479,141 @@ _PROBE_TARGET: list = []
 #: (ctrl, актёр) решения, уже принятые в ЭТОМ ходу — прогноз обязан их видеть,
 #: иначе предлагает ход тому, кто уже решил, и счётчики расходятся с проводом.
 _USED_ACTORS: list = []
+#: След науки: (ход, технология, стоимость, накоплено, наука городов) — для проверки
+#: ВЫВЕДЕННОГО срока технологии фактом. Проверка идёт в живом прогоне, а не отдельным
+#: скриптом: отдельный скрипт должен сам занимать державу, и без этого наблюдение
+#: пусто (проверено — пусто).
+_TECH_TRACE: list = []
+
+
+def _watch_tech(ctx, obs, info=None) -> None:
+    """Записать строку следа науки: прогресс и кандидаты на его драйвер.
+
+    Срок технологии нужен (наука и технологии — сильные умножители DoF), но вывести
+    его не удалось: прогресс рос `+0,+0,+1,…` при `bulbs` городов 3 и
+    `player.science` 60, то есть ни одна из очевидных величин не подошла. Значит
+    драйвер надо УСТАНОВИТЬ — и кандидаты объявлены ДО данных, чтобы не подогнать
+    формулу под результат:
+
+      1. floor(Σ торговля городов × ставка науки %)
+      2. Σ bulbs городов (как публикуется)
+      3. player['science']
+      4. Σ торговля городов (без ставки)
+
+    Ходы, на которых технология завершилась (прогресс сбрасывается), из сверки
+    исключаются — иначе сброс выглядел бы как «формула не сошлась».
+    """
+    from brain.forecast.live import _player_record
+
+    # ОДНА запись на ход: прогноз вызывается дважды за ход (второй вызов — конец
+    # хода), и дубли превращали сверку в мусор: пары одинаковых строк давали рост 0,
+    # а «совпало» считалось на выдуманных парах (первый замер так и испортился).
+    turn_key = (info or {}).get("turn") if isinstance(info, dict) else None
+    if turn_key is None:
+        turn_key = len(_TECH_TRACE) + 1
+    if _TECH_TRACE and _TECH_TRACE[-1].get("key") == turn_key:
+        return
+
+    player = _player_record(obs, getattr(ctx, "my_id", 0))
+    cities = []
+    for city in (obs.get("city") or {}).values():
+        if not isinstance(city, dict):
+            continue
+        try:
+            if int(city.get("owner", ctx.my_id)) != int(ctx.my_id):
+                continue
+        except (TypeError, ValueError):
+            continue
+
+        def number(key):
+            try:
+                return float(city.get(key) or 0.0)
+            except (TypeError, ValueError):
+                return 0.0
+
+        cities.append({"size": number("size"), "trade": number("prod_trade"),
+                       "gold": number("prod_gold"), "bulbs": number("bulbs"),
+                       "food": number("prod_food"), "shield": number("prod_shield")})
+    _TECH_TRACE.append({
+        "key": turn_key,
+        "turn": len(_TECH_TRACE) + 1,
+        "researching": player.get("researching"),
+        "cost": player.get("researching_cost"),
+        "progress": player.get("bulbs_researched"),
+        "science": player.get("science"),
+        "luxury": player.get("luxury"),
+        "gold": player.get("gold"),
+        "cities": cities,
+    })
+
+
+def _tech_candidates(row: dict) -> dict[str, float]:
+    """Значения кандидатов за ход — по числам этого хода.
+
+    Первый замер (24 хода, торговля 1, ставка 60) дал: рост +1 в каждом ходу, и
+    «Σ торговля» совпала 24 из 24, а `bulbs` городов (3), `player.science` (60) и
+    `floor(торговля × ставка%)` (0) — нет. Ловушка, которую надо снять: при
+    торговле 1 с любым округлением вверх те же числа даёт и `ceil(торговля ×
+    ставка%)` = ceil(0.6) = 1. Различить их можно только там, где торговля ≥ 2,
+    поэтому варианты с округлением объявлены ЗАРАНЕЕ, а не подобраны после данных.
+    """
+    trade = sum(c["trade"] for c in row["cities"])
+    bulbs = sum(c["bulbs"] for c in row["cities"])
+    rate = float(row.get("science") or 0.0)
+    return {
+        "Σ торговля": trade,
+        "floor(торговля × ставка%)": math.floor(trade * rate / 100.0),
+        "ceil(торговля × ставка%)": math.ceil(trade * rate / 100.0),
+        "round(торговля × ставка%)": round(trade * rate / 100.0),
+        "Σ bulbs городов": bulbs,
+        "player.science": rate,
+    }
+
+
+def _print_tech_trace() -> None:
+    """Сверка кандидатов на драйвер науки с фактическим ростом прогресса."""
+    rows = [r for r in _TECH_TRACE if r.get("progress") is not None]
+    if len(rows) < 3:
+        print("\n  наука: следа мало — драйвер не установлен", flush=True)
+        return
+    print("\n  наука: сверка кандидатов с ростом bulbs_researched", flush=True)
+    checks: dict[str, list[bool]] = {}
+    used = 0
+    for prev, cur in zip(rows, rows[1:]):
+        if prev.get("researching") != cur.get("researching"):
+            continue                      # технология сменилась: прогресс сброшен
+        delta = float(cur["progress"]) - float(prev["progress"])
+        if delta < 0:
+            continue
+        used += 1
+        for name, value in _tech_candidates(cur).items():
+            checks.setdefault(name, []).append(abs(value - delta) < 1e-9)
+        if used <= 6:
+            city_trade = sum(c["trade"] for c in cur["cities"])
+            city_bulbs = sum(c["bulbs"] for c in cur["cities"])
+            print(f"    ход {cur['turn']}: рост {delta:+g}; торговля городов "
+                  f"{city_trade:g}, bulbs городов {city_bulbs:g}, "
+                  f"ставка {cur.get('science')}", flush=True)
+    print(f"    сверено ходов: {used}", flush=True)
+    for name, results in checks.items():
+        matched = sum(1 for r in results if r)
+        print(f"    кандидат «{name}»: совпал на {matched} из {len(results)}", flush=True)
+
+    # Проверка срока ЦЕЛИКОМ: предсказанный ход завершения против фактического.
+    # Берём первый ход, где стоимость УЖЕ публикуется: на первом ходу матча
+    # исследования может ещё не быть, и тогда `cost` пуст (на этом проверка уже
+    # терялась — срок молча не с чем было сверять).
+    start_row = next((r for r in rows if r.get("cost") is not None), None)
+    per_turn = _tech_candidates(rows[0])["round(торговля × ставка%)"]
+    if start_row is not None and per_turn > 0:
+        left = max(0.0, float(start_row["cost"]) - float(start_row.get("progress") or 0))
+        predicted = int(start_row["turn"]) + int(math.ceil(left / per_turn))
+        actual = next((r["turn"] for r in rows
+                       if r.get("researching") != start_row.get("researching")), None)
+        print(f"    срок технологии {start_row.get('researching')}: предсказано "
+              f"завершение на ходу {predicted}, факт — "
+              f"{('на ходу ' + str(actual)) if actual is not None else 'в матче не завершилась'}",
+              flush=True)
 
 
 def _learn_type_cost(ctx, obs) -> None:
@@ -1100,6 +1237,7 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
             # Итог прогноза: без него «0 решений» снова было бы неотличимо от
             # «прогноз не работал и всё делал fallback».
             _print_forecast_summary()
+            _print_tech_trace()
     except MatchTimeout as exc:
         metrics.error = f"timeout: {exc}"
     except Exception as exc:  # noqa: BLE001 - report, never crash the tournament

@@ -239,6 +239,112 @@ class TestProductionPricing:
 
 # ── 2. цена раскрытия ─────────────────────────────────────────────────────────
 
+class TestResearchPricing:
+    """Срок технологии — по драйверу, УСТАНОВЛЕННОМУ замером.
+
+    Правило: `наука_за_ход = round(Σ торговля своих городов × ставка науки / 100)`,
+    срок = `ceil((стоимость − накоплено) / наука_за_ход)`. Проверено на двух живых
+    прогонах: торговля 1 при ставке 60 → рост +1 (24/24); торговля 3 → рост +2
+    (35/35); при этом `Σ торговля`, `floor`, `ceil`, `bulbs` города и `player.science`
+    не совпали ни разу. Первый прогон этих двух кандидатов не различал — второй
+    различил, и тесты держат именно различающую часть.
+    """
+
+    def _context(self, *, trade=3.0, rate=60.0, cost=28.0, done=0.0):
+        obs = _obs(city=_city(), units=_settler())
+        obs["player"] = {"0": {"researching": 2, "researching_cost": cost,
+                               "science": rate, "bulbs_researched": done}}
+        obs["tech"] = {"2": {"inv_state": 0, "name": "Monarchy",
+                             "sup_units": [{"rule_name": "Phalanx", "build_cost": 30,
+                                            "hp": 10, "attack_strength": 1,
+                                            "defense_strength": 2, "move_rate": 1,
+                                            "firepower": 1, "worker": False}],
+                             "sup_improvements": []}}
+        obs["city"]["121"]["prod_trade"] = trade
+        info_dict = {"available_actions": {"city": {}, "unit": {}, "tech": {}}}
+        return build_context(obs, info_dict, _dof_state(), _extractor())
+
+    def test_the_term_follows_trade_times_rate(self):
+        """Торговля 3 при ставке 60 % → 2 в ход; 28 стоят 14 ходов."""
+        priced = self._context(trade=3.0, rate=60.0, cost=28.0).vals.techs()
+        assert len(priced) == 1
+        name, gain, turns = priced[0]
+        assert name == "tech_2" and gain > 0.0 and turns == 14
+
+    def test_trade_one_gives_one_per_turn(self):
+        """Случай первого прогона: торговля 1 → 1 в ход (round(0.6) = 1)."""
+        assert self._context(trade=1.0, rate=60.0, cost=28.0).vals.techs()[0][2] == 28
+
+    def test_trade_sum_is_not_the_driver(self):
+        """`Σ торговля` опровергнута: при торговле 3 рост равен 2, а не 3."""
+        assert self._context(trade=3.0, rate=60.0).vals.techs()[0][2] != 10
+
+    def test_the_city_bulbs_field_is_not_the_driver(self):
+        """`bulbs` города — обманка: 3 при торговле 1 (рост был 1, не 3)."""
+        obs = _obs(city=_city(), units=_settler())
+        obs["player"] = {"0": {"researching": 2, "researching_cost": 12,
+                               "science": 60.0, "bulbs_researched": 0}}
+        obs["tech"] = {"2": {"inv_state": 0, "name": "Monarchy", "sup_units": [],
+                             "sup_improvements": []}}
+        obs["city"]["121"]["prod_trade"] = 1.0
+        obs["city"]["121"]["bulbs"] = 3.0
+        info_dict = {"available_actions": {"city": {}, "unit": {}, "tech": {}}}
+        # по драйверу (торговля 1) срок 12; по `bulbs` (3) было бы 4
+        priced = build_context(obs, info_dict, _dof_state(), _extractor()).vals.techs()
+        assert priced and priced[0][2] == 12
+
+    def test_no_rate_means_no_candidate(self):
+        assert self._context(rate=0.0).vals.techs() == []
+
+    def test_the_name_is_the_one_the_wire_expects(self):
+        """`tech_2` → `research_tech_2`; имя действия здесь дало бы двойной префикс."""
+        from brain.forecast.options import tech_name
+        assert tech_name(self._context().vals.techs()[0][0]) == "research_tech_2"
+
+
+class TestImprovementPricing:
+    """Улучшение оценивается стоимостью из спецификаций технологий.
+
+    Стоимость улучшения есть в наблюдении — в `sup_improvements[].build_cost`, там же,
+    где `build_cost` у юнитов (Temple 30, Courthouse 60). Поэтому ни замер, ни
+    постановка производства (которая роняет контроллер) не нужны.
+    """
+
+    def test_an_improvement_is_priced_from_its_specification(self):
+        from types import SimpleNamespace
+        obs = _obs(city=_city(shield_stock=0, prod_shield=3), units=_settler())
+        obs["tech"] = {"10": {"inv_state": 1, "name": "Ceremonial Burial",
+                              "sup_units": [],
+                              "sup_improvements": [{"rule_name": "Temple",
+                                                    "build_cost": 30}]}}
+        info_dict = {"available_actions": {
+            "city": {"121": {"produce_Temple": True}}, "unit": {}, "tech": {}}}
+        ctx = build_context(obs, info_dict, _dof_state(improvements={"Temple": 1.4}),
+                            _extractor())
+        priced = ctx.vals.productions("city_121")
+        assert [name for name, _o, _t in priced] == ["Temple"]
+        assert priced[0][2] == 10        # ceil((30 − 0) / 3)
+
+    def test_a_specification_cost_is_not_used_for_the_forecast_units(self):
+        """Стоимость из спецификаций законна и для юнитов — это второй источник."""
+        from types import SimpleNamespace
+        obs = _obs(city=_city(shield_stock=0, prod_shield=3), units=_settler())
+        obs["tech"] = {"2": {"inv_state": 1, "name": "Bronze Working",
+                             "sup_units": [{"rule_name": "Phalanx",
+                                            "build_cost": 30, "hp": 10,
+                                            "attack_strength": 1,
+                                            "defense_strength": 2,
+                                            "move_rate": 1, "firepower": 1,
+                                            "worker": False}],
+                             "sup_improvements": []}}
+        info_dict = {"available_actions": {
+            "city": {"121": {"produce_Phalanx": True}}, "unit": {}, "tech": {}}}
+        ctx = build_context(obs, info_dict, _dof_state(units={"Phalanx": 4.75}),
+                            _extractor())
+        priced = ctx.vals.productions("city_121")
+        assert [name for name, _o, _t in priced] == ["Phalanx"]
+
+
 class TestJensenGap:
     def test_gap_in_options_is_the_expected_best_minus_the_belief(self):
         # выборка 0,0,8,0; держим опцию 3: вера = max(3, 2) = 3,
