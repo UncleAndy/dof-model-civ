@@ -132,6 +132,11 @@ def _parse_cli(argv: list[str]) -> argparse.Namespace:
                         help="напечатать кандидатов прогноза (вид, действие, "
                              "доф, срок, дисконт) за первые N ходов — для замера "
                              "порогов, а не для догадок")
+    parser.add_argument("--ban-produce", dest="ban_produce", nargs="*", default=[],
+                        metavar="ТИП",
+                        help="запретить прогнозу ставить эти типы в очередь "
+                             "(инструмент серии «состав против состава»: "
+                             "например --ban-produce Warriors Settlers)")
     args, rest = parser.parse_known_args(argv)
     sys.argv = [sys.argv[0]] + rest
     return args
@@ -517,6 +522,27 @@ def _forecast_decide(obs, info, dof, extractor, avail) -> tuple[bool, tuple | No
         _watch_tech(ctx, obs, info)
         _dump_candidates(ctx, info)
         _dump_tech_numbers(obs, extractor, info)
+        if ARGS.ban_produce:
+            # Серия «состав против состава»: прогноз тот же, меняется ТОЛЬКО набор
+            # типов, которые он вправе ставить в очередь. Никакой другой разницы
+            # между ветвями быть не должно, иначе сравнение состава ничего не значит.
+            banned = {str(name) for name in ARGS.ban_produce}
+            _orig_productions = ctx.vals.productions
+            _orig_improvements = ctx.vals.improvements
+
+            def _filter(call, city, _b=banned):
+                return [item for item in call(city) if str(item[0]) not in _b]
+
+            ctx.vals.productions = (
+                lambda city, _p=_orig_productions: _filter(_p, city))
+            ctx.vals.improvements = (
+                lambda city, _i=_orig_improvements: _filter(_i, city))
+            # Замер внутри агента (`probe_offers`) заполняется побочным эффектом
+            # исходного `productions`, поэтому запрещённые типы могли бы вернуться
+            # через замер — и ветвь «с запретом» поставила бы запрещённое. Убираем.
+            for _name in list(getattr(ctx, "probe_offers", {}) or {}):
+                if str(_name) in banned:
+                    ctx.probe_offers.pop(_name, None)
         _learn_type_cost(ctx, obs)      # вторая половина прошлого замера
         if not _FORECAST_NOTES_PRINTED and ctx.notes:
             _FORECAST_NOTES_PRINTED.append(True)
