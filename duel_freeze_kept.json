@@ -1,0 +1,302 @@
+{
+  "games": 16,
+  "usable": 16,
+  "mirror": false,
+  "diff_mean": 4.25,
+  "diff_ci": [
+    1.6802519667938913,
+    6.819748033206109
+  ],
+  "verdict_kind": "difference",
+  "verdict": "РАЗЛИЧИЕ ЕСТЬ: различие есть и в пользу X: +4.25, 95% CI [+1.68, +6.82], игр 16",
+  "games_detail": [
+    {
+      "game": 2,
+      "slot": 6312,
+      "a": {
+        "score_gain": 11.0,
+        "turns": 50,
+        "avg_total_dof_index": 29.38567351822388,
+        "decisions_per_turn_mean": 0.56,
+        "error": ""
+      },
+      "b": {
+        "score_gain": 12.0,
+        "turns": 50,
+        "avg_total_dof_index": 24.038920779105283,
+        "decisions_per_turn_mean": 1.0,
+        "error": ""
+      }
+    },
+    {
+      "game": 3,
+      "slot": 6313,
+      "a": {
+        "score_gain": 12.0,
+        "turns": 50,
+        "avg_total_dof_index": 30.19433524203664,
+        "decisions_per_turn_mean": 0.86,
+        "error": ""
+      },
+      "b": {
+        "score_gain": 7.0,
+        "turns": 50,
+        "avg_total_dof_index": 26.881773125258263,
+        "decisions_per_turn_mean": 0.08,
+        "error": ""
+      }
+    },
+    {
+      "game": 4,
+      "slot": 6314,
+      "a": {
+        "score_gain": 6.0,
+        "turns": 50,
+        "avg_total_dof_index": 29.64354269184253,
+        "decisions_per_turn_mean": 0.46,
+        "error": ""
+      },
+      "b": {
+        "score_gain": 14.0,
+        "turns": 50,
+        "avg_total_dof_index": 32.3080963831838,
+        "decisions_per_turn_mean": 0.84,
+        "error": ""
+      }
+    },
+    {
+      "game": 5,
+      "slot": 6315,
+      "a": {
+        "score_gain": 12.0,
+        "turns": 50,
+        "avg_total_dof_index": 31.420414044897097,
+        "decisions_per_turn_mean": 0.62,
+        "error": ""
+      },
+      "b": {
+        "score_gain": 0.0,
+        "turns": 50,
+        "avg_total_dof_index": 16.34743997506993,
+        "decisions_per_turn_mean": 0.0,
+        "error": ""
+      }
+    },
+    {
+      "game": 6,
+      "slot": 6316,
+      "a": {
+        "score_gain": 8.0,
+        "turns": 50,
+        "avg_total_dof_index": 32.44916347845511,
+        "decisions_per_turn_mean": 0.06,
+        "error": ""
+      },
+      "b": {
+        "score_gain": 10.0,
+        "turns": 50,
+        "avg_total_dof_index": 28.15927701703069,
+        "decisions_per_turn_mean": 1.0,
+        "error": ""
+      }
+    },
+    {
+      "game": 7,
+      "slot": 6317,
+      "a": {
+        "score_gain": 6.0,
+        "turns": 50,
+        "avg_total_dof_index": 23.69400506856675,
+        "decisions_per_turn_mean": 0.56,
+        "error": ""
+      },
+      "b": {
+        "score_gain": 5.0,
+        "turns": 50,
+        "avg_total_dof_index": 27.215626580751344,
+        "decisions_per_turn_mean": 0.04,
+        "error": ""
+      }
+    },
+    {
+      "game": 8,
+      "slot": 6318,
+      "a": {
+        "score_gain": 7.0,
+        "turns": 50,
+        "avg_total_dof_index": 27.937480443561434,
+        "decisions_per_turn_mean": 0.04,
+        "error": ""
+      },
+      "b": {
+        "score_gain": 12.0,
+        "turns": 50,
+        "avg_total_dof_index": 27.19520554666412,
+        "decisions_per_turn_mean": 0.88,
+        "error": ""
+      }
+    },
+    {
+      "game": 9,
+      "slot": 6319,
+      "a": {
+        "score_gain": 4.0,
+        "turns": 50,
+        "avg_total_dof_index": 17.932383608468704,
+        "decisions_per_turn_mean": 1.06,
+        "error": ""
+      },
+      "b": {
+        "score_gain": 0.0,
+        "turns": 50,
+        "avg_total_dof_index": 16.34743997506993,
+        "decisions_per_turn_mean": 0.0,
+        "error": ""
+      }
+    },
+    {
+      "game": 11,
+      "slot": 6321,
+      "a": {
+        "score_gain": 12.0,
+        "turns": 50,
+        "avg_total_dof_index": 27.52088617367353,
+        "decisions_per_turn_mean": 0.88,
+        "error": ""
+      },
+      "b": {
+        "score_gain": 4.0,
+        "turns": 50,
+        "avg_total_dof_index": 26.869231508033153,
+        "decisions_per_turn_mean": 0.04,
+        "error": ""
+      }
+    },
+    {
+      "game": 12,
+      "slot": 6322,
+      "a": {
+        "score_gain": 0.0,
+        "turns": 50,
+        "avg_total_dof_index": 16.658469445518268,
+        "decisions_per_turn_mean": 0.0,
+        "error": ""
+      },
+      "b": {
+        "score_gain": 10.0,
+        "turns": 50,
+        "avg_total_dof_index": 27.067478745981358,
+        "decisions_per_turn_mean": 0.88,
+        "error": ""
+      }
+    },
+    {
+      "game": 13,
+      "slot": 6323,
+      "a": {
+        "score_gain": 12.0,
+        "turns": 50,
+        "avg_total_dof_index": 25.129047854041996,
+        "decisions_per_turn_mean": 1.0,
+        "error": ""
+      },
+      "b": {
+        "score_gain": 0.0,
+        "turns": 50,
+        "avg_total_dof_index": 16.34743997506993,
+        "decisions_per_turn_mean": 0.0,
+        "error": ""
+      }
+    },
+    {
+      "game": 14,
+      "slot": 6324,
+      "a": {
+        "score_gain": 14.0,
+        "turns": 50,
+        "avg_total_dof_index": 32.5929586160795,
+        "decisions_per_turn_mean": 0.04,
+        "error": ""
+      },
+      "b": {
+        "score_gain": 10.0,
+        "turns": 50,
+        "avg_total_dof_index": 29.90656590018271,
+        "decisions_per_turn_mean": 0.86,
+        "error": ""
+      }
+    },
+    {
+      "game": 15,
+      "slot": 6325,
+      "a": {
+        "score_gain": 10.0,
+        "turns": 50,
+        "avg_total_dof_index": 26.668973882373663,
+        "decisions_per_turn_mean": 0.9,
+        "error": ""
+      },
+      "b": {
+        "score_gain": 7.0,
+        "turns": 50,
+        "avg_total_dof_index": 27.090499845397733,
+        "decisions_per_turn_mean": 0.74,
+        "error": ""
+      }
+    },
+    {
+      "game": 16,
+      "slot": 6326,
+      "a": {
+        "score_gain": 0.0,
+        "turns": 50,
+        "avg_total_dof_index": 16.658469445518268,
+        "decisions_per_turn_mean": 0.0,
+        "error": ""
+      },
+      "b": {
+        "score_gain": 0.0,
+        "turns": 50,
+        "avg_total_dof_index": 16.34743997506993,
+        "decisions_per_turn_mean": 0.0,
+        "error": ""
+      }
+    },
+    {
+      "game": 17,
+      "slot": 6327,
+      "a": {
+        "score_gain": 6.0,
+        "turns": 50,
+        "avg_total_dof_index": 33.045229044663095,
+        "decisions_per_turn_mean": 0.22,
+        "error": ""
+      },
+      "b": {
+        "score_gain": 9.0,
+        "turns": 50,
+        "avg_total_dof_index": 35.13867370125858,
+        "decisions_per_turn_mean": 0.54,
+        "error": ""
+      }
+    },
+    {
+      "game": 19,
+      "slot": 6329,
+      "a": {
+        "score_gain": 10.0,
+        "turns": 50,
+        "avg_total_dof_index": 28.63563996175315,
+        "decisions_per_turn_mean": 0.74,
+        "error": ""
+      },
+      "b": {
+        "score_gain": 6.0,
+        "turns": 50,
+        "avg_total_dof_index": 28.573271594211977,
+        "decisions_per_turn_mean": 0.08,
+        "error": ""
+      }
+    }
+  ]
+}
