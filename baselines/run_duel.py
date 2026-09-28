@@ -393,7 +393,47 @@ def main() -> int:
               f"(любопытство ВКЛ: {on}, ВЫКЛ: {off}) — это исход правила "
               f"«действовать только при net_delta > 0», игры НЕ выброшены")
 
-    summary: dict = {"games": len(games), "usable": len(good), "mirror": mirror}
+    # ── ВСТРЕЧА СТОРОН (§10.26) ─────────────────────────────────────────────
+    # Турнир, в котором противники не сходятся, не проверяет взаимодействие:
+    # прежние дуэли стартовали на 36–43 клетки и за 25–50 ходов не видели друг
+    # друга. Критерий встречи объявлен ДО данных: контакт ≤ 2 шага (Чебышёв,
+    # X замыкается) ИЛИ отправленное боевое действие.
+    encounter_rows = []
+    for g in good:
+        a, b = g["a"], g["b"]
+        x_rec, y_rec = (a, b) if g["x_side"] == "a" else (b, a)
+        encounter_rows.append({
+            "game": g["game"],
+            "x_min": x_rec.get("enemy_min_distance"),
+            "y_min": y_rec.get("enemy_min_distance"),
+            "x_contacts": x_rec.get("enemy_contact_turns") or [],
+            "y_contacts": y_rec.get("enemy_contact_turns") or [],
+            "x_combat": x_rec.get("combat_actions") or [],
+            "y_combat": y_rec.get("combat_actions") or [],
+            "met": bool(x_rec.get("met_opponent")) or bool(y_rec.get("met_opponent")),
+        })
+    print()
+    print("ВСТРЕЧА СТОРОН (критерий объявлен заранее, §10.26: контакт ≤ 2 шага "
+          "ИЛИ боевое действие)")
+    for r in encounter_rows:
+        print(f"  игра {r['game']:>3}: ближайший чужой X={r['x_min']} Y={r['y_min']}, "
+              f"контактов X={len(r['x_contacts'])} Y={len(r['y_contacts'])}, "
+              f"боевых X={len(r['x_combat'])} Y={len(r['y_combat'])} → "
+              f"{'ВСТРЕЧА' if r['met'] else 'НЕ ВСТРЕТИЛИСЬ'}")
+    met_n = sum(1 for r in encounter_rows if r["met"])
+    need_n = max(1, round(len(encounter_rows) * 2 / 3))
+    encounter_verdict = (
+        f"условие выполнено: встреч {met_n} из {len(encounter_rows)} (нужно ≥ {need_n})"
+        if met_n >= need_n else
+        f"УСЛОВИЕ НЕ ВЫПОЛНЕНО: встреч {met_n} из {len(encounter_rows)} (нужно "
+        f"≥ {need_n}) — стороны не сходятся, и такой турнир взаимодействия не "
+        f"проверяет")
+    print(f"  {encounter_verdict}")
+
+    summary: dict = {"games": len(games), "usable": len(good), "mirror": mirror,
+                     "encounters": encounter_rows,
+                     "encounter_verdict": encounter_verdict,
+                     "met_games": met_n}
     mv = mirror_verdict(diffs) if mirror else ab_verdict(diffs)
     summary.update({"diff_mean": mv['summary']['mean'],
                     "diff_ci": mv['summary']['ci'],

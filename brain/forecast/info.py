@@ -41,7 +41,8 @@ def gap_options(sample: list[float], best_known: float = 0.0) -> float:
     return max(0.0, drawn - max(best, mean_expected))
 
 
-def gap_index(sample: list[float], best_known: float = 0.0) -> float:
+def gap_index(sample: list[float], best_known: float = 0.0,
+              potential: float | None = None) -> float:
     """Ценность раскрытия В ШКАЛЕ ИНДЕКСА — там, где принимается решение.
 
     Считается ровно та величина, которой меряется всё остальное: индекс
@@ -54,6 +55,14 @@ def gap_index(sample: list[float], best_known: float = 0.0) -> float:
     одну опцию). `best_known` — индекс лучшей опции, которую агент ДЕРЖИТ сейчас
     (логарифм, а не опции!), и он подставляется как нижняя граница в обе части:
     плохая новость не обесценивает то, что уже есть.
+
+    `potential` — ОДНО возможное значение из неизвестного (измеренный разброс,
+    §10.27.1). Оно входит в РОЗЫГРЫШ, но не в ВЕРУ: вера — это то, что мы считаем
+    средним по видимому, а потенциал — то, что может открыться. Без такого
+    разделения разрыв тождественно ноль в обычном случае: лучшая удерживаемая
+    площадка и есть максимум выборки, поэтому ни один розыгрыш её не превышает, а
+    если добавить потенциал ещё и в веру, вера поднимается выше реализованного
+    среднего и разрыв снова обнуляется (измерено: 0.000 при опциях 0.270).
 
     Почему не в опциях (первая редакция формулы, отозвана): решение принимает
     поиск В ИНДЕКСЕ, и цена в опциях не проходила правило «строго больше нуля» —
@@ -71,5 +80,8 @@ def gap_index(sample: list[float], best_known: float = 0.0) -> float:
 
     drawn = [max(best, value(v)) for v in values]
     mean_expected = sum(drawn) / len(drawn)
+    if potential is not None:
+        mean_expected = ((sum(drawn) + max(best, value(float(potential))))
+                         / (len(drawn) + 1))
     mean_believed = max(best, value(sum(values) / len(values)))
     return max(0.0, mean_expected - mean_believed)

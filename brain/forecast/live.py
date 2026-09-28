@@ -317,10 +317,52 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
     if "rules.food_cost" in values:
         values["FOOD_COST"] = values["rules.food_cost"]
 
+    # ── ПОРОГ ДЛЯ ПЕРВОГО ГОРОДА ПАДАЕТ С ХОДОМ (§10.27, решение Andy) ──────
+    # Пока города нет, порог 6.0 при бедном старте делает НЕВОЗМОЖНЫМ само
+    # основание: ни одна достижимая площадка не годна → кандидата нет → сторона
+    # стоит вечно (измерено: 60 ходов, 0 действий). Поэтому для первого города
+    # порог падает по объявленной формуле. Для последующих городов — остаётся 6.0.
+    # Порог подменяется ОДНИМ местом (здесь), поэтому и прогноз, и диагностика,
+    # и оценка площадок берут одно и то же число.
+    if capital:
+        try:
+            _turn_no = max(1, int((info or {}).get("turn") or 1))
+        except (TypeError, ValueError):
+            _turn_no = 1
+        values["SITE_MIN_FOOD"] = _cfg.first_city_food_gate(_turn_no)
+        notes.append(f"первый город: порог площадки падает с ходом "
+                     f"({_cfg.SITE_MIN_FOOD_FIRST:.1f} − "
+                     f"{_cfg.SITE_MIN_FOOD_FIRST_DECAY:.2f}/ход, пол "
+                     f"{_cfg.SITE_MIN_FOOD_FIRST_FLOOR:.1f}); на ходу {_turn_no} он "
+                     f"{values['SITE_MIN_FOOD']:.2f}")
+
+    # ── НАБИВКА СКРЫТЫХ КЛЕТОК — ИЗ ИЗМЕРЕННОГО (§10.27.1) ─────────────────
+    # Средний и лучший выход по РАСКРЫТЫМ клеткам этой карты. Нужны там, где окно
+    # площадки целиком под туманом: там «среднего по видимым» взять неоткуда, а
+    # ноль запрещён («незнание — это не отсутствие возможностей»). Источник —
+    # само наблюдение, поэтому набивка измеренная, а не выдуманная.
+    try:
+        import numpy as _np
+        _layer = (map_obs or {}).get("output")
+        if _layer is not None:
+            arr = _np.asarray(_layer)
+            flat = arr.reshape(-1, arr.shape[-1])
+            flat = flat[:, :3]
+            revealed = flat[(flat != 0).any(axis=1)]
+            if len(revealed):
+                values["UNKNOWN_FILL"] = tuple(float(v) for v in revealed.mean(axis=0))
+                values["UNKNOWN_BEST"] = tuple(float(v) for v in revealed.max(axis=0))
+                notes.append(
+                    f"набивка тумана: по {len(revealed)} раскрытым клеткам среднее "
+                    f"{values['UNKNOWN_FILL'][0]:.2f} еды, лучшее "
+                    f"{values['UNKNOWN_BEST'][0]:.2f}")
+    except Exception as exc:  # noqa: BLE001
+        notes.append(f"набивка тумана: не посчиталась ({type(exc).__name__}: {exc}) — "
+                     f"берётся измеренная легенда террейнов")
+
     def site_of(tile: tuple[int, int]):
         return evaluate_site(map_obs, int(tile[0]), int(tile[1]), size=1,
                              vals=values)
-
     def city_dof(tile: tuple[int, int]) -> float:
         try:
             site = site_of(tile)
@@ -908,9 +950,31 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
             except Exception:  # noqa: BLE001
                 continue
     best_known = math.log(max(max(held), 1.0)) if held else 0.0
+    # Пол цены раскрытия (§10.27.1, подтверждено Andy). Если раскрытые клетки дали
+    # ВЫРОЖДЕННУЮ выборку (все значения равны), разброс берётся из ИЗМЕРЕННОГО
+    # несмещённым забором, а не из нуля: нулевой разброс здесь означал бы «знать
+    # больше нечего», хотя 80.9 % окна под туманом (измерено). Число — перевод
+    # замера (ст.откл 1.77 еды в опции формулой города), а не подобранная величина.
+    gap_floor = float(_cfg.INFO_GAP_FLOOR_OPTIONS)
+    gap_potential_applied = False
+    gap_potential: float | None = None
+    if sample:
+        # Раскрытые клетки — выборка ВИДИМОГО; покупка же — узнать НЕВИДИМОЕ.
+        # Поэтому в розыгрыш ВСЕГДА входит потенциал неизвестного: среднее по
+        # видимым плюс ИЗМЕРЕННЫЙ разброс (§10.27.1, ст.откл 1.77 еды → 1.27 опции).
+        # Без него разрыв Дженсена тождественно ноль в обычном случае: лучшая
+        # УДЕРЖИВАЕМАЯ площадка и есть максимум выборки, поэтому ни один розыгрыш её
+        # не превышает и цена раскрытия выходит 0.000 (измерено на живом прогоне:
+        # индекс 0.000 при опциях 0.279). Ход в туман из-за этого отвергался ВСЕГДА.
+        # Потенциал входит в РОЗЫГРЫШ, но НЕ в веру: вера — среднее по видимому,
+        # а потенциал — то, что может открыться. Если удерживаемая площадка и так
+        # выше потенциала, разрыв остаётся нулём — и это честно: искать нечего.
+        mean_sample = sum(sample) / len(sample)
+        gap_potential = mean_sample + gap_floor
+        gap_potential_applied = True
     # Импорт назван явно, а не модулем `info`: у этой функции есть свой параметр
     # `info` (наблюдение), и модуль с тем же именем он затеняет.
-    gap_index = jensen_gap_index(sample, best_known)
+    gap_index = jensen_gap_index(sample, best_known, potential=gap_potential)
     gap_options = jensen_gap_options(sample, best_known)
 
     def info_gain_of(tile: tuple[int, int]) -> float:
@@ -1011,6 +1075,7 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
         held_options = max(held) if held else 0.0
         notes.append(f"цена раскрытия: разрыв Дженсена {gap_index:.3f} (индекс) / "
                      f"{gap_options:.3f} (опции) по {len(sample)} раскрытым клеткам, "
+                     f"{'с потенциалом из замера' if gap_potential_applied else 'без потенциала'} "
                      f"лучшая удерживаемая площадка {held_options:.2f} опций "
                      f"(индекс {best_known:.3f})")
     # Почему семейства «основание» и «движение» пусты — числами, а не догадкой.

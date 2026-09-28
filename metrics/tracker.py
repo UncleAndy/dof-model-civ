@@ -115,6 +115,50 @@ class MatchMetrics:
     #: Счётчик «corrected: 6» без журнала — это цифра, которой нельзя доверять:
     #: по ней не видно, шесть разных ключей исправлено или один шесть раз.
     correction_log: list[dict] = field(default_factory=list)
+    #: ── ВСТРЕЧА СТОРОН (2026-09-28) ─────────────────────────────────────────
+    #: Турнир ничего не доказывает, если противники не сошлись: прежние дуэли
+    #: стартовали на 36–43 клетки друг от друга (карта 78×52) и за 25–50 ходов
+    #: не встречались ни разу. Поэтому контакт ИЗМЕРЯЕТСЯ, а не предполагается:
+    #: расстояние считается по наблюдению (наши сущности против чужих), X
+    #: замыкается, метрика — Чебышёв («сколько шагов по прямой»).
+    enemy_min_distance: Optional[int] = None
+    enemy_contact_turns: list[int] = field(default_factory=list)
+    enemy_units_seen_max: int = 0
+    my_units_seen_max: int = 0
+    #: Боевые действия, отправленные за матч (`attack*`, `capture*`, …) — прямое
+    #: свидетельство взаимодействия, а не близости.
+    combat_actions: list[str] = field(default_factory=list)
+
+    #: Порог «встречи» в шагах: ≤ 2 — это уже соседние клетки фронта.
+    CONTACT_WITHIN: int = 2
+
+    def note_encounter(self, turn: int, distance: Optional[int],
+                       enemy_units: int = 0, my_units: int = 0) -> None:
+        """Записать контакт: расстояние до ближайшей чужой сущности.
+
+        `distance = None` означает «противника не видно вовсе» — это НЕ то же
+        самое, что большое расстояние, и потому в список контактов не попадает.
+        """
+        self.my_units_seen_max = max(self.my_units_seen_max, int(my_units))
+        self.enemy_units_seen_max = max(self.enemy_units_seen_max, int(enemy_units))
+        if distance is None:
+            return
+        dist = int(distance)
+        if self.enemy_min_distance is None or dist < self.enemy_min_distance:
+            self.enemy_min_distance = dist
+        if (dist <= self.CONTACT_WITHIN and int(turn) not in self.enemy_contact_turns
+                and len(self.enemy_contact_turns) < 400):
+            self.enemy_contact_turns.append(int(turn))
+
+    def note_combat(self, action_name: str) -> None:
+        """Боевое действие — взаимодействие, а не только близость."""
+        if len(self.combat_actions) < 200:
+            self.combat_actions.append(str(action_name))
+
+    @property
+    def met_opponent(self) -> bool:
+        """Состоялась ли встреча — по критерию, объявленному ДО данных (§10.26)."""
+        return bool(self.enemy_contact_turns or self.combat_actions)
 
     def _series_payload(self) -> dict[str, Any]:
         if not self.include_series:
@@ -351,6 +395,12 @@ class MatchMetrics:
             # не успеть стать различием в итоговом счёте, и тогда видно только
             # «сколько и когда очки приходили».
             "score_series": list(self.score_series),
+            "enemy_min_distance": self.enemy_min_distance,
+            "enemy_contact_turns": list(self.enemy_contact_turns),
+            "enemy_units_seen_max": self.enemy_units_seen_max,
+            "my_units_seen_max": self.my_units_seen_max,
+            "combat_actions": list(self.combat_actions),
+            "met_opponent": self.met_opponent,
         }
         payload.update(self._series_payload())
         return payload

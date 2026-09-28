@@ -132,6 +132,15 @@ def _parse_cli(argv: list[str]) -> argparse.Namespace:
                         help="напечатать кандидатов прогноза (вид, действие, "
                              "доф, срок, дисконт) за первые N ходов — для замера "
                              "порогов, а не для догадок")
+    parser.add_argument("--sample-sites", dest="sample_sites", type=int, default=0,
+                        metavar="N",
+                        help="за первые N ходов оценить ВСЕ клетки окна вокруг наших "
+                             "юнитов (та же формула `evaluate_site`) и дописать строки "
+                             "в `site_sample.jsonl`. Нужно для честной (несмещённой) "
+                             "оценки того, какие площадки на карте бывают: корпус "
+                             "основанных городов к хорошим местам смещён")
+    parser.add_argument("--sample-radius", dest="sample_radius", type=int, default=9,
+                        help="радиус окна забора площадок (по умолчанию 9)")
     parser.add_argument("--ban-produce", dest="ban_produce", nargs="*", default=[],
                         metavar="ТИП",
                         help="запретить прогнозу ставить эти типы в очередь "
@@ -393,6 +402,31 @@ def _dump_candidates(ctx, info) -> None:
           f"(по видам: " + ", ".join(
               f"{k} {sum(1 for _c in cands if _c.kind == k)}"
               for k in sorted({c.kind for c in cands})) + ")", flush=True)
+    # ── ПЕРЕПИСЬ МЕНЮ ЮНИТА ─────────────────────────────────────────────────
+    # Без неё «в кандидатах нет движения» неотличимо от «сервер не предлагал
+    # шагов»: первое — дефект нашего провода, второе — свойство мира. Печатаем
+    # СЫРЫЕ имена годных действий по нашим юнитам (сколько всего, сколько из них
+    # `goto_*`) — числами, а не догадкой.
+    try:
+        offered_unit = as_dict(as_dict(info.get("available_actions")).get("unit"))
+        ours = list(getattr(ctx.state, "positions", {}) or {})
+        census = []
+        for unit_id in ours[:4]:
+            bare = str(unit_id).split("_", 1)[1] if "_" in str(unit_id) else str(unit_id)
+            acts = None
+            for key, value in offered_unit.items():
+                if str(key) == str(bare):
+                    acts = as_dict(value)
+                    break
+            names = [n for n, ok in (acts or {}).items() if ok]
+            goto = [n for n in names if n.startswith("goto")]
+            census.append(f"{unit_id}: годных {len(names)} (шагов {len(goto)})"
+                          + (f" → {names[:6]}" if names else ""))
+        print(f"        [меню юнита] {'; '.join(census) or 'наших юнитов в меню нет'}",
+              flush=True)
+    except Exception as exc:  # noqa: BLE001
+        print(f"        [меню юнита] сбой переписи: {type(exc).__name__}: {exc}",
+              flush=True)
     # Печатаем верх списка И, отдельно, все исследования/улучшения — даже если они
     # в самом низу: вопрос «почему наука не выбирается» требует её ЧИСЕЛ, а не
     # отсутствия в топе.
@@ -1251,6 +1285,161 @@ def _parse_false_claims(spec: str) -> list[tuple[str, float]]:
     return out
 
 
+def _encounter_gap(obs: dict, my_player_id) -> tuple[int | None, int, int] | None:
+    """Расстояние до ближайшей ЧУЖОЙ сущности: (min, чужих юнитов, наших юнитов).
+
+    Зачем отдельная функция. Турнир, в котором противники не сходятся, не
+    проверяет взаимодействие — а именно так и было в прежних дуэлях: старты
+    стояли на 36–43 клетки (карта 78×52), и за 25–50 ходов стороны не видели друг
+    друга вовсе. Поэтому контакт нужно ИЗМЕРЯТЬ.
+
+    Метрика — Чебышёв на цилиндре: X замыкается (карта 78 в ширину), Y — нет.
+    Это «сколько шагов по прямой», а не манхэттен: юнит ходит по восьми
+    направлениям. `None` в первом элементе означает «чужих не видно вовсе» —
+    это НЕ то же самое, что большое расстояние: туман не равен дали.
+    """
+    try:
+        units = as_dict(as_dict(obs).get('unit'))
+        cities = as_dict(as_dict(obs).get('city'))
+    except Exception:  # noqa: BLE001
+        return None
+    shape = None
+    try:
+        rules = as_dict(as_dict(obs).get('rules'))
+        xs, ys = rules.get('xsize'), rules.get('ysize')
+        if xs and ys:
+            shape = (int(xs), int(ys))
+    except Exception:  # noqa: BLE001
+        shape = None
+    mine: list[tuple[int, int]] = []
+    theirs: list[tuple[int, int]] = []
+    for pool in (units, cities):
+        for rec in pool.values():
+            if not isinstance(rec, dict):
+                continue
+            x, y = rec.get('x'), rec.get('y')
+            if x is None or y is None:
+                continue
+            owner = rec.get('owner', my_player_id)
+            try:
+                same = int(owner) == int(my_player_id)
+            except (TypeError, ValueError):
+                continue
+            try:
+                point = (int(x), int(y))
+            except (TypeError, ValueError):
+                continue
+            (mine if same else theirs).append(point)
+    if not theirs:
+        return (None, 0, len(mine))
+    best: int | None = None
+    width = shape[0] if shape else None
+    for mx, my in mine:
+        for tx, ty in theirs:
+            dx = abs(mx - tx)
+            if width:
+                dx = min(dx, width - dx)          # X замыкается
+            dist = max(dx, abs(my - ty))          # Чебышёв: 8 направлений
+            if best is None or dist < best:
+                best = dist
+    return (best, len(theirs), len(mine))
+
+
+def _is_combat_action(action_name: str) -> bool:
+    """Боевое действие — взаимодействие, а не только близость."""
+    text = str(action_name).lower()
+    return any(word in text for word in
+               ("attack", "capture", "conquer", "bombard", "nuke", "kill"))
+
+
+#: Ходы, с которых забор площадок уже сделан (одна строка на ход на матч).
+_SITE_SAMPLE_SEEN: set = set()
+
+
+def _sample_sites(obs: dict, turn: int, radius: int, my_player_id) -> int:
+    """Оценить ВСЕ клетки окна вокруг наших юнитов и дописать строки в корпус.
+
+    Зачем именно окно целиком. Ошибку оценки площадки нельзя мерить по основанным
+    городам: такая выборка смещена к хорошим местам (в корпусе `site_outcomes`
+    именно так и было). Здесь оцениваются и раскрытые клетки, и туман — той же
+    формулой `evaluate_site`, которой руководствуется агент. В игру ничего не
+    отправляется: только чтение наблюдения.
+
+    Возвращает число дописанных строк.
+    """
+    if turn in _SITE_SAMPLE_SEEN:
+        return 0
+    map_obs = as_dict(as_dict(obs).get('map'))
+    layer = map_obs.get('output')          # СЛОЙ — массив, а не словарь
+    shape = getattr(layer, 'shape', None)
+    rules = as_dict(as_dict(obs).get('rules'))
+    try:
+        xsize, ysize = int(rules.get('xsize') or 0), int(rules.get('ysize') or 0)
+    except (TypeError, ValueError):
+        xsize, ysize = 0, 0
+    if (not xsize or not ysize) and shape and len(shape) >= 2:
+        # Размер берём из формы слоя карты: ключи `rules` есть не всегда, а слой
+        # приходит всегда (та же легенда, что в замерах: terrain/output — массивы).
+        xsize, ysize = int(shape[0]), int(shape[1])
+    if not (xsize and ysize):
+        print("      [забор площадок] нет размера карты — забор пропущен", flush=True)
+        return 0
+    ours: list[tuple[int, int]] = []
+    for rec in as_dict(as_dict(obs).get('unit')).values():
+        if not isinstance(rec, dict):
+            continue
+        try:
+            if int(rec.get('owner', my_player_id)) != int(my_player_id):
+                continue
+            ours.append((int(rec.get('x')), int(rec.get('y'))))
+        except (TypeError, ValueError):
+            continue
+    if not ours:
+        print("      [забор площадок] наших юнитов не видно — забор пропущен", flush=True)
+        return 0
+    from env.site_eval import evaluate_site
+    from env.world_model import default_model
+    values = dict(default_model().values())
+    x0, y0 = ours[0]
+    tag = os.environ.get("DOF_RUN_TAG", "")
+    written = 0
+    with open("site_sample.jsonl", "a", encoding="utf-8") as fh:
+        for dx in range(-radius, radius + 1):
+            for dy in range(-radius, radius + 1):
+                x, y = (x0 + dx) % xsize, y0 + dy
+                if not 0 <= y < ysize:
+                    continue
+                try:
+                    site = evaluate_site(map_obs, x, y, size=1, vals=values)
+                except Exception:  # noqa: BLE001
+                    continue
+                hidden = None
+                try:
+                    # Легенда (проверена на стенде): туман — это output (0,0,0) и
+                    # террейн-сентайнел; поэтому «скрыта» определяем по выходу.
+                    cell = map_obs.get("output")
+                    hidden = not any(float(v) for v in list(cell[x][y])[:3])
+                except Exception:  # noqa: BLE001
+                    hidden = None
+                fh.write(json.dumps({
+                    "tag": tag, "turn": int(turn), "x": int(x), "y": int(y),
+                    "hidden": hidden, "gate_food": float(site.gate_food),
+                    "gate_food_high": float(site.gate_food_high),
+                    "known_tiles": int(site.known_tiles),
+                    "total_tiles": int(site.total_tiles),
+                    "site_food": float(getattr(site, "food", 0.0)),
+                    "site_shields": float(getattr(site, "shields", 0.0)),
+                    "site_trade": float(getattr(site, "trade", 0.0)),
+                    "viable": bool(site.viable),
+                    "gate": float(values.get("SITE_MIN_FOOD", 6.0)),
+                }, ensure_ascii=False) + "\n")
+                written += 1
+    _SITE_SAMPLE_SEEN.add(turn)
+    print(f"      [забор площадок] ход {turn}: клеток окна {written} "
+          f"(радиус {radius}, от {x0},{y0}) → site_sample.jsonl", flush=True)
+    return written
+
+
 def _record_wedge(metrics: MatchMetrics, action, turn: int) -> None:
     """Записать выбор, о который заклинило стенд, — это измерение, а не шум.
 
@@ -1288,6 +1477,7 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
     metrics = MatchMetrics(agent_name=agent_type, include_series=include_series)
     metrics.curiosity = curiosity
     metrics.port = port
+    _SITE_SAMPLE_SEEN.clear()      # забор площадок — заново на каждый матч
     # Метка для корпуса сверок площадок: строки должны различаться по агентам,
     # иначе «прогноз против факта» смешает города всех вариантов в одну кучу.
     os.environ["DOF_RUN_TAG"] = f"{agent_type}{'' if curiosity else '/no-curiosity'}"
@@ -1430,6 +1620,19 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
                                   f"({'; '.join(parts)}), агент не выбрал ни одного; "
                                   f"годное производство: "
                                   f"{city_valid or 'НЕТ'}", flush=True)
+                            # СЫРОЕ МЕНЮ ЮНИТА: без него «нет кандидатов движения»
+                            # неотличимо от «сервер не предлагал шагов». Вопрос
+                            # «почему сторона стоит» решается именно этим списком.
+                            unit_valid = []
+                            for actor, acts in as_dict(info_actions.get("unit")).items():
+                                names = [name for name, params in as_dict(acts).items()
+                                         if params]
+                                if names:
+                                    goto = [n for n in names if n.startswith("goto")]
+                                    unit_valid.append(
+                                        f"{actor}: {len(names)} годных, "
+                                        f"шагов {len(goto)} → {names[:8]}")
+                            print(f"      [меню юнита] {unit_valid or 'НЕТ ГОДНЫХ'}", flush=True)
                     action = None  # stepping None is what ends the turn
                     decisions_this_turn = 0
                     used_actors = set()
@@ -1458,6 +1661,30 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
             # агента с бездействующим: пакеты наблюдения у них разные, а счёт
             # считает сервер по своим правилам для всех одинаково.
             metrics.record_score(turns_played + 1, reward)
+            # ── ВСТРЕЧА СТОРОН: измеряем контакт каждый ход, а не предполагаем ──
+            try:
+                _enc = _encounter_gap(obs, getattr(extractor, "my_player_id", None))
+                if _enc is not None:
+                    metrics.note_encounter(turns_played + 1, _enc[0], _enc[1], _enc[2])
+                    if (_enc[0] is not None and _enc[0] <= metrics.CONTACT_WITHIN
+                            and not metrics.enemy_contact_turns[:-1]):
+                        print(f"      [встреча] ход {turns_played + 1}: чужая "
+                              f"сущность в {_enc[0]} шаг(ах), чужих видно {_enc[1]}",
+                              flush=True)
+            except Exception as exc:  # noqa: BLE001
+                metrics.note_encounter(turns_played + 1, None)
+                print(f"      [встреча] замер не удался: {type(exc).__name__}: {exc}",
+                      flush=True)
+            if action is not None and _is_combat_action(action[2]):
+                metrics.note_combat(str(action[2]))
+            # ── ЗАБОР ПЛОЩАДОК (несмещённая выборка, §10.27) ─────────────────
+            if ARGS.sample_sites and turns_played < ARGS.sample_sites:
+                try:
+                    _sample_sites(obs, turns_played + 1, ARGS.sample_radius,
+                                  getattr(extractor, "my_player_id", None))
+                except Exception as exc:  # noqa: BLE001
+                    print(f"      [забор площадок] сбой: {type(exc).__name__}: {exc}",
+                          flush=True)
             # An experiment counts when the action was actually TAKEN, not when it
             # was chosen: a pick the server rejects teaches nothing, and the bonus
             # for probing must decay against real experience only.
