@@ -143,11 +143,23 @@ def main():
             "surplus_food": rec.get("surplus_food"),
             "surplus_shield": rec.get("surplus_shield"),
             "surplus_trade": rec.get("surplus_trade"),
+            # ПОЛЯ САМОЙ ЗАПИСИ ГОРОДА, от которых зависит множитель экономики.
+            # Раньше их тут не было, и в словарь попадала казна игрока под ключом
+            # `gold` — а формула города читает `gold` как СВОЁ поле, когда нет
+            # `surplus_gold`. Из-за этого m2 выглядел насыщенным (6.2 вместо 1.3),
+            # и вывод «модель не видит клетки» был артефактом прибора.
+            "surplus_gold": rec.get("surplus_gold"),
+            "science": rec.get("science"),
+            "luxury": rec.get("luxury"),
+            "granary_size": rec.get("granary_size"),
+            "food_stock": rec.get("food_stock"),
+            "improvements": rec.get("improvements"),
             "shield_stock": rec.get("shield_stock"),
             "prod_process": rec.get("prod_process"),
             "turns_to_prod_complete": rec.get("turns_to_prod_complete"),
             "buy_cost": rec.get("buy_cost"),
-            "gold": player_rec.get("gold"),
+            # Казна игрока — под ОТДЕЛЬНЫМ ключом, чтобы формула города её не читала.
+            "player_gold": player_rec.get("gold"),
             "options": options,
         }
 
