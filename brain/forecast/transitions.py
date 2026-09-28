@@ -79,17 +79,18 @@ def index_delta(state: ForecastState, entity_id: str, delta: float) -> float:
 
 
 def move(state: ForecastState, unit_id: str, target: tuple[int, int], *,
-         info_gain: float = 0.0) -> Effect:
+         info_gain: float = 0.0, progress: float = 0.0) -> Effect:
     """Ход юнита: меняется позиция и раскрытие клетки, куда он встал.
 
-    «Дельта действия» обычно нулевая: ценность хода — в том, что станет доступно
-    на новой клетке (площадка, основание города). Её даёт преемник, а не сам ход.
+    «Дельта действия» — раскрытие плюс ПРОГРЕСС к цели (§10.38, V2). Прогресс — это
+    доля `R / N` измеренной цены простоя юнита (опции за ход), где `N` — шагов до
+    цели: весь путь возвращает ровно `R` (телескопирование), и шаг перестаёт быть
+    «пустым». Без этого у хода по раскрытой клетке дельта нулевая, и в порядке
+    ветвления он всегда ниже производства.
 
-    Исключение — `info_gain`: ценность РАСКРЫТИЯ клетки, куда юнит встал. Это не
-    выдумка, а разрыв Дженсена по измеренному разбросу ценностей клеток
-    (`info.py`). Без него ход в туман имеет нулевую дельту, поиск принимает только
-    строгое улучшение — и агент не идёт в туман никогда, хотя именно там лежат
-    площадки под города.
+    Исключение и раньше, и теперь — только шаги, ведущие к цели: ход без цели
+    (нет площадки в достижимой зоне, нет работы на клетке) остаётся с нулевой
+    дельтой, потому что «ходить без причины» это правило не разрешает.
 
     Раскрытой считается только клетка, на которую юнит встал, — это достоверно.
     Остальное раскрытие за ход предсказать нельзя, и оно не приписывается.
@@ -99,9 +100,11 @@ def move(state: ForecastState, unit_id: str, target: tuple[int, int], *,
     newly_revealed = target not in state.revealed
     new.positions[unit_id] = target
     new.revealed.add(target)
-    delta = float(info_gain) if newly_revealed else 0.0
-    return Effect(state=new, delta=delta, delay=0, reversible=True,
-                  note=f"ход {unit_id} → {target}")
+    delta = (float(info_gain) if newly_revealed else 0.0) + max(0.0, float(progress))
+    note = f"ход {unit_id} → {target}"
+    if progress > 0.0:
+        note += f" (прогресс к цели +{float(progress):.3f})"
+    return Effect(state=new, delta=delta, delay=0, reversible=True, note=note)
 
 
 def found_city(state: ForecastState, unit_id: str, *, city_id: str | None = None,

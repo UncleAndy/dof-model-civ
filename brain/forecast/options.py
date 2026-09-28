@@ -46,6 +46,11 @@ class Valuations:
     works: Callable[[tuple[int, int]], list[tuple[str, float, str | None]]]
     #: носитель ли населения (только ему основание и цена площадки)
     is_carrier: Callable[[str], bool]
+    #: Доля сохраняемой стоимости, которую несёт ШАГ к цели (§10.38, V2):
+    #: `(unit_id, откуда, куда) -> R / N`, где `R` — измеренная цена простоя юнита
+    #: в опциях за ход, `N` — шагов до цели. `None` — состояние без провода
+    #: (синтетика): тогда у шага остаётся только раскрытие, как раньше.
+    goal_credit: Callable[[str, tuple[int, int], tuple[int, int]], float] | None = None
     #: предложенные серверу шаги юнита: [(имя `goto_<dir8>`, клетка назначения)].
     #: Задаётся на живом пути, где есть меню действий. `None` — состояние без
     #: провода (синтетика в тестах): тогда движение берётся семейством по `reach`,
@@ -194,28 +199,41 @@ def candidates(state: ForecastState, vals: Valuations, *,
                 tile = (int(target[0]), int(target[1]))
                 value = tile_value(tile, vals, carrier=carrier)
                 gain = float(vals.info_gain(tile))
+                # ПРОГРЕСС К ЦЕЛИ (§10.38, V2): доля R/N измеренной цены простоя
+                # юнита. Без него шаг по раскрытой клетке имеет дельту 0 и в порядке
+                # ветвления всегда ниже производства — измерено: ключ 1.1 против 1.7–3.0.
+                progress = 0.0
+                if vals.goal_credit is not None and here is not None:
+                    try:
+                        progress = max(0.0, float(vals.goal_credit(
+                            unit_id, (int(here[0]), int(here[1])), tile)))
+                    except Exception:  # noqa: BLE001 - диагностика не рушит выбор
+                        progress = 0.0
                 # Числа шага: без них не выбрать вариант правки фильтра — «в туман
                 # имеет смысл идти» остаётся мнением, пока не видно value и gain.
                 if len(move_diag["шаги"]) < 16:
                     move_diag["шаги"].append({
                         "юнит": unit_id, "куда": tile, "ценность": round(float(value), 3),
-                        "раскрытие": round(gain, 3),
+                        "раскрытие": round(gain, 3), "прогресс": round(progress, 3),
                         "на_месте": round(float(current), 3),
                         "пройдёт_по_ценности": bool(value > current),
                         "пройдёт_с_раскрытием": bool(value + gain > current),
                     })
-                # Ход стоит ценности только если преемник её даёт.
-                if value <= current:
+                # Ход стоит ценности только если преемник её даёт — ИЛИ если он ведёт
+                # к цели (тогда ценность даёт не клетка, а приближение к площадке).
+                if value <= current and progress <= 0.0:
                     move_diag["отброшено_по_ценности"] += 1
                     continue
                 move_diag["оставлено"] += 1
                 effect = tr.move(state, unit_id, tile,
-                                 info_gain=float(vals.info_gain(tile)))
+                                 info_gain=float(vals.info_gain(tile)),
+                                 progress=progress)
                 out.append(Candidate(action=("unit", unit_id, name),
                                      effect=effect, kind="move",
-                                     score_hint=value - current,
+                                     score_hint=(value - current) + progress,
                                      extra={"tile": tile, "value": value,
-                                            "direction": name}))
+                                            "direction": name,
+                                            "progress": progress}))
             continue
         tile, best_value, current = _best_destination(state, unit_id, vals,
                                                       max_moves=max_moves)

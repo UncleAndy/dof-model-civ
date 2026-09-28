@@ -807,6 +807,52 @@ def _dump_foreign_entities(obs, extraction, extractor) -> None:
         print(f"        НЕ в сущностях: {absent[:3]}", flush=True)
 
 
+def _dump_fog_distance(obs, extractor) -> None:
+    """До ближайшей НЕРАСКРЫТОЙ клетки от каждого своего юнита (§10.41).
+
+    Зачем число: замер §10.40 показал, что дело не в переоценённом производстве, а в
+    том, что остальные семейства стоят около нуля. Ценность разведки измерена раньше
+    (разрыв Дженсена = INFO_GAP_FLOOR_OPTIONS опций за раскрытую клетку), но она
+    применима, только если туман РЯДОМ: иначе шаг к нему стоит больше, чем даёт.
+    Здесь видно, сколько шагов до тумана на самом деле.
+    """
+    mp = (obs or {}).get("map")
+    if not isinstance(mp, dict):
+        return
+    terrain = _plain(mp.get("terrain"))
+    if not isinstance(terrain, list) or not terrain:
+        return
+    my_id = getattr(extractor, "my_player_id", None)
+    units = as_dict((obs or {}).get("unit")) or {}
+    distances = []
+    for rec in units.values():
+        if not isinstance(rec, dict) or rec.get("owner") != my_id:
+            continue
+        try:
+            ux, uy = int(rec.get("x")), int(rec.get("y"))
+        except (TypeError, ValueError):
+            continue
+        best = None
+        for dx in range(-8, 9):
+            for dy in range(-8, 9):
+                d = max(abs(dx), abs(dy))
+                if best is not None and d >= best:
+                    continue
+                try:
+                    cell = terrain[(ux + dx) % len(terrain)][uy + dy]
+                except Exception:  # noqa: BLE001
+                    continue
+                if cell == 255:
+                    best = d
+        if best is not None:
+            distances.append(best)
+    if distances:
+        from env.config import INFO_GAP_FLOOR_OPTIONS
+        print(f"      [туман] шагов до ближайшей нераскрытой клетки: {distances} "
+              f"(медиана {sorted(distances)[len(distances)//2]}); "
+              f"ценность одного раскрытия {INFO_GAP_FLOOR_OPTIONS} опции", flush=True)
+
+
 def _print_food_gate_summary() -> None:
     """Что правило F отсекло за матч — иначе «правило работает» остаётся верой.
 
@@ -2350,6 +2396,7 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
                     try:
                         _dump_foreign_entities(obs, extraction, extractor)
                         _dump_index_composition(obs, extraction, extractor)
+                        _dump_fog_distance(obs, extractor)
                     except Exception as exc:  # noqa: BLE001
                         print(f"      [чужое в DoF] сбой среза: "
                               f"{type(exc).__name__}: {exc}", flush=True)

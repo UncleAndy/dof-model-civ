@@ -128,6 +128,21 @@ def _num(value: Any, default: float = 0.0) -> float:
         return default
 
 
+def _wrap_distance(a: tuple[int, int], b: tuple[int, int],
+                   shape: tuple[int, int] | None) -> int:
+    """Расстояние в шагах по карте-цилиндру (X замыкается, Y нет) — §10.38, V2.
+
+    Без замыкания по X цель у другого края карты считалась бы недостижимо далёкой, и
+    шаг к ней не получил бы своей доли `R / N`.
+    """
+    dx = int(b[0]) - int(a[0])
+    dy = int(b[1]) - int(a[1])
+    if shape and shape[0]:
+        dx = abs(dx) % int(shape[0])
+        dx = min(dx, int(shape[0]) - dx)
+    return max(abs(dx), abs(dy))
+
+
 def _player_record(obs: dict, my_id: Any) -> dict:
     """Запись своего игрока — правило живёт в ОДНОМ месте (`env.entity_extractor`).
 
@@ -1062,6 +1077,36 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
         options, _cost = priced
         return [("city_buy_production", str(name), float(options), float(cost_gold))]
 
+    def goal_credit(unit_id: str, here: tuple[int, int],
+                    target: tuple[int, int]) -> float:
+        """Сколько опций сохраняет ШАГ к цели: `R / N` (§10.38, V2).
+
+        `R` — измеренная цена простоя носителя в опциях за ход (та же величина, что
+        идёт в сток «задержка населения»), `N` — шагов от текущей клетки до цели.
+        Весь путь к площадке возвращает ровно `R` (телескопирование суммы долей).
+        Шаг, который НЕ приближает к цели, стоит ноль: «ходить без причины» правило
+        не разрешает.
+        """
+        if extractor is None:
+            return 0.0
+        finder = getattr(extractor, "carrier_walk_goal", None)
+        if finder is None:
+            return 0.0
+        try:
+            goal = finder(obs, unit_id)
+        except Exception:  # noqa: BLE001
+            return 0.0
+        if not goal:
+            return 0.0
+        goal_tile, rate = goal
+        if rate <= 0.0:
+            return 0.0
+        d_here = _wrap_distance(here, goal_tile, shape)
+        d_next = _wrap_distance(target, goal_tile, shape)
+        if d_here <= 0 or d_next >= d_here:
+            return 0.0
+        return float(rate) / float(d_here)
+
     vals = Valuations(
         reach=reach,
         moves=moves,
@@ -1075,6 +1120,7 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
         techs=techs,
         works=works,
         is_carrier=is_carrier,
+        goal_credit=goal_credit,
         info_gain=info_gain or info_gain_of,
         allowed=allowed,
         excluded=excluded,
