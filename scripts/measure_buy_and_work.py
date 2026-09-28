@@ -225,6 +225,25 @@ def main():
             # молчит ровно тогда, когда мир ничего не изменил.
             rec = cities_now.get(str(founded)) or {}
             if offered and wire_actor is not None:
+                def tile_output_of(action_name, _rec=rec):
+                    """Выход клетки из имени действия: `city_{work,unwork}_<id>_<dx>_<dy>`.
+
+                    Считается по слою карты (`map['output']`, каналы 0..2) от координат
+                    города: именно это число модель использует, когда оценивает перевод
+                    жителя, поэтому замер и предсказание обязаны опираться на один источник.
+                    """
+                    parts = str(action_name).split("_")
+                    try:
+                        dx, dy = int(parts[-2]), int(parts[-1])
+                    except (TypeError, ValueError):
+                        return None
+                    cx, cy = number(_rec.get("x"), 0), number(_rec.get("y"), 0)
+                    layer = (obs.get("map") or {}).get("output")
+                    try:
+                        cell = layer[int(cx + dx)][int(cy + dy)]
+                        return [float(v) for v in list(cell)[:3]]
+                    except Exception:  # noqa: BLE001
+                        return None
                 # Журнал меню: без него «city_work не предлагался» не отличить от
                 # «предлагался, но мы его не увидели». Печатаем редко.
                 work_now = sorted(n for n in offered if n.startswith("city_"))
@@ -315,7 +334,8 @@ def main():
                         name = valid_unwork[0]
                         tile_state = {"stage": "unworked", "tile": name,
                                       "before": snapshot(rec, player_rec),
-                                      "turn": turn}
+                                      "turn": turn,
+                                      "tile_from_output": tile_output_of(name)}
                         post = "unwork"
                     elif tile_state.get("stage") == "unworked" and valid_work:
                         # Берём ДРУГУЮ клетку, а не ту же: иначе «перевод» ничего не
@@ -326,26 +346,11 @@ def main():
                         same_suffix = str(tile_state.get("tile", "")).split("city_unwork_")[-1]
                         others = [n for n in valid_work
                                   if n.split("city_work_")[-1] != same_suffix] or valid_work
-                        # Предпочитаем клетку с наибольшим выходом: интepесен случай,
-                        # где формула города обязана отреагировать заметно.
-                        def tile_score(action_name):
-                            parts = action_name.split("_")
-                            try:
-                                dx, dy = int(parts[-2]), int(parts[-1])
-                            except (TypeError, ValueError):
-                                return 0.0
-                            cx, cy = number(rec.get("x"), 0), number(rec.get("y"), 0)
-                            layer = (obs.get("map") or {}).get("output")
-                            try:
-                                cell = layer[int(cx + dx)][int(cy + dy)]
-                                return sum(float(v) for v in list(cell)[:3])
-                            except Exception:  # noqa: BLE001
-                                return 0.0
-                        name = max(others, key=tile_score)
+                        name = max(others, key=lambda n: sum(tile_output_of(n) or [0, 0, 0]))
                         post = "work"
                         try:
                             tile_state["tile_to"] = name
-                            tile_state["tile_to_output"] = tile_score(name)
+                            tile_state["tile_to_output"] = tile_output_of(name)
                         except Exception:  # noqa: BLE001
                             pass
                     else:
@@ -367,6 +372,10 @@ def main():
                         else:
                             emit({"kind": f"{post}_post", "turn": turn,
                                   "city": str(founded), "action": name,
+                                  "tile_from": tile_state.get("tile"),
+                                  "tile_from_output": tile_state.get("tile_from_output"),
+                                  "tile_to": tile_state.get("tile_to"),
+                                  "tile_to_output": tile_state.get("tile_to_output"),
                                   **{f"at_{k}": v for k, v in
                                      tile_state.get("before", {}).items()}})
                             print(f"  ход {turn}: {name} отправлено ({post}; еда "

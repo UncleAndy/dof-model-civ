@@ -195,6 +195,13 @@ def reach_tiles(pos: tuple[int, int], move_rate: int,
     return tiles
 
 
+#: Номер «рода производства» для ЮНИТА в записи города (`production_kind`).
+#: Измерено на живом городе (2026-09-27): город строивший Settlers отдавал kind = 6.
+#: Другие роды НЕ маппим — угадывать цену предмета нельзя, поэтому покупку для них
+#: просто не предлагаем (это ограничение, а не «ноль»).
+UNIT_PRODUCTION_KIND = 6
+
+
 def _record_by_id(pool: Any, wanted: Any) -> dict:
     """Запись из словаря-слоя по идентификатору — НЕ по типу ключа.
 
@@ -253,7 +260,9 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
                   w_info: float = 0.0,
                   world_model: Any | None = None,
                   exclude_actors: set | None = None,
-                  info_gain: Callable[[tuple[int, int]], float] | None = None
+                  info_gain: Callable[[tuple[int, int]], float] | None = None,
+                  type_names: dict | None = None,
+                  gold: Any = None,
                   ) -> LiveContext:
     """Собрать состояние и оценки прогноза из живого наблюдения.
 
@@ -658,6 +667,8 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
             return bool(_offered_for(offered_city, actor).get(name))
         if kind == "improve":
             return bool(_offered_for(offered_city, actor).get(name))
+        if kind == "buy":
+            return bool(_offered_for(offered_city, actor).get(name))
         if kind == "research":
             cur = offered_tech.get("cur_player")
             return isinstance(cur, dict) and any(
@@ -814,6 +825,59 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
         return ((str(ctrl), _bare(ctrl, actor)) in used
                 or (str(ctrl), str(actor)) in used)
 
+    def buys(city_id: str) -> list[tuple[str, str, float, float]]:
+        """Покупка производства: [(действие, тип предмета, опции, цена в золоте)].
+
+        Цена золота ИЗМЕРЕНА (§10.25.1): уходит ровно `buy_cost`. Вклад в индекс —
+        тот же предмет, но БЕЗ дисконта срока (покупка завершает его сейчас), поэтому
+        кандидат отличается от производства только задержкой. Золото в модели нигде
+        больше не оценено, поэтому единственное ограничение — доступность:
+        `золото игрока ≥ buy_cost` (и это ограничение, а не цена).
+
+        Предмет очереди называем ТОЛЬКО когда он опознан: `production_kind == 6`
+        (юнит — измерено) и тип найден в таблице клиента. Иначе покупку не
+        предлагаем: угадывать цену предмета нельзя.
+        """
+        rec = city_records.get(city_id) or {}
+        offered_here = _offered_for(offered_city, city_id)
+        if not offered_here.get("city_buy_production"):
+            return []
+        turns = _num(rec.get("turns_to_prod_complete"), 0.0)
+        cost_gold = _num(rec.get("buy_cost"), 0.0)
+        if turns <= 1 or cost_gold <= 0.0:
+            return []
+        try:
+            kind = int(_num(rec.get("production_kind"), -1))
+        except (TypeError, ValueError):
+            return []
+        if kind != UNIT_PRODUCTION_KIND:
+            return []
+        value = rec.get("production_value")
+        table = type_names or {}
+        if not table and "покупка: таблицы типов нет" not in notes:
+            # Без таблицы типов предмет очереди назвать нечем, и покупку предлагать
+            # нельзя — но молчание тут неотличимо от «покупать нечего». Говорим прямо.
+            notes.append("покупка: таблицы типов нет (смотри env.")
+        name = None
+        for key in (value, str(value)):
+            if key in table:
+                name = table[key]
+                break
+        if not name:
+            if "покупка: предмет не опознан" not in notes:
+                notes.append(f"покупка: предмет не опознан (kind={kind}, "
+                             f"value={value})")
+            return []
+        # Доступность НЕ проверяем своей формулой: сервер сам помечает
+        # `city_buy_production` недействительным, когда золота не хватает
+        # (измерено: при `buy_cost == золото` предложение уже False). Одна проверка
+        # вместо двух — своя формула тут была бы выдуманным порогом.
+        priced = type_price(name)
+        if priced is None:
+            return []
+        options, _cost = priced
+        return [("city_buy_production", str(name), float(options), float(cost_gold))]
+
     vals = Valuations(
         reach=reach,
         moves=moves,
@@ -822,6 +886,7 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
         city_ids=lambda: list(cities),
         productions=productions,
         improvements=improvements,
+        buys=buys,
         techs=techs,
         works=works,
         is_carrier=is_carrier,

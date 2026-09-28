@@ -58,6 +58,11 @@ class Valuations:
     #: здание считалось бы живым и индекс рос бы дважды). Пустой список по
     #: умолчанию: семейство подключается там, где оно есть (живой провод).
     improvements: Callable[[str], list[tuple[str, float, int]]] = lambda _city: []
+    #: покупка производства: [(действие, тип предмета, опции, цена в золоте)]. Само
+    #: золото в модели не оценено (это решение Andy, §10.25.1): доступность проверяет
+    #: поставщик, а кандидат отличается от производства только задержкой (0 вместо
+    #: срока) — то есть покупка выигрывает ровно дисконт, который прогноз иначе платит.
+    buys: Callable[[str], list[tuple[str, str, float, float]]] | None = None
     #: ценность раскрытия клетки, в единицах индекса (разрыв Дженсена по
     #: измеренному разбросу ценностей клеток, `info.py`). Ноль для уже раскрытой
     #: клетки — разглядывать в ней нечего.
@@ -198,6 +203,30 @@ def candidates(state: ForecastState, vals: Valuations, *,
                                  effect=effect, kind="produce",
                                  score_hint=effect.delta,
                                  extra={"turns": turns, "type": unit_type}))
+
+    # 3b. Покупка производства: предмет завершается СЕЙЧАС, за золото.
+    #     Отличие от производства ровно одно — задержка 0 вместо срока, поэтому
+    #     дисконт не съедает вклад. Цена золота измерена (`= buy_cost`), а само
+    #     золото в модели не оценено: ограничение — только доступность (её проверяет
+    #     живой поставщик `vals.buys`, и он же отдаёт цену для отчёта).
+    if vals.buys is not None:
+        for city_id in vals.city_ids():
+            if city_id not in state.dof:
+                continue
+            for action_name, type_name, options, gold_cost in vals.buys(city_id):
+                if not vals.allowed("buy", city_id, action_name):
+                    continue
+                if vals.excluded("city", city_id):
+                    continue
+                effect = tr.produce(state, city_id,
+                                    unit_id=f"{city_id}:{type_name}",
+                                    unit_dof=float(options), turns=0)
+                out.append(Candidate(action=("city", city_id, action_name),
+                                     effect=effect, kind="buy",
+                                     score_hint=effect.delta,
+                                     extra={"type": type_name,
+                                            "gold": gold_cost,
+                                            "options": float(options)}))
 
     # 4. Исследование: технология приносит открытый набор.
     for tech_id, tech_dof, turns in vals.techs():

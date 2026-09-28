@@ -355,6 +355,7 @@ def _frozen_probe(obs: dict, my_player_id) -> list[str]:
 
 
 _CANDIDATE_DUMPS: list = []
+_BUY_DIAG_PRINTED: list = []
 _TECH_NUMBERS_SEEN: list = []
 
 
@@ -397,7 +398,7 @@ def _dump_candidates(ctx, info) -> None:
     # отсутствия в топе.
     shown = rows[:8]
     for row in rows[8:]:
-        if row[1].kind in ("research", "improve"):
+        if row[1].kind in ("research", "improve", "buy"):
             shown.append(row)
     for discounted, cand in shown:
         # Для появления/исследования дельта = ln(опции) — печатаем и сами опции,
@@ -407,6 +408,10 @@ def _dump_candidates(ctx, info) -> None:
             options = f" опций={math.exp(cand.effect.delta):.2f}"
         elif cand.kind == "improve":
             options = f" прирост_города={(cand.extra or {}).get('gain')}"
+        elif cand.kind == "buy":
+            options = (f" предмет={(cand.extra or {}).get('type')} "
+                       f"опций={(cand.extra or {}).get('options')} "
+                       f"золото={(cand.extra or {}).get('gold')}")
         print(f"          {cand.kind:8s} {cand.action[0]}/{cand.action[1]}/"
               f"{cand.action[2]} Δ={cand.effect.delta:+.4f}"
               f" срок={cand.effect.delay}{options}"
@@ -503,7 +508,56 @@ def _dump_tech_numbers(obs, extractor, info) -> None:
               flush=True)
 
 
-def _forecast_decide(obs, info, dof, extractor, avail) -> tuple[bool, tuple | None]:
+def _unit_type_names(env) -> dict:
+    """Таблица «id типа юнита → имя» из правил КЛИЕНТА.
+
+    Нужна, чтобы опознать предмет в очереди города (`production_kind`/`production_value`)
+    и тем самым оценить покупку. Берём СПИСОК по id (`unit_types_list[id] = name`) — он
+    заполняется по индексу; словарь `unit_types` оказался неполным (52 записи при
+    `production_value = 71`, то есть предмет в нём просто отсутствовал). Если имени нет —
+    покупку прогноз не предложит: угадывать цену предмета нельзя.
+    """
+    out: dict = {}
+    try:
+        ctl = getattr(getattr(env, "unwrapped", None), "civ_controller", None)
+        rules = getattr(ctl, "rule_ctrl", None)
+        # СДВИГ: в наблюдении `production_value` юнита увеличен на число типов улучшений
+        # (`city/city_state.py`: `production_value += num_impr_types` для VUT_UTYPE).
+        # Без него предмет не опознавался вовсе (id 68/71 при таблице в 52 записи).
+        shift = 0
+        try:
+            shift = int((getattr(rules, "ruleset_control", None) or {})
+                        .get("num_impr_types") or 0)
+        except (TypeError, ValueError):
+            shift = 0
+        names = getattr(rules, "unit_types_list", None) or []
+        for tid, name in enumerate(list(names)):
+            if name:
+                out[int(tid) + shift] = str(name)
+        for tid, spec in dict(getattr(rules, "unit_types", None) or {}).items():
+            name = spec.get("name") if isinstance(spec, dict) else None
+            if name:
+                try:
+                    out.setdefault(int(tid) + shift, str(name))
+                except (TypeError, ValueError):
+                    continue
+    except Exception:  # noqa: BLE001
+        return {}
+    return out
+
+
+def _gold_of(obs, extractor) -> float:
+    """Золото игрока — по ЗАПИСИ игрока, а не по ключу словаря (ловушка §5.2f/13)."""
+    try:
+        from brain.forecast.live import _player_record
+        rec = _player_record(obs, getattr(extractor, "my_player_id", None)) or {}
+        return float(rec.get("gold") or 0.0)
+    except Exception:  # noqa: BLE001
+        return 0.0
+
+
+def _forecast_decide(obs, info, dof, extractor, avail, *, type_names=None,
+                     gold=None) -> tuple[bool, tuple | None]:
     """Прогноз решает ход: `(взял_ли_решение, действие)`.
 
     Различать «прогноз решил не действовать» и «прогноз недоступен» обязательно:
@@ -518,7 +572,31 @@ def _forecast_decide(obs, info, dof, extractor, avail) -> tuple[bool, tuple | No
 
         ctx = build_context(obs, info, dof, extractor,
                             exclude_actors=set(_USED_ACTORS[0])
-                            if _USED_ACTORS else None)
+                            if _USED_ACTORS else None,
+                            type_names=type_names, gold=gold)
+        if ARGS.dump_candidates and len(_BUY_DIAG_PRINTED) < 4:
+            rec = {}
+            for city in (obs.get("city") or {}).values():
+                if isinstance(city, dict) and city.get("id") is not None:
+                    rec = city
+                    break
+            if rec.get("id") is not None:
+                # Печатаем не на первом решении (города ещё нет), а на первом, где он есть.
+                _BUY_DIAG_PRINTED.append(True)
+                offered_city = {}
+                for key, acts in ((info.get("available_actions") or {})
+                                  .get("city") or {}).items():
+                    if str(key) == str(rec.get("id")):
+                        offered_city = acts if isinstance(acts, dict) else {}
+                print(f"        [покупка] таблица типов: {len(type_names or {})}; "
+                      f"город: {rec.get('id')}, род={rec.get('production_kind')}, "
+                      f"значение={rec.get('production_value')}, "
+                      f"срок={rec.get('turns_to_prod_complete')}, "
+                      f"buy_cost={rec.get('buy_cost')}, "
+                      f"золото={_gold_of(obs, extractor)}; "
+                      f"предложение покупки={offered_city.get('city_buy_production')!r}; "
+                      f"имя типа={(type_names or {}).get(rec.get('production_value'))!r}",
+                      flush=True)
         _watch_tech(ctx, obs, info)
         _dump_candidates(ctx, info)
         _dump_tech_numbers(obs, extractor, info)
@@ -920,7 +998,8 @@ def _print_forecast_summary() -> None:
 
 def build_agent(agent_type: str, extractor: GameStateExtractor,
                 lookahead: int = 3, context_switch_penalty: float = 0.5,
-                max_candidates: int = 8, trace: bool = False):
+                max_candidates: int = 8, trace: bool = False,
+                env_getter=None):
     """Create the agent for a given agent_type.
 
     ``lookahead`` / ``context_switch_penalty`` configure the DOF-Core engine;
@@ -960,7 +1039,11 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                 # остаётся как fallback на случай сбоя прогноза, а не как
                 # альтернативное мнение: два решателя одновременно — это не
                 # сравнение, а неопределённость.
-                decided, wire = _forecast_decide(obs, info, dof, extractor, avail)
+                decided, wire = _forecast_decide(
+                    obs, info, dof, extractor, avail,
+                    type_names=(_unit_type_names(env_getter())
+                                if env_getter is not None else None),
+                    gold=lambda: _gold_of(obs, extractor))
                 if decided:
                     return wire
 
@@ -1226,7 +1309,8 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
     signal.alarm(timeout)
     try:
         agent = build_agent(agent_type, extractor, lookahead,
-                           context_switch_penalty, max_candidates, trace)
+                            context_switch_penalty, max_candidates, trace,
+                            env_getter=lambda: env)
 
         fc_args["client_port"] = port
         env = gymnasium.make("civrealm/FreecivBase-v0")
