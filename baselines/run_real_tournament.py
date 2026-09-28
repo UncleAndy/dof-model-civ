@@ -915,6 +915,35 @@ def _dump_candidates(ctx, info) -> None:
                   f"{md.get('оставлено_после_фильтра')}), единиц без шагов "
                   f"{md.get('без_шагов')}, ценность на месте "
                   f"{md.get('текущая_ценность')}", flush=True)
+            for step in (md.get("шаги") or [])[:3]:
+                print(f"          шаг: {step.get('юнит')} → {step.get('куда')}: "
+                      f"ценность {step.get('ценность')}, раскрытие "
+                      f"{step.get('раскрытие')}, на месте {step.get('на_месте')}, "
+                      f"пройдёт по ценности {step.get('пройдёт_по_ценности')}, "
+                      f"с раскрытием {step.get('пройдёт_с_раскрытием')}", flush=True)
+            # ── КТО ВЫИГРЫВАЕТ РАНЖИРОВАНИЕ ────────────────────────────────
+            # «Кандидат есть, но не выбран» — это про порядок, а не про фильтр.
+            # Печатаем ключи ранжирования верхних кандидатов: у движения немедленная
+            # дельта нулевая (клетка раскрыта), у производства — ln(опций) нового
+            # юнита; если разница только в этом, причина названа числом.
+            try:
+                from brain.forecast.search import (FORECAST_GAMMA,
+                                                   IRREVERSIBLE_PENALTY,
+                                                   _rank_key)
+                ranked = sorted(
+                    cands,
+                    key=lambda c: _rank_key(c, ctx.state, ctx.vals, 1.0,
+                                            FORECAST_GAMMA, 3),
+                    reverse=True)
+                preview = []
+                for c in ranked[:4]:
+                    key = _rank_key(c, ctx.state, ctx.vals, 1.0, FORECAST_GAMMA, 3)
+                    preview.append(f"{c.kind}:{c.action[2]}"
+                                   f"(дельта {c.effect.delta:+.3f}, ключ {key:+.3f})")
+                print(f"        [ранжирование] " + "; ".join(preview), flush=True)
+            except Exception as exc:  # noqa: BLE001
+                print(f"        [ранжирование] сбой: {type(exc).__name__}: {exc}",
+                      flush=True)
     except Exception as exc:  # noqa: BLE001
         print(f"        [движение] сбой замера: {type(exc).__name__}: {exc}",
               flush=True)

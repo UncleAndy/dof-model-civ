@@ -176,7 +176,8 @@ def candidates(state: ForecastState, vals: Valuations, *,
     # основания города, хотя сервер предлагает по 8 шагов каждому юниту. Без чисел
     # «кандидатов нет» неотличимо от «кандидатов не создаёт наш фильтр».
     move_diag: dict = {"единиц": 0, "предложено_шагов": 0, "отброшено_по_ценности": 0,
-                       "оставлено": 0, "без_шагов": 0, "текущая_ценность": []}
+                       "оставлено": 0, "без_шагов": 0, "текущая_ценность": [],
+                       "шаги": []}
     for unit_id in list(state.positions):
         here = state.positions.get(unit_id)
         carrier = bool(vals.is_carrier(unit_id))
@@ -192,6 +193,17 @@ def candidates(state: ForecastState, vals: Valuations, *,
             for name, target in steps:
                 tile = (int(target[0]), int(target[1]))
                 value = tile_value(tile, vals, carrier=carrier)
+                gain = float(vals.info_gain(tile))
+                # Числа шага: без них не выбрать вариант правки фильтра — «в туман
+                # имеет смысл идти» остаётся мнением, пока не видно value и gain.
+                if len(move_diag["шаги"]) < 16:
+                    move_diag["шаги"].append({
+                        "юнит": unit_id, "куда": tile, "ценность": round(float(value), 3),
+                        "раскрытие": round(gain, 3),
+                        "на_месте": round(float(current), 3),
+                        "пройдёт_по_ценности": bool(value > current),
+                        "пройдёт_с_раскрытием": bool(value + gain > current),
+                    })
                 # Ход стоит ценности только если преемник её даёт.
                 if value <= current:
                     move_diag["отброшено_по_ценности"] += 1
