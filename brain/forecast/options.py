@@ -53,11 +53,20 @@ class Valuations:
     #: стояло, что координат у `goto_N` нет вовсе; измерено по исходнику стенда,
     #: что `N` — это dir8, поэтому на живом пути шаг имеет ТОЧНУЮ цель.
     moves: Callable[[str], list[tuple[str, tuple[int, int]]]] | None = None
-    #: что город может поставить из УЛУЧШЕНИЙ: [(имя, Δопций ГОРОДА, ходов)].
+    #: что город может поставить из УЛУЧШЕНИЙ: [(имя, Δопций ГОРОДА, ходов,
+    #: доля времени)]. Доля времени — объявленное правило для построек
+    #: (§10.25.4): `(H − срок)/H` вместо `γ^срок`, потому что срок здания здесь
+    #: измерен в 1 щит/ход, и `γ^30` говорит «ничего» там, где честный ответ —
+    #: «мало». `None` — обычный дисконт.
     #: Улучшение не создаёт сущность — оно растит опции того же города (иначе
     #: здание считалось бы живым и индекс рос бы дважды). Пустой список по
     #: умолчанию: семейство подключается там, где оно есть (живой провод).
-    improvements: Callable[[str], list[tuple[str, float, int]]] = lambda _city: []
+    improvements: Callable[[str], list[tuple[str, float, int, float | None]]] = \
+        lambda _city: []
+    #: переводы жителя между клетками: [(действие `city_work_…`, Δопций ГОРОДА)].
+    #: Цена — формулой города и замером подтверждена (§10.25.4); задержки нет,
+    #: потому что выход клетки меняется сразу.
+    tiles: Callable[[str], list[tuple[str, float]]] = lambda _city: []
     #: покупка производства: [(действие, тип предмета, опции, цена в золоте)]. Само
     #: золото в модели не оценено (это решение Andy, §10.25.1): доступность проверяет
     #: поставщик, а кандидат отличается от производства только задержкой (0 вместо
@@ -240,13 +249,27 @@ def candidates(state: ForecastState, vals: Valuations, *,
     for city_id in vals.city_ids():
         if city_id not in state.dof:
             continue
-        for name, gain, turns in vals.improvements(city_id):
-            effect = tr.improve(state, city_id, gain=float(gain), turns=int(turns))
+        for name, gain, turns, time_factor in vals.improvements(city_id):
+            effect = tr.improve(state, city_id, gain=float(gain), turns=int(turns),
+                                time_factor=time_factor)
             out.append(Candidate(action=("city", city_id, f"produce_{name}"),
                                  effect=effect, kind="improve",
                                  score_hint=effect.delta,
                                  extra={"turns": turns, "type": name,
-                                        "gain": gain}))
+                                        "gain": gain,
+                                        "time_factor": time_factor}))
+
+    # 4c. Клетки города: перевод жителя. Задержки нет — выход клетки меняется
+    #     сразу; цена считается формулой города (Δопций), замером подтверждена.
+    for city_id in vals.city_ids():
+        if city_id not in state.dof:
+            continue
+        for action, gain in vals.tiles(city_id):
+            effect = tr.work(state, city_id=city_id, tile_delta=float(gain),
+                             action=action)
+            out.append(Candidate(action=("city", city_id, action), effect=effect,
+                                 kind="tile", score_hint=effect.delta,
+                                 extra={"tile_gain": gain}))
 
     # 5. Работы: измеренный эффект на клетке (нулевой остаётся нулевым кандидатом,
     #    но с нулевым вкладом — решение о нём принимает поиск, а не генератор).

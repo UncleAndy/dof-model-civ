@@ -329,10 +329,19 @@ class TestImprovementPricing:
     def test_an_improvement_is_priced_from_its_specification(self):
         ctx = self._context()
         priced = ctx.vals.improvements("city_121")
-        assert [name for name, _g, _t in priced] == ["Temple"]
+        assert [row[0] for row in priced] == ["Temple"]
         # Срок улучшения — ИЗМЕРЕННЫМ правилом `стоимость − stock` (накопление
         # 1 щит/ход), а не формулой юнитов: она обещала бы в 5 раз быстрее.
         assert priced[0][2] == 30        # 30 − 0
+        # Прирост опций приходит с объявленным бонусом за постройку (§10.25.4):
+        # без него срок 30 ходов при игре в 50 не даёт зданию никаких шансов.
+        # Здесь Δопций этого города = 3.00 (потолок `m1` не достигнут: 1.0 → 2.0
+        # при базе 3 и m2 1.15), значит цена = 3.00 × 4.0 = 12.00.
+        from env.config import IMPROVEMENT_BUILD_BONUS
+        assert IMPROVEMENT_BUILD_BONUS == pytest.approx(4.0)
+        assert priced[0][1] == pytest.approx(3.0 * IMPROVEMENT_BUILD_BONUS)
+        # Доля горизонта: (50 − 30)/50 = 0.4 — вместо γ^30 = 0.0012.
+        assert priced[0][3] == pytest.approx(0.4)
 
     def test_a_building_is_not_offered_through_production(self):
         # Иначе здание считалось бы и новой сущностью, и множителем города.

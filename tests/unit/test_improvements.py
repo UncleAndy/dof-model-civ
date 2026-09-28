@@ -63,21 +63,39 @@ class TestImproveTransition:
     def test_the_turns_are_carried_as_a_delay(self):
         assert improve(_state(), "city_1", gain=1.0, turns=4).delay == 4
 
+    def test_the_horizon_share_replaces_the_discount_for_a_building(self):
+        """Доля горизонта — не украшение: она ЗАМЕНЯЕТ `γ^срок` (§10.25.4).
+
+        Срок здания здесь измерен в 1 щит/ход: Temple — 30 ходов. `γ^30 = 0.0012`
+        говорит «ничего», а доля горизонта `(50−30)/50 = 0.4` — «мало». Разница
+        принципиальная, поэтому она живёт в переходе и проверяется здесь.
+        """
+        assert improve(_state(), "city_1", gain=1.0, turns=30).time_factor is None
+        effect = improve(_state(), "city_1", gain=1.0, turns=30, time_factor=0.4)
+        assert effect.time_factor == pytest.approx(0.4)
+        assert effect.delay == 30          # срок не подменяется: он остаётся фактом
+
     def test_an_unknown_city_is_left_alone(self):
         assert improve(_state(), "city_9", gain=1.0).delta == 0.0
 
 
 class TestImproveCandidates:
     def test_the_improvement_appears_as_its_own_kind(self):
-        vals = _vals(improvements=[("Temple", 2.0, 3)])
+        vals = _vals(improvements=[("Temple", 2.0, 3, None)])
         found = [c for c in candidates(_state(), vals) if c.kind == "improve"]
         assert len(found) == 1
         assert found[0].action == ("city", "city_1", "produce_Temple")
         assert found[0].effect.delay == 3
         assert found[0].extra["gain"] == 2.0
 
+    def test_the_candidate_carries_the_time_share_it_was_priced_with(self):
+        vals = _vals(improvements=[("Temple", 2.0, 30, 0.4)])
+        found = [c for c in candidates(_state(), vals) if c.kind == "improve"]
+        assert found[0].effect.time_factor == pytest.approx(0.4)
+        assert found[0].extra["time_factor"] == pytest.approx(0.4)
+
     def test_units_and_improvements_stay_separate_families(self):
-        vals = _vals(improvements=[("Temple", 2.0, 3)],
+        vals = _vals(improvements=[("Temple", 2.0, 3, None)],
                      productions=[("Warriors", 4.5, 2)])
         kinds = sorted(c.kind for c in candidates(_state(), vals))
         assert kinds == ["improve", "produce"]

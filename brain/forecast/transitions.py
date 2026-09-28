@@ -25,6 +25,12 @@ class Effect:
     state: ForecastState
     delta: float
     delay: int = 0          # через сколько ходов появляется эффект (для дисконта)
+    #: Прямая замена дисконту `γ^delay` для этого перехода. Нужна там, где
+    #: «приходит через T ходов» и «полезно T ходов» — разные вещи: постройка,
+    #: которая встанет на 30-м ходу 50-ходовой игры, приносит пользу только
+    #: остаток горизонта, а `γ^30 = 0.0012` говорит не «мало», а «ничего».
+    #: `None` — обычное правило (`γ^delay`), как у юнитов и технологий.
+    time_factor: float | None = None
     reversible: bool = True
     note: str = ""
 
@@ -138,7 +144,7 @@ def produce(state: ForecastState, city_id: str, *, unit_id: str,
 
 
 def improve(state: ForecastState, city_id: str, *, gain: float,
-            turns: int = 0) -> Effect:
+            turns: int = 0, time_factor: float | None = None) -> Effect:
     """Улучшение в городе: растут опции САМОГО города, сущности не прибавляется.
 
     Отличие от `produce` принципиальное. Юнит — новая живая сущность, у неё свой
@@ -149,10 +155,16 @@ def improve(state: ForecastState, city_id: str, *, gain: float,
 
     Необратимость: постройка — вложение, отменить его нельзя (Аксиома 4
     применяет штраф), поэтому `reversible=False`.
+
+    `time_factor` — доля горизонта, которую постройка успевает отработать
+    (`(H − срок)/H`). Для постройки она ЗАМЕНЯЕТ `γ^turns`: срок у зданий здесь
+    измерен в 1 щит/ход, и `γ^30` говорит «ничего» там, где честный ответ —
+    «мало». Подробности и числа — §10.25.4.
     """
     new = state.clone()
     delta = index_delta(new, city_id, float(gain))
     return Effect(state=new, delta=delta, delay=max(0, int(turns)),
+                  time_factor=time_factor,
                   reversible=False, note=f"улучшение в {city_id} (Δ{gain:+.2f})")
 
 

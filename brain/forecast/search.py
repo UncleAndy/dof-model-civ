@@ -21,9 +21,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from .options import Candidate, Valuations, candidates
 from .state import ForecastState
+
+if TYPE_CHECKING:                       # только для аннотаций
+    from .transitions import Effect
 
 #: Дисконт за ход прогноза. Дальняя выгода весомее нуля, но меньше ближней:
 #: при 0.8 цепочка из пяти шагов даёт 3.36, а не 5.
@@ -75,12 +79,23 @@ def best_immediate(state: ForecastState, vals: Valuations, *,
     return best
 
 
+def _step_factor(effect: Effect, gamma: float) -> float:
+    """Множитель времени шага: `time_factor`, если он задан, иначе `γ^delay`.
+
+    Задаётся там, где «приходит через T ходов» не равно «полезно T ходов» —
+    единственный такой случай в модели — постройка (§10.25.4).
+    """
+    if effect.time_factor is not None:
+        return float(effect.time_factor)
+    return gamma ** effect.delay
+
+
 def _rank_key(cand: Candidate, state: ForecastState, vals: Valuations,
               discount: float, gamma: float, max_moves: int) -> float:
     """Порядок ветвления: немедленный эффект + дисконтированная ценность преемника."""
     successor_value = best_immediate(cand.effect.state, vals, max_moves=max_moves)
     return (cand.effect.delta
-            + discount * (gamma ** cand.effect.delay) * successor_value)
+            + discount * _step_factor(cand.effect, gamma) * successor_value)
 
 
 def choose(state: ForecastState, vals: Valuations, *,
@@ -122,7 +137,7 @@ def choose(state: ForecastState, vals: Valuations, *,
                 if successor.collapsed():      # вето Аксиомы 3
                     continue
                 penalty = 0.0 if cand.effect.reversible else irreversible_penalty
-                gain = (cand.effect.delta - penalty) * (gamma ** cand.effect.delay)
+                gain = (cand.effect.delta - penalty) * _step_factor(cand.effect, gamma)
                 nxt.append(_Node(
                     state=successor,
                     path=node.path + [cand.action],

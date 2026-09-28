@@ -29,6 +29,7 @@ import math
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from env import config as _cfg
 from env.measured_facts import default_facts
 from env.site_eval import evaluate_site
 
@@ -524,26 +525,40 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
         return max(0.0, after - before)
 
 
-    def improvements(city_id: str) -> list[tuple[str, float, int]]:
-        """Улучшения, которые город может поставить: [(имя, Δопций города, ходов)].
+    def improvements(city_id: str) -> list[tuple[str, float, int, float | None]]:
+        """Улучшения, которые город может поставить: [(имя, Δопций, ходов, доля времени)].
 
         Улучшение — не новая сущность (иначе здание считалось бы живым и индекс
         рос бы дважды), а рост опций САМОГО города: город с храмом удерживает
         больше возможностей, чем без него.
 
         Стоимость — из спецификаций технологий (`sup_improvements[].build_cost`),
-        срок — тем же правилом, что и у юнитов. Если улучшение ничего не добавляет
-        (город уже на потолке множителя), оно не предлагается: измеренное «ноль»
-        не притворяется выгодой. Замер цены постановкой производства НЕ делается:
-        он роняет контроллер (проверено), а спецификация даёт цену без боя.
+        срок — измеренным правилом для улучшений. Если улучшение ничего не
+        добавляет (город уже на потолке множителя), оно не предлагается:
+        измеренное «ноль» не притворяется выгодой. Замер цены постановкой
+        производства НЕ делается: он роняет контроллер (проверено), а
+        спецификация даёт цену без боя.
+
+        Две величины-НАСТРОЙКИ, объявленные, а не измеренные (§10.25.4):
+
+        * `IMPROVEMENT_BUILD_BONUS` — множитель прироста;
+        * доля времени `(H − срок)/H` вместо `γ^срок` — постройка, встающая на
+          30-м ходу 50-ходовой игры, отрабатывает остаток горизонта.
         """
         rec = city_records.get(city_id) or {}
         offered = _offered_for(offered_city, city_id)
         stock = _num(rec.get("shield_stock"), 0.0)
-        shields = _num(rec.get("prod_shield"), 0.0)
-        if shields <= 0.0:
+        # Значения берём из модели, а если её нет (проба/синтетика) — из config:
+        # иначе выключенный флаг выглядел бы как «семейство пустое».
+        rate = float(values.get("IMPROVEMENT_SHIELD_RATE",
+                                _cfg.IMPROVEMENT_SHIELD_RATE) or 1.0)
+        bonus = float(values.get("IMPROVEMENT_BUILD_BONUS",
+                                 _cfg.IMPROVEMENT_BUILD_BONUS) or 1.0)
+        horizon = int(values.get("IMPROVEMENT_HORIZON_TURNS",
+                                 _cfg.IMPROVEMENT_HORIZON_TURNS) or 0)
+        if rate <= 0.0:
             return []
-        out: list[tuple[str, float, int]] = []
+        out: list[tuple[str, float, int, float | None]] = []
         for name, params in offered.items():
             if not params or not name.startswith("produce_"):
                 continue
@@ -576,8 +591,101 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
             #
             # Если стенд обновят, правило надо перемерить: это факт об этом
             # наборе правил, а не «так устроено везде».
-            turns = max(1, int(math.ceil(cost - stock)))
-            out.append((type_name, gain, turns))
+            turns = max(1, int(math.ceil((cost - stock) / rate)))
+            # Доля горизонта, которую постройка успевает отработать. Срок больше
+            # горизонта → ровно ноль: такое здание в этой игре не построится, и
+            # притворяться, что оно даст что-то, нельзя.
+            tf: float | None = None
+            if horizon > 0:
+                tf = max(0.0, (horizon - turns) / float(horizon))
+            out.append((type_name, gain * bonus, turns, tf))
+        return out
+
+    # ── Клетки города: перевод жителя (§10.25.4) ─────────────────────────────
+    # Цена — формулой города: сколько опций прибавится городу, если выходы этой
+    # клетки войдут в его экономику (и убавится, если выйдут). Замер 2026-09-27
+    # совпал по знаку во всех шести парах: предсказание +1.2000 → наблюдение
+    # +0.41/+0.48; −0.6000 → −0.63/−0.57; +0.6000 → +0.78/+0.85.
+    #
+    # Оговорка честности: одиночное действие оценивается по СВОЕЙ клетке, а не по
+    # паре «взял X, отдал Y» — какая клетка будет освобождена, сервер не сообщает.
+    # Сумму пары даёт сам поиск, когда проигрывает оба шага: вклады складываются
+    # как логарифмы, поэтому итог равен точному (телескопирование), а
+    # промежуточное состояние не завышает итог.
+    # Слой карты — МАССИВ (numpy/список списков), а не словарь: `_as_dict` его не
+    # переживёт (вернёт пустое), поэтому берём его как есть из блока карты.
+    output_layer = _as_dict(obs.get("map")).get("output")
+
+    def _tile_outputs(city_id: str, name: str) -> list[float] | None:
+        """Выходы клетки из имени `city_{work,unwork}_<id>_<dx>_<dy>`.
+
+        Источник — слой карты (`map['output']`, каналы 0..2) от координат города:
+        тот же источник, на котором стоял замер, иначе предсказание и замер
+        говорили бы о разных числах.
+        """
+        rec = city_records.get(city_id)
+        if not isinstance(rec, dict):
+            return None
+        parts = str(name).split("_")
+        try:
+            dx, dy = int(parts[-2]), int(parts[-1])
+        except (TypeError, ValueError):
+            return None
+        try:
+            cx = int(_num(rec.get("x"), 0.0) + dx)
+            cy = int(_num(rec.get("y"), 0.0) + dy)
+            cell = output_layer[cx][cy]
+            return [float(v) for v in list(cell)[:3]]
+        except Exception:  # noqa: BLE001
+            return None
+
+    def tiles(city_id: str) -> list[tuple[str, float]]:
+        """Переводы жителя, предложенные сервером: [(действие, Δопций города)].
+
+        Нулевой перевод остаётся кандидатом с нулём: «измеренный ноль — знание»,
+        и решать о нём должен поиск, а не генератор (та же политика, что у работ).
+        """
+        if not values.get("CITY_TILE_FAMILY", _cfg.CITY_TILE_FAMILY):
+            return []
+        rec = city_records.get(city_id)
+        if not isinstance(rec, dict) or output_layer is None:
+            return []
+        try:
+            from env.entity_extractor import city_options
+            model = getattr(extractor, "model", None)
+            before = float(city_options(rec, model=model))
+        except Exception:  # noqa: BLE001
+            return []
+        out: list[tuple[str, float]] = []
+        for name, params in _offered_for(offered_city, city_id).items():
+            if not params:
+                continue
+            text = str(name)
+            if text.startswith("city_work_"):
+                sign = 1.0
+            elif text.startswith("city_unwork_"):
+                sign = -1.0
+            else:
+                continue
+            outputs = _tile_outputs(city_id, text)
+            if not outputs:
+                continue
+            shifted = dict(rec)
+            for field, index in (("prod_food", 0), ("prod_shield", 1),
+                                 ("prod_trade", 2), ("surplus_food", 0),
+                                 ("surplus_shield", 1), ("surplus_trade", 2)):
+                cur = shifted.get(field)
+                if cur is None:
+                    continue
+                try:
+                    shifted[field] = float(cur) + sign * float(outputs[index])
+                except (TypeError, ValueError):
+                    continue
+            try:
+                after = float(city_options(shifted, model=model))
+            except Exception:  # noqa: BLE001
+                continue
+            out.append((text, after - before))
         return out
 
     def techs() -> list[tuple[str, float, int]]:
@@ -666,6 +774,10 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
         if kind == "produce":
             return bool(_offered_for(offered_city, actor).get(name))
         if kind == "improve":
+            return bool(_offered_for(offered_city, actor).get(name))
+        if kind == "tile":
+            # Перевод жителя — тоже действие города: имя целиком (`city_work_…`)
+            # приходит от сервера, и подменять его нельзя.
             return bool(_offered_for(offered_city, actor).get(name))
         if kind == "buy":
             return bool(_offered_for(offered_city, actor).get(name))
@@ -886,6 +998,7 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
         city_ids=lambda: list(cities),
         productions=productions,
         improvements=improvements,
+        tiles=tiles,
         buys=buys,
         techs=techs,
         works=works,
