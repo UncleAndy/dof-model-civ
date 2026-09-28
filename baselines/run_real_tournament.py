@@ -729,14 +729,18 @@ def _dump_index_composition(obs, extraction, extractor) -> None:
         if u > 0:
             upkeep_units += 1
     sink = float(getattr(state, "dof_sink", 0.0) or 0.0)
-    from env.config import UNIT_UPKEEP_SINK_W
+    parts = getattr(extractor, "_last_sink_parts", None) or {}
     total = sum(sums.values()) - sink
     own_unit_count = sum(1 for v in units_obs.values()
                          if isinstance(v, dict) and v.get("owner") == my_id)
+    prices = parts.get("prices") or {}
+    price_text = (", ".join(f"{k} {v:.3f}" for k, v in sorted(prices.items()))
+                  if prices else "запасной вес 0.05 (города в наблюдении нет)")
     print(f"      [индекс DoF] состав: " +
           ", ".join(f"{k} {v:+.2f}" for k, v in sums.items() if abs(v) > 1e-9) +
-          f"; сток {sink:.2f} (содержание {UNIT_UPKEEP_SINK_W * upkeep_sum:.2f}, "
-          f"задержка населения {sink - UNIT_UPKEEP_SINK_W * upkeep_sum:.2f})"
+          f"; сток {sink:.2f} (содержание {float(parts.get('upkeep', 0.0)):.2f}, "
+          f"задержка населения {float(parts.get('delay', 0.0)):.2f})"
+          f"; цены из формулы города: {price_text}"
           f"; итог {total:.2f}; своих юнитов {own_unit_count}, "
           f"с содержанием>0 {upkeep_units}, сумма содержания {upkeep_sum:.0f}",
           flush=True)
