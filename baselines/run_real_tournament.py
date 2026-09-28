@@ -710,6 +710,100 @@ def _print_food_gate_summary() -> None:
             pass
 
 
+def _write_learn_record(obs, extractor, metrics) -> None:
+    """Срез склада фактов за игру — кривая самообучения (DOF_CALIBRATION §10.32).
+
+    Без этой записи «модель обучается» остаётся верой. Записывается по каждому матчу:
+
+    * **покрытие** — сколько СВОИХ типов юнитов склад уже знает (стоимость);
+    * **точность** — совпадает ли память склада с живым `type_build_cost` (и примеры
+      расхождений с числами);
+    * **поправки** — сколько пар «утверждено ≠ замерено» модель получила за матч;
+    * **решения** — сколько действий сделано и какой счёт, чтобы видеть, даёт ли
+      память что-то поведению.
+
+    Заодно склад пополняется живыми числами: это и есть обучение (одна запись —
+    и мера, и наблюдение).
+    """
+    my_id = getattr(extractor, "my_player_id", None)
+    live: dict[str, float] = {}
+    for rec in (as_dict((obs or {}).get("unit")) or {}).values():
+        if not isinstance(rec, dict) or rec.get("owner") != my_id:
+            continue
+        name = str(rec.get("type_rule_name") or rec.get("rule_name") or "")
+        try:
+            cost = float(rec.get("type_build_cost"))
+        except (TypeError, ValueError):
+            continue
+        if name and cost > 0.0:
+            live.setdefault(name, cost)
+    store = None
+    try:
+        from env.measured_facts import MeasuredFacts
+        store = MeasuredFacts()
+    except Exception:  # noqa: BLE001
+        store = None
+    known, unknown, mismatch = [], [], []
+    for name, cost in sorted(live.items()):
+        stored = None
+        if store is not None:
+            try:
+                stored = store.cost(name)
+            except Exception:  # noqa: BLE001
+                stored = None
+        if stored is None:
+            unknown.append(name)
+        else:
+            known.append(name)
+            if abs(float(stored) - cost) > 1e-6:
+                mismatch.append(f"{name}: склад {stored:g} ≠ мир {cost:g}")
+        try:
+            if store is not None:
+                store.observe_type(name, cost=cost, kind="unit",
+                                   source="learn-record")
+        except Exception:  # noqa: BLE001
+            pass
+    if store is not None:
+        try:
+            store.save()
+        except Exception:  # noqa: BLE001
+            pass
+    row = {
+        "эпизод": _EPISODE_IDX[0],
+        "ветвь": "прогноз" if ARGS.forecast else "ВЫКЛ",
+        "порт": getattr(metrics, "port", None),
+        "ходов": getattr(metrics, "turns_played", None) or getattr(metrics, "turns", None),
+        "склад_путь": os.environ.get("DOF_MEASURED_FACTS") or "measured_facts.json",
+        "свои_типы": sorted(live),
+        "живые_стоимости": {k: live[k] for k in sorted(live)},
+        "покрытие_известно": known,
+        "покрытие_неизвестно": unknown,
+        "точность_совпало": len(known) - len(mismatch),
+        "точность_расхождения": mismatch,
+        "поправок_ключей": len(getattr(metrics, "corrected_keys", []) or []),
+        "поправки": (getattr(metrics, "correction_log", []) or [])[:3],
+        "решений": getattr(metrics, "decisions", None),
+        "решений_на_ход": getattr(metrics, "decisions_per_turn_mean", None),
+        "счёт": getattr(metrics, "score_cum", None),
+    }
+    out = getattr(ARGS, "output", None)
+    if not out:
+        return
+    try:
+        with open(f"{out}.learn.jsonl", "a", encoding="utf-8") as fh:
+            # `default=str` обязателен: в `correction_log` попадают не-JSON-объекты, и
+            # без него запись молча падала ЦЕЛИКОМ (измерено: файл создавался пустым,
+            # 80 игр данных остались только в логе). Ошибку больше НЕ глотаем молча.
+            fh.write(json.dumps(row, ensure_ascii=False, default=str) + "\n")
+    except Exception as exc:  # noqa: BLE001
+        print(f"  [обучение] запись среза не удалась: {type(exc).__name__}: {exc}",
+              flush=True)
+    print(f"  [обучение] эпизод {row['эпизод']}: склад знает {len(known)} из "
+          f"{len(live)} своих типов, расхождений {len(mismatch)}, "
+          f"поправок {row['поправок_ключей']}"
+          + (f"; НЕ знает: {unknown}" if unknown else ""), flush=True)
+
+
 def _dump_candidates(ctx, info) -> None:
     """Напечатать ЧИСЛА кандидатов прогноза: вид, действие, ΔDoF, срок, дисконт.
 
@@ -1844,6 +1938,7 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
     _GATE_NO_CITY[0] = 0
     _GATE_REASONS.clear()
     _ACTION_VERDICT.clear()
+    _CANDIDATE_DUMPS.clear()   # срезы кандидатов — «первые N ходов ЭТОЙ игры»
     extractor = GameStateExtractor(my_player_id=0)
     env = None
 
@@ -2175,6 +2270,12 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
                 env.close()
             except Exception:  # noqa: BLE001
                 pass
+
+    # Кривая самообучения (§10.32): срез склада фактов и покрытия по каждой игре.
+    try:
+        _write_learn_record(obs, extractor, metrics)
+    except Exception as exc:  # noqa: BLE001 - запись меры не должна рушить серию
+        print(f"  [обучение] срез не записан: {type(exc).__name__}: {exc}", flush=True)
 
     return metrics
 
