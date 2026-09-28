@@ -99,6 +99,11 @@ def _parse_cli(argv: list[str]) -> argparse.Namespace:
                         help="решение принимает ПРОГНОЗ (brain/forecast): перебор "
                              "вариантов с перевыводом возможностей в будущем "
                              "состоянии, дисконт за ход, вето/штраф по аксиомам")
+    parser.add_argument("--no-food-gate", dest="food_gate", action="store_false",
+                        default=True,
+                        help="выключить Правило F «еда необратима» (§10.30) — это "
+                             "КОНТРОЛЬ, а не режим результатов: без него нельзя "
+                             "отличить «правило помогло» от «серия была мягче»")
     parser.add_argument("--no-forecast", dest="forecast", action="store_false",
                         help="прежний путь: ядро оценивает один шаг по сегодняшнему "
                              "меню (для сравнения, а не для результатов)")
@@ -122,6 +127,14 @@ def _parse_cli(argv: list[str]) -> argparse.Namespace:
                              "KEY=VALUE[,KEY=VALUE…]; проверяет, что мир его "
                              "исправит (Axiom «реальность первична»). Пример: "
                              "--false-claim rules.citymindist=3.0")
+    parser.add_argument("--dump-state", dest="dump_state", type=int, default=0,
+                        metavar="N",
+                        help="писать срез состояния мира на КАЖДОМ ходу до N-го: наши "
+                             "города (размер, склад еды, surplus_food, недовольные), "
+                             "наши юниты, видимые чужие юниты, НЕЗАВИСИМОЕ знание "
+                             "клиента (контроллер: города/юниты/поселенцы/разбит/"
+                             "состояние) и ПОЛНЫЙ текст сообщений мира. Нужен там, где "
+                             "потеря города разбирается по записям, а не по догадке")
     parser.add_argument("--save-series", dest="save_series", action="store_true",
                         default=False,
                         help="also persist per-step DoF/entity/action series "
@@ -161,6 +174,7 @@ from env import config as env_config
 from env.config import AXIOM4_PENALTY_OPTIONS, CORE_DOF_SCALE
 from env.entity_extractor import GameStateExtractor, as_dict, compute_total_dof_index
 from env.experiments import note_choice
+from env import food_gate
 from env.wedged import record_wedged
 from env.world_model import FALSE_CLAIM_MARKER
 from brain.generator.heuristics import ALL_STRATEGIES, DEFENSIVE, HeuristicGenerator
@@ -364,8 +378,336 @@ def _frozen_probe(obs: dict, my_player_id) -> list[str]:
 
 
 _CANDIDATE_DUMPS: list = []
+# Номер игры в серии: срезы из одной серии пишутся в ОДИН файл, и без номера
+# игры строки разных матчей смешиваются — «город исчез на 3-м ходу» становится
+# неразличимо с «город исчез на 3-м ходу другой игры».
+_EPISODE_IDX: list = [0]
+# Действия, выбранные ЗА ход: срез состояния без них не отличает «мир сам забрал
+# город» от «наш же выбор его и погубил» — а это ровно разница между K1 и K5.
+_TURN_ACTIONS: dict = {}
+#: Правило F (§10.30): что отсечено за матч и сколько раз не нашлось записи города.
+_GATE_FILTERED: list = [0]
+_GATE_NO_CITY: list = [0]
+_GATE_REASONS: list = []
+#: Вердикт Правила F по ушедшему действию: (ctrl, actor, name) -> текст вердикта.
+_ACTION_VERDICT: dict = {}
 _BUY_DIAG_PRINTED: list = []
 _TECH_NUMBERS_SEEN: list = []
+
+
+def _state_dump_path() -> str:
+    """Куда писать срезы: рядом с --output, иначе в /tmp."""
+    out = getattr(ARGS, "output", None)
+    return f"{out}.state.jsonl" if out else "/tmp/dof_state_dump.jsonl"
+
+
+def _controller_of(env):
+    ctrl = getattr(env, "civ_controller", None)
+    if ctrl is None:
+        inner = getattr(env, "unwrapped", None)
+        ctrl = getattr(inner, "civ_controller", None) if inner is not None else None
+    return ctrl
+
+
+def _plain(value):
+    """Привести значение мира к обычным типам: numpy-массив → список.
+
+    ЖИВОЕ наблюдение отдаёт `map.output` массивом, а не списком списков, и на этом
+    прибор уже падал: `array or []` бросает `ValueError` («truth value … ambiguous»).
+    Булевых проверок на значениях мира быть не должно вовсе.
+    """
+    if hasattr(value, "tolist"):
+        try:
+            return value.tolist()
+        except Exception:  # noqa: BLE001
+            return value
+    return value
+
+
+def _tile_out(obs: dict, x, y):
+    """Выход клетки по (x, y) в ОБЕИХ ориентациях: измеряем, а не угадываем.
+
+    В сохранённых фикстурах `map.output[x][y]` (78 × 52), но на ЖИВЫХ наблюдениях
+    прибор вернул `None` — значит, ориентация (или наличие раздела) там иная.
+    Поэтому пишем оба прочтения: `xy` и `yx`, вместе с размерами массива.
+    """
+    mp = (obs or {}).get("map")
+    if not isinstance(mp, dict):
+        return {"размеры": None, "выход_xy": None, "выход_yx": None}
+    out = _plain(mp.get("output"))
+    ter = _plain(mp.get("terrain"))
+    if out is None:
+        out = []
+    if ter is None:
+        ter = []
+    row = {"размеры": [len(out),
+                       len(out[0]) if out and hasattr(out[0], "__len__") else None]}
+    for name, (a, b) in (("xy", (x, y)), ("yx", (y, x))):
+        try:
+            row[f"выход_{name}"] = out[a][b]
+            row[f"террейн_{name}"] = ter[a][b]
+        except Exception:  # noqa: BLE001
+            row[f"выход_{name}"] = None
+    return row
+
+
+def _city_window(obs: dict, cx, cy, r: int = 2):
+    """Выходы клеток вокруг города в ОБЕИХ ориентациях, по смещениям.
+
+    Нужно ровно для цены действий `city_work/city_unwork`: имя действия даёт
+    смещение `(dx, dy)`, а цена — выход ИМЕННО той клетки. Ориентация на живых
+    данных ещё не подтверждена, поэтому пишем оба прочтения.
+    """
+    mp = (obs or {}).get("map")
+    if not isinstance(mp, dict) or cx is None or cy is None:
+        return None
+    out = _plain(mp.get("output"))
+    if not isinstance(out, list):
+        return None
+    win = {}
+    for dx in range(-r, r + 1):
+        for dy in range(-r, r + 1):
+            xy = yx = None
+            try:
+                xy = out[cx + dx][cy + dy]
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                yx = out[cy + dy][cx + dx]
+            except Exception:  # noqa: BLE001
+                pass
+            win[f"{dx},{dy}"] = {"xy": xy, "yx": yx}
+    return win
+
+
+def _dump_state(env, obs, info, extractor, turn: int, port=None) -> None:
+    """Срез мира на ходу: наши города/юниты, видимые чужие, знание клиента, сообщения.
+
+    Зачем: вопрос «почему сторона теряет город на 2–5-м ходу» без этого среза
+    решается догадкой, а догадка уже один раз дала неверный вывод (захват города
+    ИИ при `enemy_units_seen_max = 0`). Здесь видно ровно то, чем мир это
+    объясняет: состояние города до потери, кто был рядом, что говорит
+    НЕЗАВИСИМОЕ знание клиента, и что написал сам сервер в `game.messages`.
+    """
+    my_id = getattr(extractor, "my_player_id", None)
+    obs = obs or {}
+    city_recs = as_dict(obs.get("city")) or {}
+    unit_recs = as_dict(obs.get("unit")) or {}
+    my_cities, my_units, foreign_cities, foreign_units = [], [], [], []
+    for cid, rec in city_recs.items():
+        if not isinstance(rec, dict):
+            continue
+        row = {"id": cid, "owner": rec.get("owner"), "x": rec.get("x"),
+               "y": rec.get("y"), "size": rec.get("size"),
+               "food_stock": rec.get("food_stock"),
+               "surplus_food": rec.get("surplus_food"),
+               "prod_food": rec.get("prod_food"),
+               "ppl_unhappy": rec.get("ppl_unhappy"),
+               "turns_to_prod": rec.get("turns_to_prod_complete"),
+               "production_value": rec.get("production_value"),
+               "клетка_центра": _tile_out(obs, rec.get("x"), rec.get("y")),
+               # Выходы клеток города: если мир их публикует (civrealm читает
+               # `pcity['output_food'][idx]`), то арифметику еды можно взять
+               # напрямую, а не выводить из дельт между ходами.
+               "ключи_записи": sorted(rec.keys()),
+               "окно_клеток": _city_window(obs, rec.get("x"), rec.get("y")),
+               "выходы_массивами": {
+                   k: _plain(rec[k]) for k in rec
+                   if (isinstance(rec.get(k), (list, tuple))
+                       or hasattr(rec.get(k), "tolist"))
+                   and any(s in k for s in
+                           ("output", "tile", "worked", "food", "specialist"))}}
+        (my_cities if rec.get("owner") == my_id else foreign_cities).append(row)
+    for uid, rec in unit_recs.items():
+        if not isinstance(rec, dict):
+            continue
+        row = {"id": uid, "owner": rec.get("owner"),
+               "type": rec.get("type_rule_name"), "x": rec.get("x"),
+               "y": rec.get("y"), "moves": rec.get("moves_left"),
+               "клетка": _tile_out(obs, rec.get("x"), rec.get("y"))}
+        (my_units if rec.get("owner") == my_id else foreign_units).append(row)
+    ctrl_info: dict = {}
+    ctrl = _controller_of(env)
+    if ctrl is not None:
+        probes = [
+            ("разбит", lambda: bool(ctrl.my_player_is_defeated())),
+            ("городов_контроллер",
+             lambda: len(ctrl.city_ctrl.get_cities_by_player_id(my_id))),
+            ("юнитов_контроллер", lambda: len(ctrl.unit_ctrl.units)),
+            ("есть_юниты", lambda: bool(ctrl.unit_ctrl.have_units())),
+            ("есть_поселенцы",
+             lambda: bool(ctrl.unit_ctrl.my_units_have_type("Settlers"))),
+            ("состояние_клиента", lambda: ctrl.clstate.client_state()),
+            ("игра_окончена", lambda: bool(ctrl.game_is_over)),
+            ("игра_завершена", lambda: bool(ctrl.game_is_end)),
+            ("ход_контроллера", lambda: ctrl.turn_manager.turn),
+        ]
+        for name, fn in probes:
+            try:
+                ctrl_info[name] = fn()
+            except Exception as exc:  # noqa: BLE001 - диагностика не рушит матч
+                ctrl_info[name] = f"ошибка:{type(exc).__name__}"
+    player_rec = as_dict(as_dict(obs.get("player")).get(str(my_id))) or {}
+    game_rec = as_dict(obs.get("game")) or {}
+    actions = as_dict(info.get("available_actions")) or {}
+    row = {
+        "эпизод": _EPISODE_IDX[0],
+        "порт": port,
+        "ветвь": "прогноз" if ARGS.forecast else "ВЫКЛ",
+        "turn": (info or {}).get("turn"),
+        "turn_played": turn,
+        "obs_entities": len(city_recs) + len(unit_recs),
+        "n_city_recs": len(city_recs),
+        "n_unit_recs": len(unit_recs),
+        "my_cities": my_cities,
+        "my_units": my_units,
+        "foreign_cities": foreign_cities,
+        "foreign_units": foreign_units,
+        "is_alive": player_rec.get("is_alive"),
+        "score": player_rec.get("score"),
+        "gold": player_rec.get("gold"),
+        "offered": {k: (len(v) if isinstance(v, dict) else v)
+                    for k, v in actions.items()},
+        "действия_за_ход": _TURN_ACTIONS.get(turn) or [],
+        "messages": game_rec.get("messages"),
+        "food_cost": (as_dict(obs.get("rules")) or {}).get("food_cost"),
+        "celebratesize": (as_dict(obs.get("rules")) or {}).get("celebratesize"),
+        "controller": ctrl_info,
+    }
+    try:
+        with open(_state_dump_path(), "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+    except Exception:  # noqa: BLE001 - запись среза не должна рушить матч
+        pass
+    print(f"      [состояние {row['turn']}] сущ={row['obs_entities']} "
+          f"(город {len(city_recs)}, юнит {len(unit_recs)}) "
+          f"свои города={[(c.get('x'), c.get('y'), c.get('size'), c.get('surplus_food')) for c in my_cities]} "
+          f"свои юниты={[(u.get('type'), u.get('x'), u.get('y')) for u in my_units]} "
+          f"чужих видно={len(foreign_units)} "
+          f"жив={row['is_alive']} счёт={row['score']} "
+          f"контроллер: городов={ctrl_info.get('городов_контроллер')} "
+          f"юнитов={ctrl_info.get('юнитов_контроллер')} "
+          f"поселенцы={ctrl_info.get('есть_поселенцы')} "
+          f"разбит={ctrl_info.get('разбит')} "
+          f"состояние={ctrl_info.get('состояние_клиента')} "
+          f"действия={row['действия_за_ход']} "
+          f"сообщения={str(row['messages'])[-200:]!r}", flush=True)
+
+
+def _unit_pos(obs, unit_id):
+    """Позиция юнита по его id: нужна для `join_city`, где в имени действия города нет."""
+    units = as_dict((obs or {}).get("unit"))
+    for key in (unit_id, str(unit_id)):
+        rec = units.get(key)
+        if isinstance(rec, dict):
+            try:
+                return int(rec.get("x")), int(rec.get("y"))
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+def _food_gate_filter(cands, obs, extractor, turn=None) -> list:
+    """Правило F (§10.30) для ПРЕЖНЕГО пути: отсечь еду-небезопасные действия.
+
+    Отсечение идёт ДО ядра, а не вето после выбора: вето оставило бы сторону без
+    хода в тот ход, когда безопасная альтернатива была (ядро выбрало бы её).
+    Действие, для которого в наблюдении нет записи города-цели, НЕ запрещается —
+    правило работает по факту мира; такие случаи считаются отдельно, чтобы
+    «не видно города» не выглядело как «безопасно».
+    """
+    if not getattr(env_config, "FOOD_GATE_ENABLED", True):
+        return list(cands)
+    from env.food_gate import city_at, city_by_id, denies
+    my_id = getattr(extractor, "my_player_id", None)
+    kept: list = []
+    for cand in cands:
+        name = str(cand.get("action_name", ""))
+        if not (name.startswith("city_unwork_")
+                or name.startswith("city_change_specialist")
+                or name == "join_city"):
+            kept.append(cand)
+            continue
+        city = None
+        if str(cand.get("ctrl_type", "")) == "city":
+            city = city_by_id(obs, cand.get("actor_id"))
+        elif name == "join_city":
+            pos = _unit_pos(obs, cand.get("actor_id"))
+            if pos is not None:
+                city = city_at(obs, pos[0], pos[1])
+        if not isinstance(city, dict) or city.get("owner") != my_id:
+            _GATE_NO_CITY[0] += 1
+            kept.append(cand)
+            continue
+        deny, why = denies(name, city=city, obs=obs, turn=turn)
+        if deny:
+            _GATE_FILTERED[0] += 1
+            if why not in _GATE_REASONS and len(_GATE_REASONS) < 6:
+                _GATE_REASONS.append(why)
+            continue
+        # Вердикт едет ВМЕСТЕ с кандидатом: без этого «протечку» (ушло действие,
+        # которое правило обязано было запретить) нельзя отличить от законного хода —
+        # состояние внутри хода меняется, и сверка по началу хода врёт.
+        try:
+            cand["food_gate"] = (f"разрешено: surplus={city.get('surplus_food')} "
+                                 f"проверено правилом F")
+        except Exception:  # noqa: BLE001
+            pass
+        kept.append(cand)
+    return kept
+
+
+def _remember_verdict(action, verdict) -> None:
+    """Запомнить вердикт Правила F для действия, которое сейчас уйдёт на сервер.
+
+    Действие попадает в запись хода ВМЕСТЕ со своим вердиктом: тогда «протечка»
+    видна как «в записи стоит запрет», а не выясняется сверкой по началу хода.
+    """
+    if verdict and action:
+        try:
+            _ACTION_VERDICT[(str(action[0]), str(action[1]), str(action[2]))] = str(verdict)
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _verdict_of(action) -> str:
+    if not action:
+        return ""
+    try:
+        return _ACTION_VERDICT.get((str(action[0]), str(action[1]), str(action[2])), "")
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _print_food_gate_summary() -> None:
+    """Что правило F отсекло за матч — иначе «правило работает» остаётся верой.
+
+    Здесь же журнал РЕШЕНИЙ правила пишется в `<output>.gate.jsonl`: без чисел на
+    момент решения «протечку» нельзя отличить от законного хода (состояние внутри
+    хода меняется от действия к действию).
+    """
+    report = food_gate.denial_report()
+    decisions = food_gate.decision_log()
+    print(f"  правило F (еда необратима): решений проверено {len(decisions)}, "
+          f"запрещено {report.get('total', 0)} "
+          f"(по семействам: {report.get('counts') or 'нет'}), "
+          f"из них отсечено в ПРЕЖНЕМ пути {_GATE_FILTERED[0]} "
+          f"(остальные — в прогнозе, там цена считается его формулой), "
+          f"без записи города {_GATE_NO_CITY[0]}", flush=True)
+    for line in (report.get("examples") or [])[:4]:
+        print(f"    пример запрета: {line}", flush=True)
+    for why in _GATE_REASONS[:2]:
+        print(f"    причина: {why}", flush=True)
+    out = getattr(ARGS, "output", None)
+    if out and decisions:
+        try:
+            with open(f"{out}.gate.jsonl", "a", encoding="utf-8") as fh:
+                for d in decisions:
+                    fh.write(json.dumps({"эпизод": _EPISODE_IDX[0],
+                                         "ветвь": "прогноз" if ARGS.forecast else "ВЫКЛ",
+                                         **d}, ensure_ascii=False) + "\n")
+        except Exception:  # noqa: BLE001 - запись журнала не должна рушить серию
+            pass
 
 
 def _dump_candidates(ctx, info) -> None:
@@ -1094,6 +1436,8 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                         if not (str(c.get("action_name", "")).startswith("produce_")
                                 and str(c.get("action_name"))[len("produce_"):] in _banned)
                     ]
+                # Правило F (§10.30): еду-небезопасные действия отсекаются ДО ядра.
+                cands = _food_gate_filter(cands, obs, extractor, info.get("turn"))
                 if not cands:
                     # Самоотчёт: сервер предложил действия, а кандидатов ноль.
                     # Без этого «0 решений за матч» не отличить от вето ядра —
@@ -1126,7 +1470,11 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                 if core is None:
                     # Python fallback: same objective, no Rust veto.
                     best = gen.select_best(cands, dof.state)
-                    return _to_action(best) if best else None
+                    if best:
+                        wire = _to_action(best)
+                        _remember_verdict(wire, best.get("food_gate"))
+                        return wire
+                    return None
 
                 decision = core.select_best(_core_entities(dof.state), _core_actions(cands))
                 if decision.chosen_action_id is None or decision.net_delta <= 0:
@@ -1158,7 +1506,9 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
 
                 for cand in cands:
                     if cand["option_id"] == decision.chosen_action_id:
-                        return _to_action(cand)
+                        wire = _to_action(cand)
+                        _remember_verdict(wire, cand.get("food_gate"))
+                        return wire
                 return None
 
         return DofAgent()
@@ -1475,6 +1825,9 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
     seeds, so distinct seeds produce distinct scenarios.
     """
     metrics = MatchMetrics(agent_name=agent_type, include_series=include_series)
+    # Номер попытки: срезы состояния (--dump-state) из одной серии лежат в одном
+    # файле, и без этого номера строки разных матчей неразличимы.
+    _EPISODE_IDX[0] += 1
     metrics.curiosity = curiosity
     metrics.port = port
     _SITE_SAMPLE_SEEN.clear()      # забор площадок — заново на каждый матч
@@ -1483,6 +1836,14 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
     os.environ["DOF_RUN_TAG"] = f"{agent_type}{'' if curiosity else '/no-curiosity'}"
     # The A/B switch: read at every bonus call, so it takes effect per match.
     env_config.CURIOSITY_ENABLED = curiosity
+    # Правило F: выключатель читается на каждом матче, поэтому контрольная ветвь
+    # (`--no-food-gate`) идёт по тому же коду, а не по другой сборке.
+    env_config.FOOD_GATE_ENABLED = bool(getattr(ARGS, "food_gate", True))
+    food_gate.reset_log()
+    _GATE_FILTERED[0] = 0
+    _GATE_NO_CITY[0] = 0
+    _GATE_REASONS.clear()
+    _ACTION_VERDICT.clear()
     extractor = GameStateExtractor(my_player_id=0)
     env = None
 
@@ -1585,6 +1946,8 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
                     decisions_this_turn += 1
                     end_turn = False
                     metrics.record_decision(turns_played + 1, action)
+                    _TURN_ACTIONS.setdefault(turns_played + 1, []).append(
+                        [str(p) for p in action[:3]] + [_verdict_of(action)])
                     if trace:
                         print(f"      turn {turns_played + 1}: "
                               f"{action[0]}/{action[1]}/{action[2]}", flush=True)
@@ -1702,6 +2065,15 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
             elif end_turn:
                 turns_played += 1
                 last_global_turn = global_turn
+                # Срез состояния — ДО извлечения: он должен попасть в запись и на
+                # ходу поражения, когда наблюдение пусто, а извлекатель уже
+                # уходит в ветку «пусто от клиента».
+                if ARGS.dump_state and turns_played <= ARGS.dump_state:
+                    try:
+                        _dump_state(env, obs, info, extractor, turns_played, port)
+                    except Exception as exc:  # noqa: BLE001
+                        print(f"      [состояние] сбой среза: "
+                              f"{type(exc).__name__}: {exc}", flush=True)
                 extraction = extractor.extract(obs, info, info.get("turn", turns_played))
                 if not metrics.start_fingerprint:
                     # Captured on the first turn. Not "the map": at turn 1 only a
@@ -1741,6 +2113,7 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
                           f"idx={index:.2f}]", end="", flush=True)
 
         metrics.finished = True
+        _print_food_gate_summary()
         if ARGS.forecast:
             # Итог прогноза: без него «0 решений» снова было бы неотличимо от
             # «прогноз не работал и всё делал fallback».

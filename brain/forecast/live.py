@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from env import config as _cfg
+from env.food_gate import denies as _food_gate_denies
 from env.measured_facts import default_facts
 from env.site_eval import evaluate_site
 
@@ -709,6 +710,13 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
                 sign = -1.0
             else:
                 continue
+            # Правило F (§10.30): перевод жителя, после которого город не прокормит
+            # себя, отсекается ДО поиска. Цена в опциях этого не выражает: голод
+            # уничтожает город целиком (и сторона выбывает), а не «уменьшает выгоду».
+            if getattr(_cfg, "FOOD_GATE_ENABLED", True):
+                deny, _why = _food_gate_denies(text, city=rec, obs=obs)
+                if deny:
+                    continue
             outputs = _tile_outputs(city_id, text)
             if not outputs:
                 continue
