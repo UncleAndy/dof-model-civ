@@ -681,6 +681,67 @@ def _verdict_of(action) -> str:
         return ""
 
 
+def _dump_index_composition(obs, extraction, extractor) -> None:
+    """Состав общего индекса DoF: кто сколько даёт и что удерживает сток (§10.34, V3).
+
+    Зачем числа: производство юнита даёт индексу `+ln(опций)` ≈ +1.5, а сток за
+    содержание (`UNIT_UPKEEP_SINK_W` × upkeep) при весе 0.05 почти ничего. Без этого
+    среза «беговая дорожка производства» — догадка; с ним видно, чем именно она
+    уравновешена (или не уравновешена).
+    """
+    my_id = getattr(extractor, "my_player_id", None)
+    state = getattr(extraction, "state", None)
+    entities = getattr(state, "entities", None) or {}
+    units_obs = as_dict((obs or {}).get("unit")) or {}
+    cities_obs = as_dict((obs or {}).get("city")) or {}
+    own_units = {f"unit_{k}" for k, v in units_obs.items()
+                 if isinstance(v, dict) and v.get("owner") == my_id}
+    own_cities = {f"city_{k}" for k, v in cities_obs.items()
+                  if isinstance(v, dict) and v.get("owner") == my_id}
+    sums: dict[str, float] = {"свои юниты": 0.0, "свои города": 0.0,
+                              "чужие юниты": 0.0, "чужие города": 0.0,
+                              "технологии": 0.0, "прочее": 0.0}
+    for ent_id, ent in entities.items():
+        if getattr(ent, "is_collapse_source", False) or not getattr(ent, "dof_known", True):
+            continue
+        value = math.log(max(float(getattr(ent, "dof_options", 0.0) or 0.0), EPSILON))
+        if ent_id in own_units:
+            key = "свои юниты"
+        elif ent_id in own_cities:
+            key = "свои города"
+        elif ent_id.startswith("unit_"):
+            key = "чужие юниты"
+        elif ent_id.startswith("city_"):
+            key = "чужие города"
+        elif ent_id.startswith(("tech_", "technology_")):
+            key = "технологии"
+        else:
+            key = "прочее"
+        sums[key] += value
+    upkeep_sum = 0.0
+    upkeep_units = 0
+    for rec in units_obs.values():
+        if not isinstance(rec, dict):
+            continue
+        u = (float(rec.get("upkeep_food") or 0) + float(rec.get("upkeep_gold") or 0)
+             + float(rec.get("upkeep_shield") or 0))
+        upkeep_sum += u
+        if u > 0:
+            upkeep_units += 1
+    sink = float(getattr(state, "dof_sink", 0.0) or 0.0)
+    from env.config import UNIT_UPKEEP_SINK_W
+    total = sum(sums.values()) - sink
+    own_unit_count = sum(1 for v in units_obs.values()
+                         if isinstance(v, dict) and v.get("owner") == my_id)
+    print(f"      [индекс DoF] состав: " +
+          ", ".join(f"{k} {v:+.2f}" for k, v in sums.items() if abs(v) > 1e-9) +
+          f"; сток {sink:.2f} (содержание {UNIT_UPKEEP_SINK_W * upkeep_sum:.2f}, "
+          f"задержка населения {sink - UNIT_UPKEEP_SINK_W * upkeep_sum:.2f})"
+          f"; итог {total:.2f}; своих юнитов {own_unit_count}, "
+          f"с содержанием>0 {upkeep_units}, сумма содержания {upkeep_sum:.0f}",
+          flush=True)
+
+
 def _dump_foreign_entities(obs, extraction, extractor) -> None:
     """Срез ЧУЖИХ сущностей в общем DoF: входят ли, сколько дают, кто помечен коллапсом.
 
@@ -2284,6 +2345,7 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
                 if ARGS.dump_state:
                     try:
                         _dump_foreign_entities(obs, extraction, extractor)
+                        _dump_index_composition(obs, extraction, extractor)
                     except Exception as exc:  # noqa: BLE001
                         print(f"      [чужое в DoF] сбой среза: "
                               f"{type(exc).__name__}: {exc}", flush=True)

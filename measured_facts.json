@@ -417,7 +417,7 @@
       ],
       "source": "learn-record",
       "n": 50,
-      "last_turn": 5,
+      "last_turn": 30,
       "options": [
         4.4125,
         4.4125,
@@ -807,9 +807,9 @@
     },
     "Settlers": {
       "kind": "unit",
-      "source": "learn-record",
+      "source": "observed",
       "n": 50,
-      "last_turn": 5,
+      "last_turn": 30,
       "cost": [
         40.0,
         40.0,
@@ -903,23 +903,23 @@
         3.8125,
         3.8125,
         3.8125,
-        3.8125,
-        3.8125,
-        3.8125,
-        3.8125,
-        3.8125,
-        3.8125,
-        3.8125,
-        3.8125,
-        3.8125,
-        3.8125
+        1.883333,
+        1.883333,
+        1.883333,
+        1.883333,
+        1.883333,
+        1.883333,
+        1.883333,
+        1.883333,
+        1.883333,
+        1.883333
       ]
     },
     "Warriors": {
       "kind": "unit",
       "source": "learn-record",
       "n": 50,
-      "last_turn": 5,
+      "last_turn": 30,
       "cost": [
         10.0,
         10.0,
@@ -1029,7 +1029,7 @@
       "kind": "unit",
       "source": "learn-record",
       "n": 50,
-      "last_turn": 5,
+      "last_turn": 30,
       "cost": [
         30.0,
         30.0,
