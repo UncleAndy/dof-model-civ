@@ -138,6 +138,14 @@ def _best_destination(state: ForecastState, unit_id: str, vals: Valuations,
     return (int(best_tile[0]), int(best_tile[1])), best_value, current
 
 
+_MOVE_DIAG: list = []
+
+
+def move_diag() -> dict:
+    """Диагностика последнего вызова `candidates()` по семейству движения (§10.34)."""
+    return _MOVE_DIAG[-1] if _MOVE_DIAG else {}
+
+
 def candidates(state: ForecastState, vals: Valuations, *,
                max_moves: int = 3) -> list[Candidate]:
     """Все действия, которые прогноз считает возможными в этом состоянии.
@@ -164,19 +172,31 @@ def candidates(state: ForecastState, vals: Valuations, *,
     #    команда `goto_<dir8>` имеет вычисляемую цель, поэтому кандидат несёт своё
     #    имя и свою клетку (никакой подстановки «первой попавшейся» на проводе).
     #    Без меню (синтетика) — семейство по `reach`, и это верхняя граница.
+    # Диагностика семейства движения (§10.34): движение в прогнозе исчезло после
+    # основания города, хотя сервер предлагает по 8 шагов каждому юниту. Без чисел
+    # «кандидатов нет» неотличимо от «кандидатов не создаёт наш фильтр».
+    move_diag: dict = {"единиц": 0, "предложено_шагов": 0, "отброшено_по_ценности": 0,
+                       "оставлено": 0, "без_шагов": 0, "текущая_ценность": []}
     for unit_id in list(state.positions):
         here = state.positions.get(unit_id)
         carrier = bool(vals.is_carrier(unit_id))
         current = tile_value((int(here[0]), int(here[1])), vals, carrier=carrier) \
             if here is not None else 0.0
         steps = vals.moves(unit_id) if vals.moves is not None else []
+        move_diag["единиц"] += 1
+        move_diag["текущая_ценность"].append(round(float(current), 3))
+        if not steps:
+            move_diag["без_шагов"] += 1
         if steps:
+            move_diag["предложено_шагов"] += len(steps)
             for name, target in steps:
                 tile = (int(target[0]), int(target[1]))
                 value = tile_value(tile, vals, carrier=carrier)
                 # Ход стоит ценности только если преемник её даёт.
                 if value <= current:
+                    move_diag["отброшено_по_ценности"] += 1
                     continue
+                move_diag["оставлено"] += 1
                 effect = tr.move(state, unit_id, tile,
                                  info_gain=float(vals.info_gain(tile)))
                 out.append(Candidate(action=("unit", unit_id, name),
@@ -290,7 +310,11 @@ def candidates(state: ForecastState, vals: Valuations, *,
     # И только тем, кто в этом ходу ещё не решал: иначе предложение уйдёт актёру,
     # чей ход уже сделан, раннер его отбросит — а счётчики решений разойдутся с тем,
     # что реально ушло на провод (измерено: 61 «действие» при 31 отправленном).
-    return [c for c in offered if not vals.excluded(c.action[0], c.action[1])]
+    final = [c for c in offered if not vals.excluded(c.action[0], c.action[1])]
+    _MOVE_DIAG.append({**move_diag,
+                       "оставлено_после_фильтра":
+                       sum(1 for c in final if c.kind == "move")})
+    return final
 
 
 def tech_name(tech_id: str) -> str:
