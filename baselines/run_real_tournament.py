@@ -965,6 +965,18 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                     return wire
 
                 cands = gen.generate_candidates(dof.state, avail)
+                if ARGS.ban_produce and cands:
+                    # Тот же инструмент для ПРЕЖНЕГО пути (серия A: «обратный запрет»).
+                    # Запрет действует только на постановку в очередь и только у того
+                    # типа, что назван: всё остальное (движение, работы, основание,
+                    # наука) остаётся нетронутым, иначе различие между ветвями было бы
+                    # не одним, а двумя.
+                    _banned = {str(_n) for _n in ARGS.ban_produce}
+                    cands = [
+                        c for c in cands
+                        if not (str(c.get("action_name", "")).startswith("produce_")
+                                and str(c.get("action_name"))[len("produce_"):] in _banned)
+                    ]
                 if not cands:
                     # Самоотчёт: сервер предложил действия, а кандидатов ноль.
                     # Без этого «0 решений за матч» не отличить от вето ядра —
