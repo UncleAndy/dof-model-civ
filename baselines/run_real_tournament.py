@@ -171,7 +171,7 @@ from civrealm.configs import fc_args
 from civrealm.agents import RandomAgent, BaseAgent
 
 from env import config as env_config
-from env.config import AXIOM4_PENALTY_OPTIONS, CORE_DOF_SCALE
+from env.config import AXIOM4_PENALTY_OPTIONS, CORE_DOF_SCALE, EPSILON
 from env.entity_extractor import GameStateExtractor, as_dict, compute_total_dof_index
 from env.experiments import note_choice
 from env import food_gate
@@ -389,6 +389,8 @@ _TURN_ACTIONS: dict = {}
 _GATE_FILTERED: list = [0]
 _GATE_NO_CITY: list = [0]
 _GATE_REASONS: list = []
+#: Сколько раз в сообщениях мира встретился признак боя (§10.33: «нападает»).
+_COMBAT_MESSAGES: list = [0]
 #: Вердикт Правила F по ушедшему действию: (ctrl, actor, name) -> текст вердикта.
 _ACTION_VERDICT: dict = {}
 _BUY_DIAG_PRINTED: list = []
@@ -677,6 +679,67 @@ def _verdict_of(action) -> str:
         return _ACTION_VERDICT.get((str(action[0]), str(action[1]), str(action[2])), "")
     except Exception:  # noqa: BLE001
         return ""
+
+
+def _dump_foreign_entities(obs, extraction, extractor) -> None:
+    """Срез ЧУЖИХ сущностей в общем DoF: входят ли, сколько дают, кто помечен коллапсом.
+
+    Вопрос Andy: чужие объекты и юниты должны входить в расчёт ОБЩЕГО DoF системы, а
+    «источником коллапса» должен становиться лишь тот чужой юнит, который
+    НЕПОСРЕДСТВЕННО НАПАДАЕТ. Без этого среза оба утверждения — вера: извлечение
+    строится по всем записям наблюдения (фильтра владельца в коде нет), но вклад чужих
+    сущностей в индекс и признак коллапса нигде не печатались.
+    """
+    my_id = getattr(extractor, "my_player_id", None)
+    entities = getattr(getattr(extraction, "state", None), "entities", None) or {}
+    # Бой или захват в сообщениях мира: без этого «нападает» нечем подтвердить —
+    # наш счётчик боевых действий фиксирует только НАШИ бои.
+    messages = str(((as_dict((obs or {}).get("game")) or {}).get("messages")) or "")
+    combat_hits = [w for w in ("attacked", "destroyed", "captured", "Annihilated",
+                               "killed", "razed", "sacked", "bombard")
+                   if w in messages]
+    if combat_hits:
+        _COMBAT_MESSAGES[0] += 1
+        print(f"      [бой в сообщениях {_COMBAT_MESSAGES[0]}] слова {combat_hits}: "
+              f"{messages[-220:]!r}", flush=True)
+    foreign_ids = []
+    for unit_id, rec in (as_dict((obs or {}).get("unit")) or {}).items():
+        if isinstance(rec, dict) and rec.get("owner") != my_id:
+            foreign_ids.append(f"unit_{unit_id}")
+    for city_id, rec in (as_dict((obs or {}).get("city")) or {}).items():
+        if isinstance(rec, dict) and rec.get("owner") != my_id:
+            foreign_ids.append(f"city_{city_id}")
+    present, absent, ctx = [], [], []
+    if not foreign_ids:
+        return                      # нечего мерить: чужих записей в наблюдении нет
+    for ent_id in foreign_ids:
+        ent = entities.get(ent_id)
+        if ent is None:
+            absent.append(ent_id)
+            continue
+        options = float(getattr(ent, "dof_options", 0.0) or 0.0)
+        present.append((ent_id, options,
+                        bool(getattr(ent, "is_collapse_source", False)),
+                        bool(getattr(ent, "dof_known", True))))
+    own_unit_city = sum(
+        1 for ent_id in entities
+        if ent_id.startswith(("unit_", "city_")) and ent_id not in set(foreign_ids))
+    foreign_share = sum(math.log(max(o, EPSILON)) for _i, o, _c, _k in present
+                        if o > 0)
+    own_share = sum(
+        math.log(max(float(getattr(e, "dof_options", 0.0) or 0.0), EPSILON))
+        for ent_id, e in entities.items()
+        if ent_id.startswith(("unit_", "city_")) and ent_id not in set(foreign_ids)
+        and getattr(e, "dof_known", True) and not getattr(e, "is_collapse_source", False))
+    print(f"      [чужое в DoF] чужих записей {len(foreign_ids)}, из них сущностей "
+          f"{len(present)}, не стало сущностью {len(absent)}; своих сущностей "
+          f"юнит/город {own_unit_city}; вклад чужих в индекс "
+          f"{foreign_share:+.3f} против своих {own_share:+.3f}", flush=True)
+    for ent_id, options, collapse, known in present[:6]:
+        print(f"        {ent_id}: опций {options:.2f}, "
+              f"источник коллапса={collapse}, известно={known}", flush=True)
+    if absent[:3]:
+        print(f"        НЕ в сущностях: {absent[:3]}", flush=True)
 
 
 def _print_food_gate_summary() -> None:
@@ -1939,6 +2002,8 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
     _GATE_REASONS.clear()
     _ACTION_VERDICT.clear()
     _CANDIDATE_DUMPS.clear()   # срезы кандидатов — «первые N ходов ЭТОЙ игры»
+    _TURN_ACTIONS.clear()      # иначе список действий хода N накапливает прошлые игры
+    _COMBAT_MESSAGES[0] = 0
     extractor = GameStateExtractor(my_player_id=0)
     env = None
 
@@ -2170,6 +2235,12 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
                         print(f"      [состояние] сбой среза: "
                               f"{type(exc).__name__}: {exc}", flush=True)
                 extraction = extractor.extract(obs, info, info.get("turn", turns_played))
+                if ARGS.dump_state:
+                    try:
+                        _dump_foreign_entities(obs, extraction, extractor)
+                    except Exception as exc:  # noqa: BLE001
+                        print(f"      [чужое в DoF] сбой среза: "
+                              f"{type(exc).__name__}: {exc}", flush=True)
                 if not metrics.start_fingerprint:
                     # Captured on the first turn. Not "the map": at turn 1 only a
                     # handful of tiles are revealed, so what identifies a match is
