@@ -2523,6 +2523,31 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
         except AttributeError:  # pragma: no cover - модель без учёта пар
             pass
         if env is not None:
+            # СОСТАВ СЧЁТА: сервер считает счёт суммой категорий (Population, Trade,
+            # Production, Cities, Technologies, Military Service, Wonders, Research
+            # Speed, Land/Settled Area, Literacy, Culture, Built Units, Killed Units,
+            # Unit Losses, Units Used). Если различие между ветвями целиком лежит в
+            # категории «военные/построенные юниты», то вывод «производство полезно»
+            # верен ПО ОПРЕДЕЛЕНИЮ метрики, а не как свойство поведения. Поэтому
+            # состав счёта читается у сервера и записывается в отчёт — до выводов.
+            try:
+                # `evaluate_game` возвращает четвёрку (players, tags, turns, evaluations);
+                # нужен последний элемент: {имя_категории: {player_id: [значения по ходам]}}.
+                res = env.evaluate_game()
+                cats = res[3] if isinstance(res, tuple) and len(res) == 4 else res
+                pid = env.get_playerid()
+                final: dict[str, float] = {}
+                for tag_name, per_player in (cats or {}).items():
+                    series = per_player.get(pid) if isinstance(per_player, dict) else None
+                    if series:
+                        final[str(tag_name)] = float(series[-1])
+                metrics.category_scores = final
+                if final:
+                    print(f"  [счёт по категориям] " + ", ".join(
+                        f"{k}={v:.0f}" for k, v in sorted(final.items())), flush=True)
+            except Exception as exc:  # noqa: BLE001 - состав счёта не должен рушить серию
+                print(f"  [счёт по категориям] не прочитан: {type(exc).__name__}: {exc}",
+                      flush=True)
             try:
                 env.close()
             except Exception:  # noqa: BLE001

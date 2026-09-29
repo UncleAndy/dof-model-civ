@@ -111,6 +111,14 @@ class MatchMetrics:
     score_max_step: float = 0.0
     #: Ненулевые приросты с номерами ходов (их немного: счёт меняется между ходами).
     score_series: list[dict] = field(default_factory=list)
+    #: СОСТАВ СЧЁТА по категориям сервера на конец игры (Population, Trade,
+    #: Production, Cities, Technologies, Military Service, Wonders, Research Speed,
+    #: Land/Settled Area, Literacy, Culture, Built Units, Killed Units, Unit Losses,
+    #: Units Used). Нужен потому, что счёт — сумма категорий, и различие между
+    #: ветвями может лежать целиком в «построенные/военные юниты». Тогда вывод
+    #: «производство полезно» верен по определению метрики, а не как свойство
+    #: поведения, и это надо видеть числом, а не догадкой.
+    category_scores: dict[str, float] = field(default_factory=dict)
     #: Журнал исправлений: что именно мир поправил, когда и с какого значения.
     #: Счётчик «corrected: 6» без журнала — это цифра, которой нельзя доверять:
     #: по ней не видно, шесть разных ключей исправлено или один шесть раз.
@@ -395,6 +403,7 @@ class MatchMetrics:
             # не успеть стать различием в итоговом счёте, и тогда видно только
             # «сколько и когда очки приходили».
             "score_series": list(self.score_series),
+            "category_scores": dict(self.category_scores),
             "enemy_min_distance": self.enemy_min_distance,
             "enemy_contact_turns": list(self.enemy_contact_turns),
             "enemy_units_seen_max": self.enemy_units_seen_max,
