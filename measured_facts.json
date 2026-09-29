@@ -165,7 +165,7 @@
         30.0,
         30.0
       ],
-      "source": "observed",
+      "source": "learn-record",
       "n": 50,
       "last_turn": 171,
       "options": [
@@ -995,7 +995,7 @@
         30.0,
         30.0
       ],
-      "source": "observed",
+      "source": "learn-record",
       "n": 50,
       "last_turn": 167,
       "options": [
