@@ -1329,12 +1329,39 @@ def _forecast_decide(obs, info, dof, extractor, avail, *, type_names=None,
         # город предлагает только неоцениваемые типы, и потратить ход на замер
         # единственный способ выйти из круга «не знаем цену → не строим → не узнаём».
         probe = _probe_decision(ctx, extractor, info)
+        if probe is not None and ARGS.ban_produce:
+            # Запрет ветви обязан действовать и на замерный ход. Иначе «ветвь без
+            # Warriors» ставила бы Warriors через пустой ход, и запрет переставал
+            # быть единственным различием между ветвями (измерено: в логе ветви
+            # запрета замер выбирал `city/131/produce_Warriors`).
+            _pn = str(probe[2])
+            _banned = {str(_n) for _n in ARGS.ban_produce}
+            if (_pn.startswith("produce_")
+                    and _pn[len("produce_"):] in _banned):
+                _PENDING_PROBE.clear()
+                _PROBE_TARGET.clear()
+                probe = None
+        if probe is not None:
+            # Действие, которого сервер НЕ предлагает, роняет эпизод: словарь
+            # действий сервера не содержит такого актёра, и `env.step` падает
+            # `KeyError: '131'` в base_action.get_action (измерено, тот же прогон).
+            # Поэтому замер проходит ту же проверку по меню, что и обычный выбор.
+            _wire_probe = _to_wire_action(probe, avail)
+            if _wire_probe is None:
+                _PENDING_PROBE.clear()
+                _PROBE_TARGET.clear()
+                _FORECAST_STATS["probe_unmappable"] = (
+                    _FORECAST_STATS.get("probe_unmappable", 0) + 1)
+                if _FORECAST_STATS["probe_unmappable"] <= 3:
+                    print(f"        [прогноз] замер {probe} сервер не предлагает "
+                          f"— не отправлен", flush=True)
+                probe = None
         if probe is not None:
             _FORECAST_STATS["probes"] += 1
             if _FORECAST_STATS["probes"] <= 3:
                 print(f"        [прогноз] пустой ход потрачен на замер: "
                       f"{probe[0]}/{probe[1]}/{probe[2]}", flush=True)
-            return True, probe
+            return True, _wire_probe
         if not choice.candidate_kinds:
             # Это НЕ отказ от действия, а конец хода: кандидатов нет, потому что
             # все актёры этого хода уже решили (или в мире действительно нечего
