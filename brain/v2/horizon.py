@@ -223,39 +223,95 @@ def _science_rate(graph: KnowledgeGraph) -> float:
 def production_gain(graph: KnowledgeGraph, action: str) -> tuple[float, str]:
     """Ожидаемый прирост индекса от постройки в городе за горизонт.
 
-    Опирается на опубликованный миром срок `city.turns_to_prod_complete` и на измеренный факт,
-    что завершение постройки даёт новую сущность (`unit_new` в эффекте `turn/advance`).
+    Срок постройки берётся в объявленном порядке, и ВСЕ три источника — измеренные или
+    выведенные из измеренного, ни один не выдуман:
+
+    1. **замер собственного действия**: если агент сам запускал `produce_X`, мир на следующем ходу
+       публикует `turns_to_prod_complete` — это и есть срок именно этого варианта (атрибуция по
+       нашему действию, а не по догадке);
+    2. **публикация мира**: `city.turns_to_prod_complete` (срок текущего производства);
+    3. **вывод из измеренных цены и щитов**: `build_cost` из паспорта типа/улучшения и щиты города
+       (`prod_shield`, `shield_stock`) дают `ceil((цена − запас) / щиты/ход)`. Помечается как
+       выведенное, потому что пошлины/отходы мир не публикует.
+
     Тип берётся из имени действия (`produce_Settlers` → `Settlers`), его DoF — из накопленного
     набора возможностей, если тип уже наблюдён.
     """
     if not str(action).startswith("produce_"):
         return 0.0, ""
     type_name = str(action)[len("produce_"):]
+    eta, src = _measured_eta(graph, type_name)
+    if eta is None:
+        eta, src = _published_eta(graph)
+    if eta is None:
+        eta, src = _derived_eta(graph, type_name)
+    if eta is None:
+        return 0.0, ("срок постройки неизвестен: ни замером своего запуска, ни публикацией, "
+                     "ни из цены — считать нечем")
+    H, hw = _horizon(graph)
+
+    te = graph.entity(f"unit_type:{type_name}")
+    dof = None
+    dsrc = "тип неизвестен"
+    if te is not None:
+        fam = te.attrs.get("dof_families")
+        if isinstance(fam, int) and fam > 0:
+            dof, dsrc = float(fam), f"набор типа {type_name} измерен"
+    if dof is None:
+        imp, cnt = _impute_unit(graph)
+        if imp is None:
+            return 0.0, "DoF будущей сущности неизвестен — считать нечем"
+        dof, dsrc = imp, f"среднее по своим типам ({cnt})"
+    frac = min(1.0, H / float(max(1, eta)))
+    gain = math.log(dof) * frac
+    return gain, (f"{src}: за {eta} ход(ов) появится {type_name} → +1 сущность (DoF {dof:g}: "
+                  f"{dsrc}); в τ={H:.0f} укладывается {frac * 100:.0f}% ({hw})")
+
+
+def _measured_eta(graph: KnowledgeGraph, type_name: str) -> tuple[Optional[int], str]:
+    """Измеренный срок: записан наблюдением, когда этот вариант был текущим производством."""
+    v = graph.observed_median("produce_eta", {"вариант": type_name})
+    if v and v > 0:
+        return int(v), f"замер своего запуска ({type_name})"
+    return None, ""
+
+
+def _published_eta(graph: KnowledgeGraph) -> tuple[Optional[int], str]:
+    """Опубликованный миром срок текущего производства города."""
     own = [e for e in graph.by_kind("city") if e.is_own]
     etas = [int(e.attrs["turns_to_prod_complete"]) for e in own
             if isinstance(e.attrs.get("turns_to_prod_complete"), int)
             and int(e.attrs["turns_to_prod_complete"]) > 0]
     if not etas:
-        return 0.0, "срок постройки неизвестен (нет своего города со сроком)"
-    eta = min(etas)
-    H, hw = _horizon(graph)
+        return None, ""
+    return min(etas), "публикация мира (текущее производство)"
 
-    te = graph.entity(f"unit_type:{type_name}")
-    dof = None
-    src = "тип неизвестен"
-    if te is not None:
-        fam = te.attrs.get("dof_families")
-        if isinstance(fam, int) and fam > 0:
-            dof, src = float(fam), f"набор типа {type_name} измерен"
-    if dof is None:
-        imp, cnt = _impute_unit(graph)
-        if imp is None:
-            return 0.0, "DoF будущей сущности неизвестен — считать нечем"
-        dof, src = imp, f"среднее по своим типам ({cnt})"
-    frac = min(1.0, H / float(max(1, eta)))
-    gain = math.log(dof) * frac
-    return gain, (f"за {eta} ход(ов) появится {type_name} → +1 сущность (DoF {dof:g}: {src}); "
-                  f"в τ={H:.0f} укладывается {frac * 100:.0f}% ({hw})")
+
+def _derived_eta(graph: KnowledgeGraph, type_name: str) -> tuple[Optional[int], str]:
+    """Срок, ВЫВЕДЕННЫЙ из измеренных цены постройки и щитов города (помечается как выведенный)."""
+    cost = None
+    for kind in ("unit_type", "improvement"):
+        e = graph.entity(f"{kind}:{type_name}")
+        c = e.attrs.get("build_cost") if e is not None else None
+        if isinstance(c, (int, float)) and c > 0:
+            cost = float(c)
+            break
+    if cost is None:
+        return None, ""
+    best: Optional[int] = None
+    for e in graph.by_kind("city"):
+        if not e.is_own:
+            continue
+        shields = e.attrs.get("prod_shield")
+        stock = e.attrs.get("shield_stock")
+        if not isinstance(shields, (int, float)) or shields <= 0:
+            continue
+        left = cost - float(stock if isinstance(stock, (int, float)) else 0)
+        eta = max(1, int(math.ceil(left / float(shields))))
+        best = eta if best is None else min(best, eta)
+    if best is None:
+        return None, ""
+    return best, "выведено из цены и щитов (мир публикует и то, и другое)"
 
 
 def _impute_unit(graph: KnowledgeGraph) -> tuple[Optional[float], int]:

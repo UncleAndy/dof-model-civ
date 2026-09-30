@@ -482,6 +482,14 @@ def build_graph(obs: dict, available: dict, own_id: int = 0,
             te = g.ensure(f"unit_type:{a.type_name}", "unit_type", name=a.type_name)
             caps = set(te.attrs.get("capabilities") or []) | set(opts)
             te.attrs["capabilities"] = sorted(caps)
+            # цена типа — ИЗМЕРЕНА (паспорт юнита, опубликован миром). Нужна, чтобы выводить
+            # срок постройки, когда мир ещё не публикует срок варианта (см. horizon._derived_eta).
+            if isinstance(a.attrs.get("type_build_cost"), (int, float)):
+                te.attrs["build_cost"] = a.attrs["type_build_cost"]
+            if isinstance(a.attrs.get("type_attack_strength"), (int, float)):
+                te.attrs["attack_strength"] = a.attrs["type_attack_strength"]
+            if isinstance(a.attrs.get("type_move_rate"), (int, float)):
+                te.attrs["move_rate"] = a.attrs["type_move_rate"]
             if opts:
                 te.attrs["observations"] = te.attrs.get("observations", 0) + 1
             # DoF в двух видах (решение D1): механическое число и семейное (различные

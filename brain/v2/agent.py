@@ -60,6 +60,9 @@ class Agent:
         #: Полный срез нашего состояния на прошлом ходу: по нему наблюдается НАПАДЕНИЕ
         #: (решения Andy, §10.33/§10.34). Нападение = только факт, не догадка.
         self._prev_slice: Optional[dict] = None
+        #: Вариант постройки, запущенный нами: срок этого варианта мир опубликует на следующем
+        #: ходу — это и есть ИЗМЕРЕННЫЙ срок (атрибуция по нашему действию, не по догадке).
+        self._produce_started: Optional[str] = None
 
     # ---------------------------------------------------------------- решение
     def decide(self, obs: dict, info: dict, own_id: int,
@@ -81,6 +84,18 @@ class Agent:
             g, obs, own_id, turn, self._prev_slice, last_choice=self._last_choice)
         for ev in events:
             self.journal.write({"ход": turn, "нападение": ev})
+
+        # 1.3) ЗАМЕР СРОКА ПОСТРОЙКИ: если мы сами запустили `produce_X`, мир публикует срок
+        # именно этого варианта. Записываем как измеренную связь, чтобы им можно было считать.
+        if self._produce_started:
+            variant, self._produce_started = self._produce_started, None
+            for c in g.by_kind("city"):
+                eta = (c.attrs or {}).get("turns_to_prod_complete")
+                if c.is_own and isinstance(eta, int) and eta > 0:
+                    g.note_observation("produce_eta", {"вариант": variant, "ходов": eta})
+                    self.journal.write({"ход": turn, "замер_срока": {"вариант": variant,
+                                                                     "ходов": eta}})
+                    break
 
         # 1.5) длящийся опыт: продолжаем или закрываем (E3: прерывается, если действие отпало)
         if self._experiment is not None:
@@ -246,6 +261,8 @@ class Agent:
             example = {"действие": "закрытие хода", "ход": self._turn}
         # ИСХОД БОЯ (измерение §10.74): мир публикует, кого потеряли и кто ранен с ОБЕИХ сторон.
         # Пишем только для ударных семейств: для остальных чужая сторона не при чём.
+        if fam == "produce":
+            self._produce_started = str(getattr(step, "action", "") or "")[len("produce_"):] or None
         if fam in ("attack", "conquer_city") and self._before_foe is not None:
             fight = effects.fight_diff(self._before, after, self._before_foe,
                                        effects.foe_snapshot(obs, own_id))

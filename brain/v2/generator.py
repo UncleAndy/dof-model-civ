@@ -283,6 +283,20 @@ def _path_channel(goal: dict, graph: KnowledgeGraph, menu: dict,
                 effect=("channel", ctrl, action_family(a)))
 
 
+def _eta_known(graph: KnowledgeGraph, action: str) -> bool:
+    """Известен ли срок постройки этого варианта: замером, публикацией или из цены."""
+    from .horizon import _derived_eta, _measured_eta, _published_eta
+    name = str(action)[len("produce_"):]
+    for fn in (_measured_eta, _published_eta, _derived_eta):
+        try:
+            if fn(graph, name)[0] is not None:
+                return True
+        except TypeError:
+            if fn(graph)[0] is not None:
+                return True
+    return False
+
+
 def _path_probe(graph: KnowledgeGraph, menu: dict,
                 used: Optional[set] = None,
                 avoid: Optional[Callable[[str, str], bool]] = None) -> Optional[Path]:
@@ -311,7 +325,12 @@ def _path_probe(graph: KnowledgeGraph, menu: dict,
             for o in sorted(opts):
                 fam = action_family(o)
                 if graph.effect_of(ctrl, fam) is not None:
-                    continue                      # эффект уже наблюдён — не проба
+                    # ИСКЛЮЧЕНИЕ для постройки: у семейства `produce` эффект уже наблюдён, но
+                    # СРОК каждого варианта мир публикует только когда вариант стал текущим
+                    # производством. Поэтому вариант с неизвестным сроком — законная проба:
+                    # запустив его, агент получает измеренный срок (см. `horizon._measured_eta`).
+                    if fam != "produce" or _eta_known(graph, o):
+                        continue                  # эффект уже наблюдён — не проба
                 if is_noop(graph, o):
                     continue                      # ничего не меняет — не проба
                 if (str(actor), fam) in used or (ctrl, str(actor), fam) in used:
