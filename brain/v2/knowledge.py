@@ -91,6 +91,9 @@ class KnowledgeGraph:
         #: Наблюдённые эффекты переходов: «контроллер/семейство» -> что меняется в мире.
         #: Это знание о мире (постоянное), из него живёт проекция.
         self.effects: dict[str, dict] = {}
+        #: Измеренные СВЯЗИ (не действия): например «размер города -> сколько переходов ему
+        #: предлагают». Добываются наблюдением агента, из них берётся ценность роста.
+        self.observed: dict[str, list] = {}
         self.rules: dict = {}
         self.world: dict = {}
         self.observations: int = 0     # сколько раз мир наблюдался в этот граф
@@ -148,6 +151,27 @@ class KnowledgeGraph:
     def effect_of(self, ctrl: str, family: str) -> Optional[dict]:
         return self.effects.get(f"{ctrl}/{family}")
 
+    # --- измеренные связи ---
+    def note_observation(self, key: str, value) -> None:
+        """Записать наблюдение связи (накапливается)."""
+        vals = list(self.observed.get(key) or [])
+        vals.append(value)
+        self.observed[key] = vals[-2000:]
+
+    def observed_median(self, key: str, match: Optional[dict] = None) -> Optional[float]:
+        """Медиана наблюдений связи; `match` — фильтр по полям записанных словарей."""
+        vals = []
+        for v in (self.observed.get(key) or []):
+            if match and isinstance(v, dict) and any(v.get(k) != x for k, x in match.items()):
+                continue
+            x = v.get("значение") if isinstance(v, dict) else v
+            if isinstance(x, (int, float)):
+                vals.append(float(x))
+        if not vals:
+            return None
+        vals.sort()
+        return vals[len(vals) // 2]
+
     def permanent_only(self) -> "KnowledgeGraph":
         """Копия графа только с постоянным знанием (типы, технологии, словарь меню).
 
@@ -160,6 +184,7 @@ class KnowledgeGraph:
         g.rules = dict(self.rules)
         g.observations = self.observations
         g.effects = {k: dict(v) for k, v in self.effects.items()}
+        g.observed = {k: list(v) for k, v in self.observed.items()}
         for e in self.entities.values():
             if e.kind in PERMANENT_KINDS:
                 g.add_entity(Entity(eid=e.eid, kind=e.kind, owner=e.owner, is_own=e.is_own,
@@ -214,6 +239,7 @@ class KnowledgeGraph:
     def to_dict(self) -> dict[str, Any]:
         return {"world": self.world, "rules": self.rules, "observations": self.observations,
                 "effects": self.effects,
+                "observed": self.observed,
                 "entities": [e.to_dict() for e in self.entities.values()],
                 "edges": [e.to_dict() for e in self.edges]}
 
@@ -224,6 +250,7 @@ class KnowledgeGraph:
         g.rules = d.get("rules") or {}
         g.observations = d.get("observations", 0)
         g.effects = d.get("effects") or {}
+        g.observed = d.get("observed") or {}
         for ed in d.get("entities") or []:
             g.add_entity(Entity.from_dict(ed))
         for ed in d.get("edges") or []:
@@ -392,7 +419,11 @@ def build_graph(obs: dict, available: dict, own_id: int = 0,
                         "prod_food": c.prod_food, "prod_shield": c.prod_shield,
                         "shield_stock": c.shield_stock,
                         "turns_to_prod_complete": c.turns_to_prod_complete,
-                        "n_buildable": c.n_buildable})
+                        "n_buildable": c.n_buildable,
+                        # опубликовано миром и нужно опыту (срок амбара) и τ (запас еды)
+                        "granary_turns": (c.attrs or {}).get("granary_turns"),
+                        "food_stock": (c.attrs or {}).get("food_stock"),
+                        "growth_in": (c.attrs or {}).get("growth_in")})
         n, note = sensors.city_option_count(c, menu)
         e.dof = Value.measured(n, source="город:меню постройки", note=note)
         g.add_edge(Edge(src=eid, dst=f"player:{own_id}", kind="belongs_to"))

@@ -163,6 +163,24 @@ def _option_net(graph: KnowledgeGraph, cur_v, ctrl: str, action: str) -> dict:
                     why = why_p
                 elif why_p:
                     why = why_p
+            # Горизонтный ОПЫТ: про это семейство измерено, что удержание растит город, а связь
+            # «размер -> число переходов» тоже измерена. Тогда ценность роста считается по фактам.
+            h = (graph.effect_of(ctrl, fam) or {}).get("horizon") or {}
+            grew = h.get("city_grew") or 0
+            if grew > 0:
+                sizes = sorted(e.attrs["size"] for e in graph.by_kind("city")
+                               if e.is_own and isinstance(e.attrs.get("size"), int))
+                if sizes:
+                    cur_size = sizes[len(sizes) // 2]
+                    # связь берём по УСТОЙЧИВОЙ мере (позиции постройки из записи города),
+                    # а не по числу предложенных переходов: оно зависит от окна обёртки
+                    v_now = graph.observed_median("city_size_buildable", {"размер": cur_size})
+                    v_next = graph.observed_median("city_size_buildable",
+                                                   {"размер": cur_size + grew})
+                    if v_now and v_next and v_next > v_now:
+                        delta += math.log(v_next) - math.log(v_now)
+                        why = (f"опыт: удержание {ctrl}/{fam} {h.get('ходов')} ход(ов) растит город "
+                               f"на {grew}; переходов {v_now:g} → {v_next:g} (измерено)")
             net = delta - DT_DECLARED
     creates = bool(proj.new_entities) if proj.known else False
     return {"action": action, "net_delta": net, "why": why, "projection": proj.to_dict(),

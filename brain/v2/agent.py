@@ -10,7 +10,8 @@ import json
 from pathlib import Path
 from typing import Any, Optional
 
-from . import calculus, effects, generator, sensors
+from . import calculus, effects, experiment, generator, sensors
+from .generator import Step
 from .executor import Journal, to_env_action
 from .families import action_family
 from .store import KnowledgeStore
@@ -27,6 +28,8 @@ class Agent:
         #: «растёт ли набор возможностей города вместе с городом», а не предположить это.
         self.growth_path = Path(growth_path) if growth_path else None
         self._growth_seen: set = set()
+        #: Действующий ДЛИТЕЛЬНЫЙ ОПЫТ (прирост знания на дистанции, см. experiment.py).
+        self._experiment = None
         self._pending = None          # шаг, отправленный в среду
         self._before = None           # снимок состояния до шага
         self._turn: Optional[int] = None
@@ -45,6 +48,30 @@ class Agent:
         self.store.observe(obs, available, own_id)
         g = self.store.graph
         self._record_growth(g, menu)
+        turn = (info or {}).get("turn")
+
+        # 1.5) длящийся опыт: продолжаем или закрываем (E3: прерывается, если действие отпало)
+        if self._experiment is not None:
+            exp = self._experiment
+            opts_now = sensors.valid_options(menu, exp.ctrl, exp.actor)
+            elapsed = (turn - exp.started_turn) if isinstance(turn, int) else 0
+            gone = exp.action not in opts_now
+            if elapsed >= exp.turns or gone:
+                res = experiment.finish(g, exp, menu, interrupted=gone)
+                self.journal.write({"ход": turn, "опыт_закрыт": exp.to_dict(),
+                                    "результат": res})
+                self._experiment = None
+            else:
+                if (exp.ctrl, exp.actor) in used_actors:
+                    return None          # актор уже действовал в этом ходу
+                step = Step(ctrl=exp.ctrl, actor=exp.actor, action=exp.action,
+                            reversible=True, variants=1, alternatives=[exp.action])
+                self._pending = step
+                self._before = effects.snapshot(obs, own_id)
+                self._turn = turn
+                self.journal.write({"ход": turn, "опыт": exp.to_dict(),
+                                    "продолжение": exp.action})
+                return to_env_action(step)
 
         # 2) генератор: пути и цели без пути
         paths, open_goals = generator.generate(g, menu, own_id, avoid=self.avoid)
@@ -92,6 +119,17 @@ class Agent:
         })
 
         if step is None:
+            # Нечего делать по индексу и нет одношаговой пробы → ДЛИТЕЛЬНЫЙ ОПЫТ (E4).
+            started = experiment.start(g, menu, turn, avoid=self.avoid)
+            if started is not None:
+                exp, st = started
+                if (st.ctrl, st.actor) not in used_actors:
+                    self._experiment = exp
+                    self._pending = st
+                    self._before = effects.snapshot(obs, own_id)
+                    self._turn = turn
+                    self.journal.write({"ход": turn, "опыт_начат": exp.to_dict()})
+                    return to_env_action(st)
             self.journal.empty_turns += 1
             self._last_choice = None
             self._last_index = cur_idx
@@ -115,6 +153,16 @@ class Agent:
             self._growth_seen.add(key)
             opts = valid_options(menu, "city", e.eid.split(":")[-1])
             fams = sorted({o.split("_")[0] for o in opts})
+            # измеренная связь для базы знаний: «размер города -> сколько переходов предлагают»
+            if isinstance(e.attrs.get("size"), int) and opts:
+                graph.note_observation("city_size_options",
+                                       {"размер": e.attrs["size"], "значение": len(opts)})
+            # устойчивая мера (не зависит от окна обёртки): «размер -> позиций постройки»
+            if (isinstance(e.attrs.get("size"), int)
+                    and isinstance(e.attrs.get("n_buildable"), int)):
+                graph.note_observation("city_size_buildable",
+                                       {"размер": e.attrs["size"],
+                                        "значение": e.attrs["n_buildable"]})
             rec = {"ход": self._turn, "город": e.eid, "размер": e.attrs.get("size"),
                    "переходов_предложено": len(opts),
                    "семейств": len(fams),
