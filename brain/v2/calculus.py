@@ -27,8 +27,10 @@ from typing import Any, Optional
 
 from metrics.reversibility import classify_reversibility
 
+from . import threat
 from .families import action_family
 from .horizon import production_gain, research_gain
+from .horizon import tau as tau_window
 from .knowledge import KnowledgeGraph
 from .projection import project
 
@@ -113,14 +115,26 @@ class Decision:
     trace: dict
 
 
-def _option_net(graph: KnowledgeGraph, cur_v, ctrl: str, action: str) -> dict:
-    """NetDelta одного конкретного действия (варианта семейства)."""
+def _option_net(graph: KnowledgeGraph, cur_v, ctrl: str, action: str,
+                actor: Optional[str] = None, depth: int = 1) -> dict:
+    """NetDelta одного конкретного действия (варианта семейства).
+
+    ВАЖНО (измерено): цена угрозы и горизонтные выигрыши считаются по **измеренному состоянию**
+    (расстояния, скорости, опубликованные сроки), а не по записи эффекта семейства. Поэтому они
+    считаются ВНЕ ветки «эффект наблюдён»: иначе уход из-под удара получал `net = None` только
+    потому, что семейство `goto` ещё не пробовалось, и агент выбирал пробу вместо защиты.
+    """
     fam = action_family(action)
+    tw, twwhy = tau_window(graph)
+    # Окно угрозы — ОТДЕЛЬНАЯ величина (threat.STRIKE_TURNS), а не τ: измерено, что приорная
+    # τ = 5.8 при v=3 покрывает ≈17 клеток и как признак угрозы ничего не различает.
+    sw = threat.STRIKE_TURNS
     proj = project(graph, ctrl, fam)
-    net: Optional[float] = None
+    delta: Optional[float] = 0.0
     why = proj.source
+    gained = False                      # был ли хоть один измеренный источник выигрыша
+
     if proj.known and cur_v is not None:
-        delta = 0.0
         for kind, n in (proj.new_entities or {}).items():
             imp, _cnt = impute(graph, kind)
             if imp and imp > 0:
@@ -134,7 +148,6 @@ def _option_net(graph: KnowledgeGraph, cur_v, ctrl: str, action: str) -> dict:
                 imp, _ = impute(graph, kind)
                 if imp and imp > 0:
                     delta -= n * math.log(imp)
-            # Рост меню города — это рост DoF города, и он ИЗМЕРЕН (число разрешённых позиций).
             k = int((proj.changes or {}).get("city_buildable_delta", 0) or 0)
             if k:
                 own = [e for e in graph.by_kind("city") if e.is_own]
@@ -144,44 +157,62 @@ def _option_net(graph: KnowledgeGraph, cur_v, ctrl: str, action: str) -> dict:
                     if v + k > 0:
                         delta += math.log(v + k) - math.log(v)
                         why = f"меню города: +{k} позиций (измерено)"
-            # Отложенная отдача: горизонт на числах, опубликованных миром.
-            # Только `research_tech`: измерено, что он реально меняет `researching`, а
-            # `set_tech_goal` мир в состоянии НЕ отражает (эффект пуст) — начислять за него
-            # выигрыш значило бы выдумывать отдачу, которой мир не даёт.
-            if fam == "research_tech":
-                g_h, why_h = research_gain(graph, action)
-                if g_h > 0:
-                    delta += g_h
-                    why = why_h
-                elif why_h:
-                    why = why_h
-            # Постройка в городе: срок опубликован миром, появление сущности измерено.
-            if fam == "produce":
-                g_p, why_p = production_gain(graph, action)
-                if g_p > 0:
-                    delta += g_p
-                    why = why_p
-                elif why_p:
-                    why = why_p
-            # Горизонтный ОПЫТ: про это семейство измерено, что удержание растит город, а связь
-            # «размер -> число переходов» тоже измерена. Тогда ценность роста считается по фактам.
-            h = (graph.effect_of(ctrl, fam) or {}).get("horizon") or {}
-            grew = h.get("city_grew") or 0
-            if grew > 0:
-                sizes = sorted(e.attrs["size"] for e in graph.by_kind("city")
-                               if e.is_own and isinstance(e.attrs.get("size"), int))
-                if sizes:
-                    cur_size = sizes[len(sizes) // 2]
-                    # связь берём по УСТОЙЧИВОЙ мере (позиции постройки из записи города),
-                    # а не по числу предложенных переходов: оно зависит от окна обёртки
-                    v_now = graph.observed_median("city_size_buildable", {"размер": cur_size})
-                    v_next = graph.observed_median("city_size_buildable",
-                                                   {"размер": cur_size + grew})
-                    if v_now and v_next and v_next > v_now:
-                        delta += math.log(v_next) - math.log(v_now)
-                        why = (f"опыт: удержание {ctrl}/{fam} {h.get('ходов')} ход(ов) растит город "
-                               f"на {grew}; переходов {v_now:g} → {v_next:g} (измерено)")
-            net = delta - DT_DECLARED
+                        gained = True
+
+    # --- выигрыши из измеренного состояния (не зависят от записи эффекта) ---
+    if delta is not None:
+        if fam == "research_tech":
+            g_h, why_h = research_gain(graph, action)
+            if g_h > 0:
+                delta += g_h
+                why = why_h
+                gained = True
+            elif why_h:
+                why = why_h
+        if fam == "produce":
+            g_p, why_p = production_gain(graph, action)
+            if g_p > 0:
+                delta += g_p
+                why = why_p
+                gained = True
+            elif why_p:
+                why = why_p
+        h = (graph.effect_of(ctrl, fam) or {}).get("horizon") or {}
+        grew = h.get("city_grew") or 0
+        if grew > 0:
+            sizes = sorted(e.attrs["size"] for e in graph.by_kind("city")
+                           if e.is_own and isinstance(e.attrs.get("size"), int))
+            if sizes:
+                cur_size = sizes[len(sizes) // 2]
+                v_now = graph.observed_median("city_size_buildable", {"размер": cur_size})
+                v_next = graph.observed_median("city_size_buildable",
+                                               {"размер": cur_size + grew})
+                if v_now and v_next and v_next > v_now:
+                    delta += math.log(v_next) - math.log(v_now)
+                    why = (f"опыт: удержание {ctrl}/{fam} {h.get('ходов')} ход(ов) растит город "
+                           f"на {grew}; переходов {v_now:g} → {v_next:g} (измерено)")
+                    gained = True
+        if actor is not None:
+            if fam == "goto":
+                g_m, why_m = threat.movement_gain(graph, ctrl, action, str(actor), dof_of, sw,
+                                                  steps_count=depth)
+                if g_m > 0:
+                    delta += g_m
+                    why = why_m
+                    gained = True
+            if fam == "build_city":
+                g_f, why_f = threat.founding_risk(graph, action, str(actor), dof_of, impute, sw)
+                if g_f < 0:
+                    delta += g_f
+                    why = why_f
+                    gained = True
+
+    if delta is None:
+        net: Optional[float] = None
+    elif proj.known or gained:
+        net = delta - DT_DECLARED
+    else:
+        net = None                       # ни эффекта, ни измеренного выигрыша — неизвестно
     creates = bool(proj.new_entities) if proj.known else False
     return {"action": action, "net_delta": net, "why": why, "projection": proj.to_dict(),
             "multiplier": creates}
@@ -201,6 +232,10 @@ def evaluate(graph: KnowledgeGraph, paths: list, own_id: int = 0,
     cur = index(graph)
     cur_v = cur["value"]
     exclude = exclude or set()
+    _tw, _twwhy = tau_window(graph)
+    _risk_price, _risk_detail = threat.risk_price(graph, dof_of, threat.STRIKE_TURNS)
+    _risk = {"цена": round(_risk_price, 3), "под_ударом": _risk_detail,
+             "окно_удара": threat.STRIKE_TURNS, "τ": round(_tw, 1)}
 
     candidates: list[dict] = []
     best = None
@@ -210,7 +245,9 @@ def evaluate(graph: KnowledgeGraph, paths: list, own_id: int = 0,
     for p in paths:
         step = p.steps[0]
         alts = step.alternatives or [step.action]
-        results = [_option_net(graph, cur_v, step.ctrl, a) for a in alts[:120]]
+        results = [_option_net(graph, cur_v, step.ctrl, a, actor=step.actor,
+                               depth=len(p.steps))
+                   for a in alts[:120]]
         positive = [r for r in results if r["net_delta"] is not None and r["net_delta"] > 0]
         pick = max(positive, key=lambda r: r["net_delta"]) if positive else results[0]
         # Исключение проверяем ПОСЛЕ выбора варианта: иначе оно не срабатывало, потому что
@@ -255,6 +292,7 @@ def evaluate(graph: KnowledgeGraph, paths: list, own_id: int = 0,
         "calc_included": cur["terms"],
         "calc_excluded": cur["excluded"],
         "dt": DT_DECLARED,
+        "риск": _risk,
         "candidates": candidates,
         "chosen": (best.to_dict() if best is not None else None),
         "reason": reason,

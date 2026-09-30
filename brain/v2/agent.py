@@ -112,6 +112,7 @@ class Agent:
             "путей": len(paths), "целей_без_пути": len(open_goals),
             "причина": decision.trace["reason"],
             "индекс": decision.trace["index_current"],
+            "риск": decision.trace.get("риск"),
             "кальк_включено": len(decision.trace["calc_included"]),
             "кальк_исключено": decision.trace["calc_excluded"],
             "кандидаты": [{"эффект": c["path"]["effect"], "net_delta": c["net_delta"],

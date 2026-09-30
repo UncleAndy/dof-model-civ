@@ -33,16 +33,20 @@ from typing import Any, Callable, Iterable, Optional
 
 from metrics.reversibility import classify_reversibility
 
+from . import threat
 from .families import action_family, family_counts
 from .horizon import is_noop
+from .horizon import tau as tau_window
 from .knowledge import KnowledgeGraph
 
 MAX_PATHS = 5
 MIN_PATHS = 3
 MAX_DEPTH = 3
 
-#: порядок целей — структура, объявленная до данных (не оценка полезности)
-GOAL_ORDER = ("unknown", "found_city", "channel", "probe")
+#: порядок целей — структура, объявленная до данных (не оценка полезности).
+#: «выход из-под удара» первым: аксиома 3 (некомпенсация) — не дать сущности коллапсировать,
+#: это приоритетнее любого приобретения.
+GOAL_ORDER = ("escape", "unknown", "found_city", "channel", "probe")
 
 
 @dataclass
@@ -107,6 +111,13 @@ def _legal(graph: KnowledgeGraph, menu: dict, ctrl: str, actor: str) -> list[str
 def derive_goals(graph: KnowledgeGraph, menu: dict) -> list[dict]:
     """Цели выводятся из графа и меню. Ни одна не выдумана человеком."""
     goals: list[dict] = []
+
+    # 0) выйти из-под удара: наши сущности, досягаемые наблюдённой угрозой (аксиомы 3/4/5)
+    for eid, info in sorted(threat.exposure(graph, threat.STRIKE_TURNS).items()):
+        if eid.startswith("unit:"):
+            goals.append({"goal": "escape", "eid": eid,
+                          "why": f"{eid} под ударом ({info['угроза']} в {info['клеток']} клетках, "
+                                 f"{info['ходов']} ход.)"})
 
     # 1) снять неизвестность: сущности с неизвестным DoF, которые нам доступны
     for u in graph.unknowns():
@@ -185,6 +196,31 @@ def _path_found_city(goal: dict, graph: KnowledgeGraph, menu: dict) -> Optional[
                 source=goal["why"],
                 effect=("found_city", e.attrs.get("x") if e else None,
                         e.attrs.get("y") if e else None))
+
+
+def _path_escape(goal: dict, graph: KnowledgeGraph, menu: dict,
+                 avoid: Optional[Callable[[str, str], bool]] = None) -> Optional[Path]:
+    """Выйти из-под удара: шаги движения предлагаются ВСЕ, выбор делает calculus.
+
+    Генератор не решает, куда идти (это была бы оценка). Он отдаёт все законные направления,
+    а calculus выбирает то, которое выводит сущность из досягаемости наблюдённой угрозы.
+    """
+    actor = goal["eid"].split(":", 1)[1]
+    opts = [o for o in _legal(graph, menu, "unit", actor) if o in threat.DIR8_MEASURED]
+    if avoid is not None:
+        opts = [o for o in opts if not avoid("unit", o)]
+    if not opts:
+        return None
+    # ПЛАН, а не один шаг (решение D2, до сих пор не использованное): измерено, что против
+    # угрозы со скоростью 3 один шаг из-под удара не выводит — выводят несколько шагов подряд
+    # в одном направлении. Исполняется первый шаг, план пересобирается каждый ход (D5).
+    steps = [_step(menu, "unit", actor, opts[0], 1, alternatives=opts)
+             for _ in range(MAX_DEPTH)]
+    return Path(goal="escape", kind="цель",
+                steps=steps,
+                expectation="выход из-под удара: сохранить слагаемое ln(DoF) сущности "
+                            "(миникас, аксиома 5)",
+                source=goal["why"], effect=("escape", actor))
 
 
 def _path_channel(goal: dict, graph: KnowledgeGraph, menu: dict,
@@ -270,7 +306,8 @@ def generate(graph: KnowledgeGraph, menu: dict, own_id: int = 0,
     paths: list[Path] = []
     for kind in GOAL_ORDER:
         for g in by_kind.get(kind, []):
-            p = (_path_unknown(g, graph, menu) if kind == "unknown"
+            p = (_path_escape(g, graph, menu, avoid=avoid) if kind == "escape"
+                 else _path_unknown(g, graph, menu) if kind == "unknown"
                  else _path_found_city(g, graph, menu) if kind == "found_city"
                  else _path_channel(g, graph, menu, avoid=avoid) if kind == "channel"
                  else None)
