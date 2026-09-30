@@ -17,6 +17,26 @@ from .families import action_family
 from .store import KnowledgeStore
 
 
+def _foreign_summary(graph) -> dict:
+    """Что мы ВИДИМ из чужого: сколько и с какой атакой. Нужно, чтобы отличить
+    «угрозы нет» от «угрозы не видно».
+
+    Считаем ДВА независимых канала: секцию `unit` (паспорта видимых юнитов) и карту мира
+    `map.unit_owner` (клетка -> владелец юнита). Если второй показывает чужого, а первый нет —
+    значит ошибка в сенсоре, а не «на карте никого».
+    """
+    from . import threat
+    units = [e for e in graph.by_kind("unit") if not e.is_own]
+    by_attack: dict[str, int] = {}
+    for e in units:
+        a = e.attrs.get("type_attack_strength")
+        by_attack[str(a)] = by_attack.get(str(a), 0) + 1
+    owners = dict((graph.world or {}).get("владельцы_юнитов") or {})
+    return {"юнитов": len(units), "по_атаке": by_attack,
+            "угроз": len(threat.threats(graph)),
+            "владельцы_по_карте": owners}
+
+
 class Agent:
     def __init__(self, store_path: str | Path, trace_path: str | Path | None = None,
                  avoid=None, growth_path: str | Path | None = None) -> None:
@@ -113,6 +133,7 @@ class Agent:
             "причина": decision.trace["reason"],
             "индекс": decision.trace["index_current"],
             "риск": decision.trace.get("риск"),
+            "чужое": _foreign_summary(g),
             "кальк_включено": len(decision.trace["calc_included"]),
             "кальк_исключено": decision.trace["calc_excluded"],
             "кандидаты": [{"эффект": c["path"]["effect"], "net_delta": c["net_delta"],

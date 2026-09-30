@@ -59,16 +59,34 @@ def cheb(ax: int, ay: int, bx: int, by: int, xsize: int) -> int:
     return max(dx, abs(ay - by))
 
 
+def attack_of(graph: KnowledgeGraph, e) -> tuple[Optional[float], str]:
+    """Атака чужой сущности: измеренная, если мир отдал паспорт; иначе — средняя по известным.
+
+    ИЗМЕРЕНО: секция `unit` содержит только своих, а чужой виден лишь через `map.unit_owner`,
+    без паспорта. Тогда атака неизвестна, и по правилу «неизвестное — средним по известным, не
+    нулём» берётся средняя по известным типам; если и типов ещё нет — угроза не считается
+    (нечем), но и не «ноль»: возвращается `None` с причиной.
+    """
+    a = e.attrs.get("type_attack_strength")
+    if isinstance(a, (int, float)):
+        return float(a), "измерено (паспорт типа)"
+    mean_a, n = graph.mean_attack()
+    if mean_a is None:
+        return None, f"неизвестна и известных типов нет (n={n})"
+    return mean_a, f"выведено: среднее по {n} известным типам (незнание ≠ ноль)"
+
+
 def threats(graph: KnowledgeGraph) -> list[dict]:
-    """T1: наблюдённые чужие сущности с атакой."""
+    """T1: чужие сущности с атакой. Мирные чужие угрозой не считаются."""
     out = []
     for e in graph.by_kind("unit"):
         if e.is_own or e.attrs.get("x") is None:
             continue
-        a = e.attrs.get("attack")
-        if isinstance(a, (int, float)) and a > 0:
+        a, origin = attack_of(graph, e)
+        if a is not None and a > 0:
             out.append({"eid": e.eid, "attack": float(a), "x": e.attrs["x"], "y": e.attrs["y"],
-                        "move_rate": e.attrs.get("move_rate") or 1})
+                        "move_rate": e.attrs.get("type_move_rate") or 1,
+                        "происхождение_атаки": origin})
     return out
 
 

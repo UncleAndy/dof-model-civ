@@ -195,6 +195,22 @@ class KnowledgeGraph:
                                 attrs=dict(e.attrs)))
         return g
 
+    def mean_attack(self) -> tuple[Optional[float], int]:
+        """Средняя атака по ИЗВЕСТНЫМ типам юнитов. Нужна для чужих, чей паспорт мир не отдаёт.
+
+        Правило пользователя: неизвестное моделировать средним по известным, НЕ нулём
+        («незнание ≠ отсутствие возможностей»). Иначе чужой юнит на карте выглядел бы безобидным
+        ровно потому, что мы о нём ничего не знаем.
+        """
+        vals = []
+        for t in self.by_kind("unit_type"):
+            a = t.attrs.get("attack_strength")
+            if isinstance(a, (int, float)):
+                vals.append(float(a))
+        if not vals:
+            return None, 0
+        return sum(vals) / len(vals), len(vals)
+
     def unknowns(self) -> list[dict]:
         """Открытые вопросы, ВЫВЕДЕННЫЕ из самого графа (не список, написанный человеком).
 
@@ -343,6 +359,26 @@ def build_graph(obs: dict, available: dict, own_id: int = 0,
     menu = sensors.read_menu(available)
     g.world = {"xsize": w.xsize, "ysize": w.ysize, "area": w.area(),
                "n_players": len(w.players), "own_id": own_id}
+    # Второй, независимый канал о чужих: карта мира «клетка -> владелец юнита». Нужен, чтобы
+    # отличить «на карте никого» от «сенсор не читает чужого» (измерено: секция `unit` давала
+    # ноль чужих за 110 ходов — без этого счётчика нельзя понять, мир молчит или сенсор слеп).
+    _own_counts: dict[str, int] = {}
+
+    def _count_owners(_node) -> None:
+        if isinstance(_node, (list, tuple)):
+            for _x in _node:
+                _count_owners(_x)
+            return
+        if _node is None:
+            return
+        try:
+            _k = str(int(_node))
+        except (TypeError, ValueError):
+            _k = str(_node)
+        _own_counts[_k] = _own_counts.get(_k, 0) + 1
+
+    _count_owners(sensors._as_list(w.unit_owner))
+    g.world["владельцы_юнитов"] = _own_counts
     g.rules = dict(w.rules)
     g.observations += 1
 
@@ -448,6 +484,33 @@ def build_graph(obs: dict, available: dict, own_id: int = 0,
         e.dof = Value.unknown(source="аналогия:город",
                               note="чужой город: аналогия по размеру не реализована")
         g.add_edge(Edge(src=eid, dst=f"player:{c.owner}", kind="belongs_to"))
+
+    # --- чужие юниты, видимые ТОЛЬКО на карте ---
+    # ИЗМЕРЕНО: секция `unit` содержит только СВОИХ (за 110 ходов — ноль чужих), а карта мира
+    # `map.unit_owner` (клетка -> владелец юнита) чужих показывает (наблюдены владельцы 1, 2, 3).
+    # Поэтому чужой юнит входит в граф через карту. Паспорт при этом не отдаётся: тип, атака и
+    # скорость неизвестны. По правилу «неизвестное моделировать средним по известным, НЕ нулём»
+    # атака такого юнита берётся средней по известным типам и помечается как выведенная
+    # (см. `threat.attack_of`) — иначе чужой выглядел бы безобидным.
+    _uo = sensors._as_list(w.unit_owner)
+    _seen = {(e.attrs.get("owner"), e.attrs.get("x"), e.attrs.get("y"))
+             for e in g.by_kind("unit") if not e.is_own}
+    for _x, _col in enumerate(_uo):
+        for _y, _o in enumerate(_col if isinstance(_col, (list, tuple)) else [_col]):
+            try:
+                _owner = int(_o)
+            except (TypeError, ValueError):
+                continue
+            if _owner in (255, own_id) or (_owner, _x, _y) in _seen:
+                continue
+            _eid = f"unit:{_owner}@{_x},{_y}"
+            g.ensure(_eid, "unit", owner=_owner, is_own=False, name=None)
+            _e = g.entity(_eid)
+            _e.attrs.update({"x": _x, "y": _y, "moves_left": None,
+                             "type_attack_strength": None, "type_defense_strength": None,
+                             "type_move_rate": None, "источник": "карта:unit_owner"})
+            _e.dof = _analogy_dof(g, _e.attrs, None)
+            g.add_edge(Edge(src=_eid, dst=f"player:{_owner}", kind="belongs_to"))
 
     # --- каналы управления: меню секций (кроме unit) ---
     for section, actors in menu.items():
