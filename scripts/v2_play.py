@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+import json
 import os
 import signal
 import sys
@@ -69,13 +70,18 @@ def play(agent: Agent, seed: int, port: int, turns: int) -> dict:
 
     used: set = set()
     played = 0
+    actions = 0
+    turns_without_action = 0
     terminated = truncated = False
     try:
         for _ in range(turns):
+            acted_this_turn = False
             for _ in range(MAX_DECISIONS_PER_TURN):
                 action = agent.decide(obs, info, own_id, used)
                 if action is None:
                     break
+                acted_this_turn = True
+                actions += 1
                 used.add((action[0], action[1]))
                 obs, _r, terminated, truncated, info = step(env, action)
                 agent.record_outcome(obs, own_id)
@@ -87,6 +93,8 @@ def play(agent: Agent, seed: int, port: int, turns: int) -> dict:
             agent.record_outcome(obs, own_id)
             used.clear()
             played += 1
+            if not acted_this_turn:
+                turns_without_action += 1
             if terminated or truncated:
                 break
     except StepTimeout:
@@ -106,9 +114,21 @@ def play(agent: Agent, seed: int, port: int, turns: int) -> dict:
     me = players.get(str(own_id)) or players.get(own_id) or {}
     cities = [c for c in ((obs or {}).get("city") or {}).values() if c.get("owner") == own_id]
     units = [u for u in ((obs or {}).get("unit") or {}).values() if u.get("owner") == own_id]
+
+    # снимок конца партии: по нему можно разбирать решения на состоянии, которое уже выросло
+    dump = os.environ.get("V2_DUMP")
+    if dump:
+        from brain.v2.provenance import json_default
+        Path(dump).write_text(json.dumps(
+            {"seed": seed, "port": port, "my_id": own_id, "turn": (info or {}).get("turn"),
+             "observation": obs, "available_actions": (info or {}).get("available_actions") or {}},
+            ensure_ascii=False, default=json_default))
+        print(f"  [снимок] {dump}", flush=True)
+
     return {"seed": seed, "port": port, "ходов_сыграно": played, "счёт": me.get("score"),
             "городов": len(cities), "юнитов": len(units),
-            "золото": me.get("gold"), "наука_баллов": me.get("bulbs_researched")}
+            "золото": me.get("gold"), "наука_баллов": me.get("bulbs_researched"),
+            "действий": actions, "ходов_без_действия": turns_without_action}
 
 
 def main() -> int:

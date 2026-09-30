@@ -24,6 +24,8 @@ class Agent:
         self._pending = None          # шаг, отправленный в среду
         self._before = None           # снимок состояния до шага
         self._turn: Optional[int] = None
+        self._last_choice: Optional[tuple] = None   # (контроллер, актор, семейство)
+        self._last_index: Optional[float] = None    # индекс на момент прошлого выбора
 
     # ---------------------------------------------------------------- решение
     def decide(self, obs: dict, info: dict, own_id: int,
@@ -41,7 +43,15 @@ class Agent:
         paths, open_goals = generator.generate(g, menu, own_id, avoid=self.avoid)
 
         # 3) DOF-фильтр: индекс, NetDelta, выбор
-        decision = calculus.evaluate(g, paths, own_id)
+        # Исключаем: (а) акторов, которые уже действовали в этом ходу (конвенция civrealm — одно
+        # действие на актора за ход), (б) прошлый выбор, если состояние значимо не изменилось
+        # (измерено: без этого агент повторял `set_tech_goal` каждый ход).
+        cur_idx = calculus.index(g)["value"]
+        exclude = set(used_actors)
+        if (self._last_choice is not None and self._last_index is not None
+                and cur_idx == self._last_index):
+            exclude.add(self._last_choice)
+        decision = calculus.evaluate(g, paths, own_id, exclude=exclude)
         chosen = decision.chosen
         step = chosen.steps[0] if chosen is not None else None
 
@@ -76,7 +86,11 @@ class Agent:
 
         if step is None:
             self.journal.empty_turns += 1
+            self._last_choice = None
+            self._last_index = cur_idx
             return None
+        self._last_choice = (step.ctrl, step.actor, action_family(step.action))
+        self._last_index = cur_idx
         return to_env_action(step)
 
     # ---------------------------------------------------------------- эффект

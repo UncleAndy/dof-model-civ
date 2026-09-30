@@ -34,6 +34,7 @@ from typing import Any, Callable, Iterable, Optional
 from metrics.reversibility import classify_reversibility
 
 from .families import action_family, family_counts
+from .horizon import is_noop
 from .knowledge import KnowledgeGraph
 
 MAX_PATHS = 5
@@ -51,10 +52,16 @@ class Step:
     action: str
     reversible: bool = True
     variants: int = 1          # сколько вариантов у этого семейства в меню
+    #: Все законные варианты семейства (кроме «ничего не меняющих»). Генератор их НЕ ранжирует:
+    #: выбор варианта — работа calculus, иначе представитель по алфавиту решает за модель
+    #: (измерено: канал tech получал `Alphabet`, который не открывает ничего, и агент простаивал).
+    alternatives: list = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {"ctrl": self.ctrl, "actor": self.actor, "action": self.action,
-                "reversible": self.reversible, "variants": self.variants}
+                "reversible": self.reversible, "variants": self.variants,
+                "alternatives": self.alternatives[:12],
+                "alternatives_total": len(self.alternatives)}
 
 
 @dataclass
@@ -130,9 +137,11 @@ def derive_goals(graph: KnowledgeGraph, menu: dict) -> list[dict]:
 
 # ---------------------------------------------------------------- пути к цели
 
-def _step(menu: dict, ctrl: str, actor: str, action: str, family_variants: int) -> Step:
+def _step(menu: dict, ctrl: str, actor: str, action: str, family_variants: int,
+          alternatives: Optional[list] = None) -> Step:
     return Step(ctrl=ctrl, actor=actor, action=action,
-                reversible=classify_reversibility(action), variants=family_variants)
+                reversible=classify_reversibility(action), variants=family_variants,
+                alternatives=list(alternatives or []))
 
 
 def _path_unknown(goal: dict, graph: KnowledgeGraph, menu: dict) -> Optional[Path]:
@@ -178,14 +187,22 @@ def _path_found_city(goal: dict, graph: KnowledgeGraph, menu: dict) -> Optional[
                         e.attrs.get("y") if e else None))
 
 
-def _path_channel(goal: dict, graph: KnowledgeGraph, menu: dict) -> Optional[Path]:
+def _path_channel(goal: dict, graph: KnowledgeGraph, menu: dict,
+                  avoid: Optional[Callable[[str, str], bool]] = None) -> Optional[Path]:
     ctrl, actor, opts = goal["ctrl"], goal["actor"], goal["options"]
     fam = family_counts(opts)
     # представитель семейства выбирается детерминированно; выбор внутри семейства —
     # вопрос ценности, и его решает проекция (её пока нет), поэтому здесь только пометка
-    a = opts[0]
+    real = [o for o in opts if not is_noop(graph, o)]
+    if avoid is not None:
+        # клины стенда вычитаем ДО выбора представителя: иначе путь целиком отбрасывался
+        # из-за того, что первым по алфавиту стоял клин (`city_buy_production`)
+        real = [o for o in real if not avoid(ctrl, o)]
+    if not real:
+        return None      # всё, что предлагает канал, уже стоит — путь ничего не меняет
+    a = real[0]
     return Path(goal="channel", kind="цель",
-                steps=[_step(menu, ctrl, actor, a, fam[action_family(a)])],
+                steps=[_step(menu, ctrl, actor, a, fam[action_family(a)], alternatives=real)],
                 expectation=f"канал {ctrl}: смена раскладки/цели; в семействе "
                             f"{action_family(a)} вариантов {fam[action_family(a)]}",
                 source=goal["why"],
@@ -208,8 +225,12 @@ def _path_probe(graph: KnowledgeGraph, menu: dict,
 
     `used` — занятые пары (актор, семейство) этого хода; `avoid` — внешний фильтр клинов.
     """
+    # Порядок контроллеров объявлен (структура, не оценка): сначала то, что действует на карте,
+    # затем ГОРОД (множитель: `produce_Settlers` создаёт новую сущность, `city_work_*` растит
+    # город), затем каналы игрока. Измерено: без `city` в этом списке рычаг города не пробовался
+    # ни разу, хотя мир его предлагал (`produce_Barracks`, `city_work_*`, 20–26 позиций).
     used = used or set()
-    for ctrl in ("unit", "gov", "tech", "player", "dipl"):
+    for ctrl in ("unit", "city", "gov", "tech", "player", "dipl"):
         actors = menu.get(ctrl) or {}
         for actor in sorted(actors, key=str):
             opts = _legal(graph, menu, ctrl, str(actor))
@@ -217,6 +238,8 @@ def _path_probe(graph: KnowledgeGraph, menu: dict,
                 fam = action_family(o)
                 if graph.effect_of(ctrl, fam) is not None:
                     continue                      # эффект уже наблюдён — не проба
+                if is_noop(graph, o):
+                    continue                      # ничего не меняет — не проба
                 if (str(actor), fam) in used or (ctrl, str(actor), fam) in used:
                     continue
                 if avoid is not None and avoid(ctrl, o):
@@ -249,7 +272,7 @@ def generate(graph: KnowledgeGraph, menu: dict, own_id: int = 0,
         for g in by_kind.get(kind, []):
             p = (_path_unknown(g, graph, menu) if kind == "unknown"
                  else _path_found_city(g, graph, menu) if kind == "found_city"
-                 else _path_channel(g, graph, menu) if kind == "channel"
+                 else _path_channel(g, graph, menu, avoid=avoid) if kind == "channel"
                  else None)
             if p is not None:
                 paths.append(p)

@@ -323,8 +323,12 @@ def build_graph(obs: dict, available: dict, own_id: int = 0,
     for pid, p in w.players.items():
         g.ensure(f"player:{pid}", "player", owner=pid, is_own=(pid == own_id), name=p.get("name"))
         e = g.entity(f"player:{pid}")
+        # Поля исследования берём целиком: они опубликованы миром и нужны горизонтной проекции
+        # (сколько ходов до технологии), а не выдумываются.
         e.attrs.update({k: p.get(k) for k in
-                        ("is_alive", "score", "nation", "government_name", "gold")})
+                        ("is_alive", "score", "nation", "government_name", "gold",
+                         "science", "science_cost", "researching", "researching_cost",
+                         "bulbs_researched", "research_name", "tax", "luxury")})
 
     # --- технологии и то, что они открывают (скелет публикует мир) ---
     for tid, t in (obs.get("tech") or {}).items():

@@ -25,7 +25,10 @@ import math
 from dataclasses import dataclass
 from typing import Any, Optional
 
+from metrics.reversibility import classify_reversibility
+
 from .families import action_family
+from .horizon import production_gain, research_gain
 from .knowledge import KnowledgeGraph
 from .projection import project
 
@@ -110,57 +113,107 @@ class Decision:
     trace: dict
 
 
-def evaluate(graph: KnowledgeGraph, paths: list, own_id: int = 0) -> Decision:
-    """Шаги 3–4 спеки: индекс, NetDelta по каждому пути, выбор. Пишет протокол."""
+def _option_net(graph: KnowledgeGraph, cur_v, ctrl: str, action: str) -> dict:
+    """NetDelta одного конкретного действия (варианта семейства)."""
+    fam = action_family(action)
+    proj = project(graph, ctrl, fam)
+    net: Optional[float] = None
+    why = proj.source
+    if proj.known and cur_v is not None:
+        delta = 0.0
+        for kind, n in (proj.new_entities or {}).items():
+            imp, _cnt = impute(graph, kind)
+            if imp and imp > 0:
+                delta += n * math.log(imp)
+            else:
+                delta = None
+                why = f"появится {kind}, но его DoF неизвестен — считать нечем"
+                break
+        if delta is not None:
+            for kind, n in (proj.lost_entities or {}).items():
+                imp, _ = impute(graph, kind)
+                if imp and imp > 0:
+                    delta -= n * math.log(imp)
+            # Рост меню города — это рост DoF города, и он ИЗМЕРЕН (число разрешённых позиций).
+            k = int((proj.changes or {}).get("city_buildable_delta", 0) or 0)
+            if k:
+                own = [e for e in graph.by_kind("city") if e.is_own]
+                vals = [d for d, _ in (dof_of(graph, e) for e in own) if d and d > 0]
+                if vals:
+                    v = sorted(vals)[len(vals) // 2]
+                    if v + k > 0:
+                        delta += math.log(v + k) - math.log(v)
+                        why = f"меню города: +{k} позиций (измерено)"
+            # Отложенная отдача: горизонт на числах, опубликованных миром.
+            # Только `research_tech`: измерено, что он реально меняет `researching`, а
+            # `set_tech_goal` мир в состоянии НЕ отражает (эффект пуст) — начислять за него
+            # выигрыш значило бы выдумывать отдачу, которой мир не даёт.
+            if fam == "research_tech":
+                g_h, why_h = research_gain(graph, action)
+                if g_h > 0:
+                    delta += g_h
+                    why = why_h
+                elif why_h:
+                    why = why_h
+            # Постройка в городе: срок опубликован миром, появление сущности измерено.
+            if fam == "produce":
+                g_p, why_p = production_gain(graph, action)
+                if g_p > 0:
+                    delta += g_p
+                    why = why_p
+                elif why_p:
+                    why = why_p
+            net = delta - DT_DECLARED
+    creates = bool(proj.new_entities) if proj.known else False
+    return {"action": action, "net_delta": net, "why": why, "projection": proj.to_dict(),
+            "multiplier": creates}
+
+
+def evaluate(graph: KnowledgeGraph, paths: list, own_id: int = 0,
+             exclude: Optional[set] = None) -> Decision:
+    """Шаги 3–4 спеки: индекс, NetDelta по каждому пути, выбор. Пишет протокол.
+
+    Варианты внутри семейства выбирает **calculus**, а не генератор: берём вариант с наибольшим
+    положительным NetDelta; если положительных нет — оставляем объявленный порядок (среди
+    непобеждающих вариантов модель не ранжирует: это была бы оценка, а не расчёт).
+
+    `exclude` — пути, которые запрещено повторять: агент передаёт прошлый выбор, когда состояние
+    значимо не изменилось (иначе решение зацикливается, что и было измерено).
+    """
     cur = index(graph)
     cur_v = cur["value"]
+    exclude = exclude or set()
 
     candidates: list[dict] = []
     best = None
     best_net = None
-    multiplier = None          # путь, создающий новую сущность (множитель DoF)
+    multiplier = None
 
     for p in paths:
         step = p.steps[0]
-        fam = action_family(step.action)
-        proj = project(graph, step.ctrl, fam)
-        net: Optional[float] = None
-        why = proj.source
-        if proj.known and cur_v is not None:
-            delta = 0.0
-            for kind, n in (proj.new_entities or {}).items():
-                imp, cnt = impute(graph, kind)
-                if imp and imp > 0:
-                    delta += n * math.log(imp)
-                else:
-                    delta = None
-                    why = f"появится {kind}, но его DoF неизвестен — считать нечем"
-                    break
-            if delta is not None:
-                for kind, n in (proj.lost_entities or {}).items():
-                    imp, _ = impute(graph, kind)
-                    if imp and imp > 0:
-                        delta -= n * math.log(imp)
-                # Рост меню города — это рост DoF города, и он ИЗМЕРЕН (число разрешённых
-                # позиций постройки). Без этого индекс слеп к тому, что даёт технология.
-                k = int((proj.changes or {}).get("city_buildable_delta", 0) or 0)
-                if k:
-                    own = [e for e in graph.by_kind("city") if e.is_own]
-                    vals = [d for d, _ in (dof_of(graph, e) for e in own) if d and d > 0]
-                    if vals:
-                        v = sorted(vals)[len(vals) // 2]
-                        if v + k > 0:
-                            delta += math.log(v + k) - math.log(v)
-                            why = f"меню города: +{k} позиций (измерено)"
-                net = delta - DT_DECLARED
-        # множитель: путь, по наблюдённому эффекту создающий НОВУЮ сущность. Немедленный индекс
-        # такое обычно не оценивает (юнит с 6 возможностями превращается в город с 2 — сумма
-        # падает), но аксиома 6 велит предпочитать то, что умножает способность порождать новое.
-        creates_entity = bool(proj.new_entities) if proj.known else False
-        if creates_entity and multiplier is None:
+        alts = step.alternatives or [step.action]
+        results = [_option_net(graph, cur_v, step.ctrl, a) for a in alts[:120]]
+        positive = [r for r in results if r["net_delta"] is not None and r["net_delta"] > 0]
+        pick = max(positive, key=lambda r: r["net_delta"]) if positive else results[0]
+        # Исключение проверяем ПОСЛЕ выбора варианта: иначе оно не срабатывало, потому что
+        # сверялось с представителем по алфавиту, а не с тем, что реально было выбрано.
+        if ((step.ctrl, step.actor) in exclude
+                or (step.ctrl, step.actor, action_family(pick["action"])) in exclude):
+            candidates.append({"path": p.to_dict(), "projection": None, "net_delta": None,
+                               "why": "исключён: актор уже действовал или повтор без изменения",
+                               "multiplier": False, "исключён": True})
+            continue
+        if pick["action"] != step.action:
+            step.action = pick["action"]
+            step.reversible = classify_reversibility(pick["action"])
+        net = pick["net_delta"]
+        why = pick["why"]
+        if pick["multiplier"] and multiplier is None:
             multiplier = p
-        candidates.append({"path": p.to_dict(), "projection": proj.to_dict(),
-                           "net_delta": net, "why": why, "multiplier": creates_entity})
+        candidates.append({"path": p.to_dict(), "projection": pick["projection"],
+                           "net_delta": net, "why": why, "multiplier": pick["multiplier"],
+                           "вариантов_рассмотрено": len(results),
+                           "лучший_вариант": pick["action"] if positive else None})
         if net is not None and net > 0 and (best_net is None or net > best_net):
             best, best_net = p, net
 
@@ -175,6 +228,9 @@ def evaluate(graph: KnowledgeGraph, paths: list, own_id: int = 0) -> Decision:
         best = probes[0] if probes else None
         reason = ("нет пути с NetDelta > 0 → ход тратится на прирост знания (аксиома 5)"
                   if best is not None else "нет ни полезного пути, ни пробы → закрыть ход")
+
+    for p in paths:
+        p.irreversible = any(not s.reversible for s in p.steps)
 
     trace = {
         "index_current": cur_v,
