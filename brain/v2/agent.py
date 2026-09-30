@@ -53,6 +53,7 @@ class Agent:
         self._experiment = None
         self._pending = None          # шаг, отправленный в среду
         self._before = None           # снимок состояния до шага
+        self._before_foe = None       # снимок ЧУЖОЙ стороны: из него считается исход боя
         self._turn: Optional[int] = None
         self._last_choice: Optional[tuple] = None   # (контроллер, актор, семейство)
         self._last_index: Optional[float] = None    # индекс на момент прошлого выбора
@@ -99,6 +100,7 @@ class Agent:
                             reversible=True, variants=1, alternatives=[exp.action])
                 self._pending = step
                 self._before = effects.snapshot(obs, own_id)
+                self._before_foe = effects.foe_snapshot(obs, own_id)
                 self._turn = turn
                 self.journal.write({"ход": turn, "опыт": exp.to_dict(),
                                     "продолжение": exp.action})
@@ -127,6 +129,7 @@ class Agent:
 
         self._pending = step
         self._before = effects.snapshot(obs, own_id)
+        self._before_foe = effects.foe_snapshot(obs, own_id)
         self._turn = (info or {}).get("turn")
 
         declared = None
@@ -146,6 +149,7 @@ class Agent:
             "риск": decision.trace.get("риск"),
             "чужое": _foreign_summary(g),
             "источники_коллапса": g.collapse_sources((g.world or {}).get("ход")),
+            "бои": g.fight_stats(),
             "кальк_включено": len(decision.trace["calc_included"]),
             "кальк_исключено": decision.trace["calc_excluded"],
             "кандидаты": [{"эффект": c["path"]["effect"], "net_delta": c["net_delta"],
@@ -161,6 +165,7 @@ class Agent:
                     self._experiment = exp
                     self._pending = st
                     self._before = effects.snapshot(obs, own_id)
+                    self._before_foe = effects.foe_snapshot(obs, own_id)
                     self._turn = turn
                     self.journal.write({"ход": turn, "опыт_начат": exp.to_dict()})
                     return to_env_action(st)
@@ -239,9 +244,21 @@ class Agent:
         else:
             ctrl, fam = "turn", "advance"
             example = {"действие": "закрытие хода", "ход": self._turn}
+        # ИСХОД БОЯ (измерение §10.74): мир публикует, кого потеряли и кто ранен с ОБЕИХ сторон.
+        # Пишем только для ударных семейств: для остальных чужая сторона не при чём.
+        if fam in ("attack", "conquer_city") and self._before_foe is not None:
+            fight = effects.fight_diff(self._before, after, self._before_foe,
+                                       effects.foe_snapshot(obs, own_id))
+            if fight:
+                rec = {"ход": self._turn, "актор": getattr(step, "actor", None),
+                       "действие": getattr(step, "action", None), **fight}
+                self.store.graph.note_observation("бой", rec)
+                self.journal.write({"ход": self._turn, "бой": rec})
+
         self.store.graph.record_effect(ctrl, fam, changes, example)
         self._pending = None
         self._before = None
+        self._before_foe = None
         return changes
 
     # ---------------------------------------------------------------- партия

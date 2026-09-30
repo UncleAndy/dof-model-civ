@@ -240,6 +240,22 @@ class KnowledgeGraph:
             return None, 0
         return sum(vals) / len(vals), len(vals)
 
+    def fight_stats(self) -> dict[str, int]:
+        """Исходы НАШИХ боёв — измеренные факты (кто потерян, кто ранен с обеих сторон).
+
+        Нужны, чтобы оценить ответный удар ЧИСЛОМ, а не предположением. Пока боёв мало,
+        статистика не даёт права на оценку (см. `calculus.MIN_FIGHTS`).
+        """
+        recs = [r for r in (self.observed.get("бой") or []) if isinstance(r, dict)]
+        return {
+            "n": len(recs),
+            "наш_потерян": sum(1 for r in recs if r.get("наш_потерян")),
+            "наш_ранен": sum(1 for r in recs if r.get("наш_ранен")),
+            "чужой_исчез": sum(1 for r in recs if r.get("чужой_исчез")),
+            "чужой_ранен": sum(1 for r in recs if r.get("чужой_ранен")),
+            "ходы": [r.get("ход") for r in recs][-10:],
+        }
+
     def unknowns(self) -> list[dict]:
         """Открытые вопросы, ВЫВЕДЕННЫЕ из самого графа (не список, написанный человеком).
 

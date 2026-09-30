@@ -40,6 +40,10 @@ CALC_KINDS = ("unit", "city", "controller")
 #: ΔT (энтропия переключения). Объявлено: 0.0 — прерывать пока нечего.
 DT_DECLARED = 0.0
 
+#: Минимум наблюдённых боёв, при котором удару можно давать цену. **Объявлено ДО данных**:
+#: по одному бою исход оценивать нельзя — это была бы подгонка под случай.
+MIN_FIGHTS = 5
+
 
 def _family_dof(e) -> Optional[float]:
     """Семейный DoF сущности, если он измерен."""
@@ -212,6 +216,21 @@ def _option_net(graph: KnowledgeGraph, cur_v, ctrl: str, action: str,
                     delta += g_m
                     why = why_m
                     gained = True
+            if fam == "attack":
+                st = graph.fight_stats()
+                if st["n"] < MIN_FIGHTS:
+                    why = (f"удар по источнику коллапса: боёв наблюдено {st['n']} < {MIN_FIGHTS} "
+                           f"— оценивать нечем (по одному бою цену не даём)")
+                else:
+                    pose = st["чужой_исчез"] / st["n"]
+                    lose = st["наш_потерян"] / st["n"]
+                    g_a, why_a = threat.strike_gain(graph, ctrl, action, str(actor), dof_of,
+                                                    pose, lose, sw)
+                    if why_a:
+                        why = why_a
+                    if g_a > 0:
+                        delta += g_a
+                        gained = True
             if fam == "build_city":
                 g_f, why_f = threat.founding_risk(graph, action, str(actor), dof_of, impute, sw)
                 if g_f < 0:

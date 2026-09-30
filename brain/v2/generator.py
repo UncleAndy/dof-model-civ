@@ -42,11 +42,13 @@ from .knowledge import KnowledgeGraph
 MAX_PATHS = 5
 MIN_PATHS = 3
 MAX_DEPTH = 3
+#: Сколько путей ОДНОГО вида цели допускается до урезания коридора (объявлено).
+PER_KIND_CAP = 2
 
 #: порядок целей — структура, объявленная до данных (не оценка полезности).
 #: «выход из-под удара» первым: аксиома 3 (некомпенсация) — не дать сущности коллапсировать,
 #: это приоритетнее любого приобретения.
-GOAL_ORDER = ("escape", "unknown", "found_city", "channel", "probe")
+GOAL_ORDER = ("escape", "strike", "unknown", "found_city", "channel", "probe")
 
 
 @dataclass
@@ -118,6 +120,21 @@ def derive_goals(graph: KnowledgeGraph, menu: dict) -> list[dict]:
             goals.append({"goal": "escape", "eid": eid,
                           "why": f"{eid} под ударом ({info['угроза']} в {info['клеток']} клетках, "
                                  f"{info['ходов']} ход.)"})
+
+    # 0-бис) СНЯТЬ источник коллапса ударом: цель появляется, только если у нас есть юнит,
+    # СПОСОБНЫЙ бить (паспорт типа: attack > 0), стоящий вплотную к видимому источнику.
+    # Ценность удара считает calculus — по ИЗМЕРЕННЫМ исходам боёв, а не по догадке.
+    for src in threat.threats(graph):
+        for u in graph.by_kind("unit"):
+            if not u.is_own or u.attrs.get("x") is None:
+                continue
+            atk = u.attrs.get("type_attack_strength")
+            if not isinstance(atk, (int, float)) or atk <= 0:
+                continue
+            xsize = int((graph.world or {}).get("xsize") or 0)
+            if threat.cheb(u.attrs["x"], u.attrs["y"], src["x"], src["y"], xsize) <= 1:
+                goals.append({"goal": "strike", "eid": u.eid, "target": src["eid"],
+                              "why": f"{u.eid} может ударить по источнику коллапса {src['eid']}"})
 
     # 1) снять неизвестность: сущности с неизвестным DoF, которые нам доступны
     for u in graph.unknowns():
@@ -223,6 +240,27 @@ def _path_escape(goal: dict, graph: KnowledgeGraph, menu: dict,
                 source=goal["why"], effect=("escape", actor))
 
 
+def _path_strike(goal: dict, graph: KnowledgeGraph, menu: dict,
+                 avoid: Optional[Callable[[str, str], bool]] = None) -> Optional[Path]:
+    """Ударить по источнику коллапса: направления предлагаются все, выбор делает calculus.
+
+    `attack_N` — та же измеренная геометрия dir8, что и `goto_N` (код: `ActAttack(focus, dir8)`,
+    `mapstep(ptile, dir8)`). Все законные направления отдаются вариантами, а цена удара считается
+    calculus по ИЗМЕРЕННЫМ исходам наших боёв.
+    """
+    actor = goal["eid"].split(":", 1)[1]
+    opts = [o for o in _legal(graph, menu, "unit", actor) if o.startswith("attack_")]
+    if avoid is not None:
+        opts = [o for o in opts if not avoid("unit", o)]
+    if not opts:
+        return None
+    return Path(goal="strike", kind="цель",
+                steps=[_step(menu, "unit", actor, opts[0], 1, alternatives=opts)],
+                expectation="снять источник коллапса ударом: цена удара — по измеренным исходам "
+                            "боёв, а не по догадке",
+                source=goal["why"], effect=("strike", actor, goal.get("target")))
+
+
 def _path_channel(goal: dict, graph: KnowledgeGraph, menu: dict,
                   avoid: Optional[Callable[[str, str], bool]] = None) -> Optional[Path]:
     ctrl, actor, opts = goal["ctrl"], goal["actor"], goal["options"]
@@ -304,15 +342,23 @@ def generate(graph: KnowledgeGraph, menu: dict, own_id: int = 0,
         by_kind.setdefault(g["goal"], []).append(g)
 
     paths: list[Path] = []
+    #: Не более двух путей ОДНОГО вида цели до урезания коридора (объявлено). Измерено: пять
+    #: юнитов под ударом давали пять путей «выход», которые выдавливали из коридора удар по
+    #: источнику — и цель, у которой была ЧИСЛОМ посчитанная цена, не рассматривалась вовсе.
+    per_kind: dict[str, int] = {}
     for kind in GOAL_ORDER:
         for g in by_kind.get(kind, []):
+            if per_kind.get(kind, 0) >= PER_KIND_CAP:
+                break
             p = (_path_escape(g, graph, menu, avoid=avoid) if kind == "escape"
+                 else _path_strike(g, graph, menu, avoid=avoid) if kind == "strike"
                  else _path_unknown(g, graph, menu) if kind == "unknown"
                  else _path_found_city(g, graph, menu) if kind == "found_city"
                  else _path_channel(g, graph, menu, avoid=avoid) if kind == "channel"
                  else None)
             if p is not None:
                 paths.append(p)
+                per_kind[kind] = per_kind.get(kind, 0) + 1
 
     # «генуинно различные пути» (спека): пути с одинаковым ЭФФЕКТОМ — один путь, а не два.
     # Измерено: два Settlers в одной клетке давали два «разных» пути основания, которые на

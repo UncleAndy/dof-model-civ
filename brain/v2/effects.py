@@ -49,7 +49,10 @@ def snapshot(obs: dict, own_id: int = 0) -> dict[str, Any]:
     for uid, u in (obs.get("unit") or {}).items():
         if not isinstance(u, dict) or u.get("owner") != own_id:
             continue
-        units[str(uid)] = [u.get("type_rule_name"), u.get("x"), u.get("y"), u.get("moves_left")]
+        # 5-й элемент — здоровье: без него ранение (20 → 4) неотличимо от «ничего не было»,
+        # а исход боя без этого не измерить (измерено §10.74: ранение юнита не наблюдалось).
+        units[str(uid)] = [u.get("type_rule_name"), u.get("x"), u.get("y"), u.get("moves_left"),
+                           u.get("health")]
 
     cities: dict[str, list] = {}
     for cid, c in (obs.get("city") or {}).items():
@@ -103,6 +106,9 @@ def diff(before: dict, after: dict) -> dict[str, int]:
             bump("unit_type_changed")
         if isinstance(b[3], int) and isinstance(a[3], int) and a[3] != b[3]:
             bump("unit_moves_changed")
+        hb, ha = b[4] if len(b) > 4 else None, a[4] if len(a) > 4 else None
+        if isinstance(hb, int) and isinstance(ha, int) and ha != hb:
+            bump("unit_hurt" if ha < hb else "unit_healed", int(hb - ha))
     for uid in after["units"]:
         if uid not in before["units"]:
             bump("unit_new")
@@ -159,3 +165,69 @@ def new_and_lost(changes: dict[str, int]) -> tuple[dict[str, int], dict[str, int
     new = {k[:-4]: v for k, v in changes.items() if k.endswith("_new") and v > 0}
     lost = {k[:-5]: v for k, v in changes.items() if k.endswith("_lost") and v > 0}
     return new, lost
+
+
+# ---------------------------------------------------------------- бой
+
+def foe_snapshot(obs: dict, own_id: int = 0) -> dict[str, list]:
+    """Снимок ЧУЖОЙ стороны: видимые чужие юниты по клеткам.
+
+    Отдельный снимок, а не расширение нашего: эффект нашего перехода должен оставаться чистым
+    (чужие действия в наш снимок не попадают). Здесь фиксируется только НАБЛЮДЕНИЕ — кто стоит
+    на клетке и с каким здоровьем, — из чего считается исход боя.
+    """
+    foe: dict[str, list] = {}
+    for uid, u in (obs.get("unit") or {}).items():
+        if not isinstance(u, dict) or u.get("owner") == own_id:
+            continue
+        foe[f"u{uid}@{u.get('x')},{u.get('y')}"] = [u.get("owner"), u.get("x"), u.get("y"),
+                                                    u.get("health"), u.get("type_rule_name")]
+    uo = (obs.get("map") or {}).get("unit_owner")
+    try:
+        cols = _seq(uo)
+    except TypeError:
+        cols = []
+    for x, col in enumerate(cols):
+        for y, o in enumerate(_seq(col)):
+            try:
+                owner = int(o)
+            except (TypeError, ValueError):
+                continue
+            if owner in (255, own_id):
+                continue
+            key = f"m{owner}@{x},{y}"
+            if any(v[0] == owner and v[1] == x and v[2] == y for v in foe.values()):
+                continue
+            foe[key] = [owner, x, y, None, None]
+    return foe
+
+
+def fight_diff(own_before: dict, own_after: dict, foe_before: dict,
+               foe_after: dict) -> dict[str, int]:
+    """Исход боя по измеренным фактам: кто потерян, кто ранен — с обеих сторон.
+
+    Это ФАКТЫ наблюдения, не вывод. Толкование («это была победа/поражение») делается выше и
+    помечается как выведенное.
+    """
+    ch: dict[str, int] = {}
+
+    def bump(k: str, n: int = 1) -> None:
+        ch[k] = ch.get(k, 0) + n
+
+    for uid, b in (own_before.get("units") or {}).items():
+        a = (own_after.get("units") or {}).get(uid)
+        if a is None:
+            bump("наш_потерян")
+            continue
+        hb, ha = (b[4] if len(b) > 4 else None), (a[4] if len(a) > 4 else None)
+        if isinstance(hb, int) and isinstance(ha, int) and ha < hb:
+            bump("наш_ранен")
+    for key, b in foe_before.items():
+        if key not in foe_after:
+            # чужой исчез с той же клетки: либо убит, либо ушёл (уточняется видимостью клетки)
+            bump("чужой_исчез")
+        else:
+            hb, ha = b[3], foe_after[key][3]
+            if isinstance(hb, int) and isinstance(ha, int) and ha < hb:
+                bump("чужой_ранен")
+    return ch

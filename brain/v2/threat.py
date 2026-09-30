@@ -51,6 +51,20 @@ DIR8_MEASURED = {
 STRIKE_TURNS = 1.0
 
 
+def offset_of(action: str) -> Optional[tuple[int, int]]:
+    """Смещение действия по измеренной таблице dir8 — для `goto_N` И `attack_N`.
+
+    Измерено: `attack_N` (`ActAttack(focus, dir8)`, `mapstep`) — та же геометрия, что у `goto_N`.
+    """
+    name = str(action)
+    if "_" not in name:
+        return None
+    head, _, tail = name.rpartition("_")
+    if head not in ("goto", "attack") or not tail.isdigit():
+        return None
+    return DIR8_MEASURED.get(f"goto_{tail}")
+
+
 def cheb(ax: int, ay: int, bx: int, by: int, xsize: int) -> int:
     """Расстояние Чебышёва с замыканием X (карта-цилиндр, wrap_id=1)."""
     dx = abs(ax - bx)
@@ -185,6 +199,66 @@ def movement_gain(graph: KnowledgeGraph, ctrl: str, action: str, actor: str,
     return math.log(v), (f"{action} ×{steps_count}: выходим из-под удара "
                          f"({before[e.eid]['угроза']} в {before[e.eid]['клеток']} клетках) → "
                          f"сохраняем DoF {v:g} (миникас, аксиома 5)")
+
+
+def source_price(graph: KnowledgeGraph, src_eid: str, dof_of,
+                 tau: float = STRIKE_TURNS) -> tuple[float, list[str]]:
+    """Сколько риска держит ИМЕННО этот источник: сумма ln(DoF) наших сущностей под его ударом.
+
+    Это цена, которая исчезнет, если источник снять. Считается по измеренным расстояниям и DoF.
+    """
+    price = 0.0
+    who: list[str] = []
+    for eid, info in exposure(graph, tau).items():
+        if info.get("угроза") != src_eid:
+            continue
+        e = graph.entity(eid)
+        if e is None:
+            continue
+        v, _origin = dof_of(graph, e)
+        if v and v > 0:
+            price += math.log(v)
+            who.append(eid)
+    return price, who
+
+
+def strike_gain(graph: KnowledgeGraph, ctrl: str, action: str, actor: str, dof_of,
+                pose: float, lose: float, tau: float = STRIKE_TURNS) -> tuple[float, str]:
+    """Цена удара по источнику коллапса — по ИЗМЕРЕННЫМ исходам наших боёв.
+
+    `pose` — доля боёв, где чужой исчез; `lose` — доля боёв, где потерян наш юнит (обе дроби
+    измерены, а не назначены). Цена удара = `pose` × (риск, который держит источник)
+    − `lose` × ln(DoF нашего юнита). Если направления не видно или источника рядом нет —
+    удара нет, и это не «ноль», а «нечего считать».
+    """
+    if ctrl != "unit":
+        return 0.0, ""
+    off = offset_of(action)
+    if off is None:
+        return 0.0, ""
+    e = graph.entity(f"unit:{actor}")
+    if e is None or e.attrs.get("x") is None:
+        return 0.0, ""
+    xsize = int((graph.world or {}).get("xsize") or 0)
+    tx = (e.attrs["x"] + off[0]) % xsize if xsize else e.attrs["x"] + off[0]
+    ty = e.attrs["y"] + off[1]
+    src = None
+    for t in threats(graph):
+        if t["x"] == tx and t["y"] == ty:
+            src = t
+            break
+    if src is None:
+        return 0.0, ""
+    held, who = source_price(graph, src["eid"], dof_of, tau)
+    v, _ = dof_of(graph, e)
+    if not v or v <= 0:
+        return 0.0, (f"{action}: ударить можно, но DoF нашего юнита неизвестен — считать нечем")
+    gain = pose * held - lose * math.log(v)
+    why = (f"{action}: удар по источнику {src['eid']} — по измеренным боям: чужой исчезал в "
+           f"{pose:.2f} случаев, наш юнит терялся в {lose:.2f}; риск источника "
+           f"{held:+.3f} ({len(who)} сущностей), цена нашей потери {math.log(v):.3f} "
+           f"→ {gain:+.3f}")
+    return gain, why
 
 
 def founding_risk(graph: KnowledgeGraph, action: str, actor: str,
