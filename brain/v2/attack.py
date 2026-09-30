@@ -37,13 +37,20 @@ OWN_CONSUMES = ("build_city", "join_city")
 
 
 def own_state(obs: dict, own_id: int) -> dict:
-    """Полный срез нашего: юниты (позиция, здоровье) и города (позиция)."""
-    st: dict = {"units": {}, "cities": {}}
+    """Полный срез: наши юниты (позиция, здоровье), наши города и ВИДИМЫЕ чужие.
+
+    Чужая часть нужна, чтобы измерять исход боя, начатого врагом: это тоже бой, та же пара сил и
+    те же правила, поэтому он годится как измерение (иначе об исходе боя не узнать никогда).
+    """
+    st: dict = {"units": {}, "cities": {}, "foe": {}}
     for u in sensors.own_actors(obs, own_id):
         st["units"][str(u.aid)] = {"x": u.x, "y": u.y,
                                    "health": (u.attrs or {}).get("health")}
     for c in sensors.own_cities(obs, own_id):
         st["cities"][str(c.cid)] = {"x": c.x, "y": c.y}
+    st["foe"] = {f["eid"]: {"owner": f.get("owner"), "x": f.get("x"), "y": f.get("y"),
+                            "health": f.get("health")}
+                 for f in _visible_foreign(obs, own_id)}
     return st
 
 
@@ -52,7 +59,8 @@ def _visible_foreign(obs: dict, own_id: int) -> list[dict]:
     out = []
     for a in sensors.foreign_actors(obs, own_id):
         out.append({"eid": f"unit:{a.aid}", "owner": a.owner, "x": a.x, "y": a.y,
-                    "name": a.type_name, "источник": "наблюдение:unit"})
+                    "name": a.type_name, "health": (a.attrs or {}).get("health"),
+                    "источник": "наблюдение:unit"})
     w = sensors.read_world(obs, own_id)
     uo = sensors._as_list(w.unit_owner)
     seen = {(u["owner"], u["x"], u["y"]) for u in out}
@@ -65,7 +73,7 @@ def _visible_foreign(obs: dict, own_id: int) -> list[dict]:
             if owner in (255, own_id) or (owner, x, y) in seen:
                 continue
             out.append({"eid": f"unit:{owner}@{x},{y}", "owner": owner, "x": x, "y": y,
-                        "name": None, "источник": "карта:unit_owner"})
+                        "name": None, "health": None, "источник": "карта:unit_owner"})
     return out
 
 
@@ -123,9 +131,23 @@ def observe_slice(graph: KnowledgeGraph, obs: dict, own_id: int, turn: Optional[
             graph.note_observation("нападение", {"ход": turn, "вид": v["вид"],
                                                  "как": v["как"], "нападающий": None})
             continue
+        now_foe = {x["eid"] for x in foreign}
         for f in adj:
             why = (f"нападение наблюдено: наш {v['вид']} {v['как']} на "
                    f"({v['x']},{v['y']}), чужой {f['eid']} стоял вплотную")
+            # ИСХОД БОЯ, начатого врагом: измерение (та же пара сил, те же правила боя).
+            # Он даёт статистику, без которой цену ответного удара взять неоткуда.
+            prev_foe = prev.get("foe") or {}
+            fight = {"ход": turn, "инициатор": "враг", "наш_вид": v["вид"],
+                     "наш_потерян": 1 if v["как"] == "потерян" else 0,
+                     "наш_ранен": 0 if v["как"] == "потерян" else 1,
+                     "чужой_исчез": 1 if (f["eid"] in prev_foe and f["eid"] not in now_foe) else 0,
+                     "чужой_ранен": 0, "нападающий": f["eid"], "владелец": f.get("owner")}
+            _before_h = (prev_foe.get(f["eid"]) or {}).get("health")
+            if isinstance(_before_h, int) and isinstance(f.get("health"), int) \
+                    and f["health"] < _before_h:
+                fight["чужой_ранен"] = 1
+            graph.note_observation("бой", fight)
             graph.mark_collapse_source(f["eid"], turn, f.get("owner"), why)
             graph.note_observation("нападение", {"ход": turn, "вид": v["вид"], "как": v["как"],
                                                  "нападающий": f["eid"], "владелец": f.get("owner")})

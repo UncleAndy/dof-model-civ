@@ -240,14 +240,9 @@ def production_gain(graph: KnowledgeGraph, action: str) -> tuple[float, str]:
     if not str(action).startswith("produce_"):
         return 0.0, ""
     type_name = str(action)[len("produce_"):]
-    eta, src = _measured_eta(graph, type_name)
+    eta, src = eta_of(graph, type_name)
     if eta is None:
-        eta, src = _published_eta(graph)
-    if eta is None:
-        eta, src = _derived_eta(graph, type_name)
-    if eta is None:
-        return 0.0, ("срок постройки неизвестен: ни замером своего запуска, ни публикацией, "
-                     "ни из цены — считать нечем")
+        return 0.0, ("срок постройки неизвестен и измеренных сроков нет — считать нечем")
     H, hw = _horizon(graph)
 
     te = graph.entity(f"unit_type:{type_name}")
@@ -274,6 +269,45 @@ def _measured_eta(graph: KnowledgeGraph, type_name: str) -> tuple[Optional[int],
     if v and v > 0:
         return int(v), f"замер своего запуска ({type_name})"
     return None, ""
+
+
+def eta_of(graph: KnowledgeGraph, type_name: str) -> tuple[Optional[int], str]:
+    """Срок постройки варианта и СТУПЕНЬ его происхождения.
+
+    Ступени: «замер» (мы сами запускали) → «публикация» (текущее производство) → «вывод» (из
+    измеренных цены и щитов) → «среднее» (срок неизвестен: среднее по ИЗМЕРЕННЫМ срокам, НЕ ноль)
+    → «нет» (считать нечем).
+
+    Почему «среднее», а не «неизвестен — значит не вариант» (правило пользователя: неполные данные
+    моделировать средним по известным, НЕ нулём): вариант нельзя вычёркивать только потому, что мы
+    о нём не знаем, — иначе военный юнит не будет построен НИКОГДА, и неизвестность не раскроется.
+    """
+    v, src = _measured_eta(graph, type_name)
+    if v is not None:
+        return v, f"замер своего запуска ({type_name}); {src}"
+    v, src = _published_eta(graph)
+    if v is not None:
+        return v, f"публикация мира (текущее производство); {src}"
+    v, src = _derived_eta(graph, type_name)
+    if v is not None:
+        return v, src
+    def _val(x):
+        if not isinstance(x, dict):
+            return None
+        v = x.get("значение", x.get("ходов"))
+        return int(v) if isinstance(v, (int, float)) and v > 0 else None
+
+    known: list[int] = [v for v in (_val(x) for x in (graph.observed.get("produce_eta") or []))
+                        if v is not None]
+    known += [int(e.attrs["turns_to_prod_complete"]) for e in graph.by_kind("city")
+              if isinstance(e.attrs.get("turns_to_prod_complete"), int)
+              and e.attrs["turns_to_prod_complete"] > 0]
+    if known:
+        known.sort()
+        med = known[len(known) // 2]
+        return med, (f"срок неизвестен → среднее по измеренным ({med} ход., n={len(known)}; "
+                     f"незнание ≠ ноль)")
+    return None, "нет"
 
 
 def _published_eta(graph: KnowledgeGraph) -> tuple[Optional[int], str]:

@@ -92,7 +92,7 @@ class Agent:
             for c in g.by_kind("city"):
                 eta = (c.attrs or {}).get("turns_to_prod_complete")
                 if c.is_own and isinstance(eta, int) and eta > 0:
-                    g.note_observation("produce_eta", {"вариант": variant, "ходов": eta})
+                    g.note_observation("produce_eta", {"вариант": variant, "значение": eta})
                     self.journal.write({"ход": turn, "замер_срока": {"вариант": variant,
                                                                      "ходов": eta}})
                     break

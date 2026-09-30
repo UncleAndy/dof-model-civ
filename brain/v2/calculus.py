@@ -29,7 +29,7 @@ from metrics.reversibility import classify_reversibility
 
 from . import threat
 from .families import action_family
-from .horizon import production_gain, research_gain
+from .horizon import eta_of, production_gain, research_gain
 from .horizon import tau as tau_window
 from .knowledge import KnowledgeGraph
 from .projection import project
@@ -43,6 +43,12 @@ DT_DECLARED = 0.0
 #: Минимум наблюдённых боёв, при котором удару можно давать цену. **Объявлено ДО данных**:
 #: по одному бою исход оценивать нельзя — это была бы подгонка под случай.
 MIN_FIGHTS = 5
+
+#: Допуск разрешения ничьей (объявлен, структурное правило): если вариант с НЕИЗВЕСТНЫМ сроком
+#: постройки проигрывает лучшему не более чем на эту долю цены, выбирается он — так закрывается
+#: открытый вопрос (аксиома 5: незнание сужает путь), и почти без потери цены. Без этого варианта
+#: с неизвестным сроком не выбирают НИКОГДА, и он навсегда остаётся неизвестным.
+TIE_MARGIN = 0.05
 
 
 def _family_dof(e) -> Optional[float]:
@@ -131,8 +137,43 @@ class Decision:
     trace: dict
 
 
+def knowledge_gain(graph: KnowledgeGraph, alts: list[str]) -> tuple[float, str]:
+    """ЦЕНА НЕЗНАНИЯ: сколько стоит не знать срок постройки варианта.
+
+    Объявлено (структурное правило, указание Andy): незнание параметра само по себе — стимул его
+    выяснить, и постройка одного юнита ради этого выгодна. Величина берётся **из измерения**, а не
+    назначается: это **размах ценностей вариантов, чей срок уже известен** (`max − min`). Смысл:
+    решение под незнанием — пессимистичное (аксиома 5), а знание снимает пессимизм; размах
+    показывает, сколько на этом можно выиграть, и служит верхней границей цены знания.
+
+    Мера именно размах, а не «max − медиана»: измерено, что при двух известных вариантах медиана
+    совпадает с максимумом, и цена знания обращалась в ноль всегда — стимул пропадал.
+
+    При нулевом размахе (все известные варианты равны) знание не даёт НИЧЕГО — и не начисляется.
+    """
+    known: list[float] = []
+    for a in alts or []:
+        if action_family(a) != "produce":
+            continue
+        eta, src = eta_of(graph, str(a)[len("produce_"):])
+        if eta is None or str(src).startswith("срок неизвестен"):
+            continue                       # срок не известен — этот вариант не мерка
+        g, _ = production_gain(graph, a)
+        if g and g > 0:
+            known.append(float(g))
+    if len(known) < 2:
+        return 0.0, "разброс ценностей не измерить (известных вариантов меньше двух)"
+    known.sort()
+    spread = known[-1] - known[0]
+    if spread <= 0:
+        return 0.0, "разброс ценностей нулевой — знание ничего не даёт"
+    return spread, (f"цена незнания = размах известных ценностей "
+                    f"({known[-1]:.3f} − {known[0]:.3f} = {spread:.3f}, n={len(known)})")
+
+
 def _option_net(graph: KnowledgeGraph, cur_v, ctrl: str, action: str,
-                actor: Optional[str] = None, depth: int = 1) -> dict:
+                actor: Optional[str] = None, depth: int = 1,
+                kg: float = 0.0, kg_why: str = "") -> dict:
     """NetDelta одного конкретного действия (варианта семейства).
 
     ВАЖНО (измерено): цена угрозы и горизонтные выигрыши считаются по **измеренному состоянию**
@@ -149,6 +190,7 @@ def _option_net(graph: KnowledgeGraph, cur_v, ctrl: str, action: str,
     delta: Optional[float] = 0.0
     why = proj.source
     gained = False                      # был ли хоть один измеренный источник выигрыша
+    unknown_eta = False                 # вариант постройки с НЕИЗВЕСТНЫМ сроком (ниже — почему)
 
     if proj.known and cur_v is not None:
         for kind, n in (proj.new_entities or {}).items():
@@ -187,10 +229,21 @@ def _option_net(graph: KnowledgeGraph, cur_v, ctrl: str, action: str,
                 why = why_h
         if fam == "produce":
             g_p, why_p = production_gain(graph, action)
+            # Ступень срока: если он ВЗЯТ СРЕДНИМ по измеренным (то есть сам неизвестен), вариант
+            # помечается — при почти равной цене предпочтение отдаётся ему (см. TIE_MARGIN).
+            _eta, _et_src = eta_of(graph, str(action)[len("produce_"):])
+            if _eta is not None and str(_et_src).startswith("срок неизвестен"):
+                unknown_eta = True
             if g_p > 0:
                 delta += g_p
                 why = why_p
                 gained = True
+                # НЕЗНАНИЕ КАК СТИМУЛ (указание Andy): если срок этого варианта неизвестен,
+                # его постройка не только даёт сущность, но и УСТРАНЯЕТ незнание. Цена устранения
+                # — измеренный разброс ценностей известных вариантов (см. `knowledge_gain`).
+                if unknown_eta and kg > 0:
+                    delta += kg
+                    why = f"{why_p} | НЕЗНАНИЕ: срок неизвестен → +{kg:.3f} за устранение ({kg_why})"
             elif why_p:
                 why = why_p
         h = (graph.effect_of(ctrl, fam) or {}).get("horizon") or {}
@@ -246,7 +299,7 @@ def _option_net(graph: KnowledgeGraph, cur_v, ctrl: str, action: str,
         net = None                       # ни эффекта, ни измеренного выигрыша — неизвестно
     creates = bool(proj.new_entities) if proj.known else False
     return {"action": action, "net_delta": net, "why": why, "projection": proj.to_dict(),
-            "multiplier": creates}
+            "multiplier": creates, "unknown_eta": unknown_eta}
 
 
 def evaluate(graph: KnowledgeGraph, paths: list, own_id: int = 0,
@@ -276,11 +329,23 @@ def evaluate(graph: KnowledgeGraph, paths: list, own_id: int = 0,
     for p in paths:
         step = p.steps[0]
         alts = step.alternatives or [step.action]
+        kg, kg_why = (knowledge_gain(graph, alts) if step.ctrl == "city" else (0.0, ""))
         results = [_option_net(graph, cur_v, step.ctrl, a, actor=step.actor,
-                               depth=len(p.steps))
+                               depth=len(p.steps), kg=kg, kg_why=kg_why)
                    for a in alts[:120]]
         positive = [r for r in results if r["net_delta"] is not None and r["net_delta"] > 0]
         pick = max(positive, key=lambda r: r["net_delta"]) if positive else results[0]
+        if positive:
+            # Объявленное правило разрешения ничьей: если вариант с НЕИЗВЕСТНЫМ сроком постройки
+            # отстаёт от лучшего меньше чем на TIE_MARGIN, берём его — так открытый вопрос
+            # закрывается за счёт хода, который всё равно был бы потрачен на постройку.
+            best_r = max(positive, key=lambda r: r["net_delta"])
+            margin = abs(best_r["net_delta"]) * TIE_MARGIN
+            close = [r for r in positive
+                     if r.get("unknown_eta")
+                     and best_r["net_delta"] - r["net_delta"] <= margin]
+            if close:
+                pick = close[0]
         # Исключение проверяем ПОСЛЕ выбора варианта: иначе оно не срабатывало, потому что
         # сверялось с представителем по алфавиту, а не с тем, что реально было выбрано.
         if ((step.ctrl, step.actor) in exclude

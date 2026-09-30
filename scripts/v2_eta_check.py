@@ -44,3 +44,25 @@ print("  выбрана проба:", p.steps[0].action if p else None,
       "| почему:", (p.source if p else ""))
 print("  срок Warriors известен?", generator._eta_known(g, "produce_Warriors"))
 print("  срок Settlers известен?", generator._eta_known(g, "produce_Settlers"))
+
+print("\n== среднее по измеренным + разрешение ничьей ==")
+for variant, eta in (("Coinage", 8), ("Barracks", 12)):
+    g.note_observation("produce_eta", {"вариант": variant, "значение": eta})
+for act in ("produce_Warriors", "produce_Settlers", "produce_Barracks", "produce_Coinage"):
+    eta, src = horizon.eta_of(g, act[len("produce_"):])
+    gain, why = horizon.production_gain(g, act)
+    print(f"  {act}: срок={eta} ({src}) | gain={gain:.3f}")
+_paths, _ = generator.generate(g, menu, own_id=own_id, avoid=wedges.is_wedged)
+_kp = [x for x in _paths if x.steps[0].ctrl == "city"]
+if _kp:
+    _alts = _kp[0].steps[0].alternatives or []
+    _kg, _kg_why = calculus.knowledge_gain(g, _alts)
+    print(f"  цена незнания: {_kg:.3f} ({_kg_why})")
+
+_paths, _ = generator.generate(g, menu, own_id=own_id, avoid=wedges.is_wedged)
+dec = calculus.evaluate(g, _paths, own_id)
+for c in dec.trace["candidates"]:
+    st = (c["path"].get("steps") or [{}])[0]
+    if st.get("ctrl") == "city":
+        print(f"  канал города: выбран вариант {c.get('лучший_вариант')} (net {c['net_delta']})")
+        print(f"    почему: {str(c.get('why'))[:130]}")
