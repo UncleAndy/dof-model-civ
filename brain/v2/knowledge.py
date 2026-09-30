@@ -88,6 +88,9 @@ class KnowledgeGraph:
         self.entities: dict[str, Entity] = {}
         self.edges: list[Edge] = []
         self._edge_keys: set[tuple] = set()
+        #: Наблюдённые эффекты переходов: «контроллер/семейство» -> что меняется в мире.
+        #: Это знание о мире (постоянное), из него живёт проекция.
+        self.effects: dict[str, dict] = {}
         self.rules: dict = {}
         self.world: dict = {}
         self.observations: int = 0     # сколько раз мир наблюдался в этот граф
@@ -125,6 +128,26 @@ class KnowledgeGraph:
     def by_kind(self, kind: str) -> list[Entity]:
         return [e for e in self.entities.values() if e.kind == kind]
 
+    # --- эффекты переходов (пища проекции) ---
+    def record_effect(self, ctrl: str, family: str, changes: dict, example: dict) -> dict:
+        """Записать наблюдённый эффект семейства действий: что именно изменилось в мире."""
+        key = f"{ctrl}/{family}"
+        rec = self.effects.get(key) or {"ctrl": ctrl, "family": family, "seen": 0,
+                                        "change_counts": {}, "examples": []}
+        rec["seen"] = int(rec.get("seen", 0)) + 1
+        cc = dict(rec.get("change_counts") or {})
+        for field, n in (changes or {}).items():
+            cc[field] = int(cc.get(field, 0)) + int(n)
+        rec["change_counts"] = cc
+        ex = list(rec.get("examples") or [])
+        ex.append(example)
+        rec["examples"] = ex[-5:]
+        self.effects[key] = rec
+        return rec
+
+    def effect_of(self, ctrl: str, family: str) -> Optional[dict]:
+        return self.effects.get(f"{ctrl}/{family}")
+
     def permanent_only(self) -> "KnowledgeGraph":
         """Копия графа только с постоянным знанием (типы, технологии, словарь меню).
 
@@ -136,6 +159,7 @@ class KnowledgeGraph:
         g.world["games"] = self.world.get("games", 0)
         g.rules = dict(self.rules)
         g.observations = self.observations
+        g.effects = {k: dict(v) for k, v in self.effects.items()}
         for e in self.entities.values():
             if e.kind in PERMANENT_KINDS:
                 g.add_entity(Entity(eid=e.eid, kind=e.kind, owner=e.owner, is_own=e.is_own,
@@ -189,6 +213,7 @@ class KnowledgeGraph:
     # --- заморозка ---
     def to_dict(self) -> dict[str, Any]:
         return {"world": self.world, "rules": self.rules, "observations": self.observations,
+                "effects": self.effects,
                 "entities": [e.to_dict() for e in self.entities.values()],
                 "edges": [e.to_dict() for e in self.edges]}
 
@@ -198,6 +223,7 @@ class KnowledgeGraph:
         g.world = d.get("world") or {}
         g.rules = d.get("rules") or {}
         g.observations = d.get("observations", 0)
+        g.effects = d.get("effects") or {}
         for ed in d.get("entities") or []:
             g.add_entity(Entity.from_dict(ed))
         for ed in d.get("edges") or []:

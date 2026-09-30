@@ -31,5 +31,16 @@
       "agent": "random",
       "source": "v2, живой прогон 30.09.2026: шаг не вернулся за 60 с"
     }
+  },
+  "unknown/timeout": {
+    "ctrl_type": "unknown",
+    "action_name": "timeout",
+    "family": "timeout",
+    "first_turn": 2,
+    "seen": 2,
+    "context": {
+      "agent": "v2"
+    },
+    "last_turn": 0
   }
 }

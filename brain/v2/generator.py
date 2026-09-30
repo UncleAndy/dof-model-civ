@@ -106,11 +106,13 @@ def derive_goals(graph: KnowledgeGraph, menu: dict) -> list[dict]:
         if u["kind"] in ("unit", "city", "controller"):
             goals.append({"goal": "unknown", "eid": u["eid"], "why": u["why"],
                           "probe": u["probe"]})
-    # 2) основать город: у своего юнита есть возможность build_city, а городов мало
+    # 2) основать город: у своего юнита есть возможность build_city. Порога «сколько городов
+    # достаточно» здесь нет: это была бы моя оценка. Считать ли основание выгодным — работа
+    # calculus (аксиома 6: предпочитать то, что умножает способность порождать новое).
     own_cities = [e for e in graph.by_kind("city") if e.is_own]
     for a in _own_actors(graph):
         caps = _caps_of_type(graph, a.name)
-        if "build_city" in caps and len(own_cities) < 2:
+        if "build_city" in caps:
             goals.append({"goal": "found_city", "eid": a.eid,
                           "why": f"у типа {a.name} есть возможность build_city; городов {len(own_cities)}"})
     # 3) поднять канал: у канала есть законные переходы
@@ -191,31 +193,40 @@ def _path_channel(goal: dict, graph: KnowledgeGraph, menu: dict) -> Optional[Pat
 
 
 def _path_probe(graph: KnowledgeGraph, menu: dict,
-                used: Optional[set] = None) -> Optional[Path]:
-    """Проба: законное действие, чьё семейство ещё не исполнялось нашим типом.
+                used: Optional[set] = None,
+                avoid: Optional[Callable[[str, str], bool]] = None) -> Optional[Path]:
+    """Проба: законное действие, чей ЭФФЕКТ ещё не наблюдался ни разу.
 
-    Определение механическое: семейство наблюдалось в наборе возможностей, но не исполнялось.
-    Исполнение записывает эффект — это и есть прирост знания (аксиома 5).
-    `used` — пары (актор, семейство), уже занятые другими путями этого хода: проба не должна
-    дублировать уже предложенный путь.
+    Определение механическое и единое для всех видов сущностей: берём семейство
+    `контроллер/семейство`, для которого в базе знаний нет записи об эффекте. Исполнение
+    записывает эффект — это и есть прирост знания (аксиома 5).
+
+    Измерено, почему не «исполнялось этим типом»: такая формулировка (а) не покрывала каналы
+    (`gov`, `tech`) вовсе — из-за этого 155 ходов из 367 агент просто закрывал, и (б) считалась
+    по каждому юниту отдельно, из-за чего одно и то же действие повторялось десятки раз
+    (`cancel_order` — 49, `keep_activity` — 47).
+
+    `used` — занятые пары (актор, семейство) этого хода; `avoid` — внешний фильтр клинов.
     """
     used = used or set()
-    for a in sorted(_own_actors(graph), key=lambda x: x.eid):
-        actor = a.eid.split(":")[-1]
-        opts = _legal(graph, menu, "unit", actor)
-        if not opts:
-            continue
-        caps = _caps_of_type(graph, a.name)
-        exercised = set(a.attrs.get("exercised_families") or [])
-        for o in sorted(opts):
-            if action_family(o) in exercised or (actor, action_family(o)) in used:
-                continue
-            fam = family_counts(opts)
-            return Path(goal="probe", kind="проба",
-                        steps=[_step(menu, "unit", actor, o, fam[action_family(o)])],
-                        expectation="+1 записанный эффект: прирост знания о мире",
-                        source=f"семейство {action_family(o)} ещё не исполнялось типом {a.name}",
-                        effect=("probe", actor, action_family(o)))
+    for ctrl in ("unit", "gov", "tech", "player", "dipl"):
+        actors = menu.get(ctrl) or {}
+        for actor in sorted(actors, key=str):
+            opts = _legal(graph, menu, ctrl, str(actor))
+            for o in sorted(opts):
+                fam = action_family(o)
+                if graph.effect_of(ctrl, fam) is not None:
+                    continue                      # эффект уже наблюдён — не проба
+                if (str(actor), fam) in used or (ctrl, str(actor), fam) in used:
+                    continue
+                if avoid is not None and avoid(ctrl, o):
+                    continue
+                fams = family_counts(opts)
+                return Path(goal="probe", kind="проба",
+                            steps=[_step(menu, ctrl, str(actor), o, fams[fam])],
+                            expectation="+1 записанный эффект: прирост знания о мире",
+                            source=f"эффект семейства {ctrl}/{fam} ещё не наблюдался",
+                            effect=("probe", ctrl, fam))
     return None
 
 
@@ -243,11 +254,6 @@ def generate(graph: KnowledgeGraph, menu: dict, own_id: int = 0,
             if p is not None:
                 paths.append(p)
 
-    # фильтр клинов стенда (внешний)
-    if avoid is not None:
-        paths = [p for p in paths
-                 if all(not avoid(s.ctrl, s.action) for s in p.steps)]
-
     # «генуинно различные пути» (спека): пути с одинаковым ЭФФЕКТОМ — один путь, а не два.
     # Измерено: два Settlers в одной клетке давали два «разных» пути основания, которые на
     # деле были одним и тем же городом в (30,25).
@@ -267,11 +273,18 @@ def generate(graph: KnowledgeGraph, menu: dict, own_id: int = 0,
     cap = MAX_PATHS - 1 if has_unknowns else MAX_PATHS
     paths = paths[:cap]
     if has_unknowns:
-        used = {(s.actor, action_family(s.action)) for p in paths for s in p.steps}
-        p = _path_probe(graph, menu, used)
+        used = {(s.ctrl, s.actor, action_family(s.action)) for p in paths for s in p.steps}
+        p = _path_probe(graph, menu, used, avoid=avoid)
         if p is not None:
             if not p.effect or p.effect not in seen_effects:
                 paths.append(p)
+
+    # фильтр клинов стенда (внешний) — ПОСЛЕДНИМ, иначе пробный путь его минует (измерено:
+    # `unit/plant` прошёл фильтр именно так и подвесил партию).
+    if avoid is not None:
+        paths = [p for p in paths
+                 if all(not avoid(s.ctrl, s.action) for s in p.steps)]
+
     for p in paths:
         p.irreversible = any(not s.reversible for s in p.steps)
 
