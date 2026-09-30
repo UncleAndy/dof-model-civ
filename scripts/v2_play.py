@@ -132,7 +132,8 @@ def play(agent: Agent, seed: int, port: int, turns: int) -> dict:
 
 
 def main() -> int:
-    agent = Agent(STORE, trace_path=TRACE, avoid=wedges.is_wedged)
+    growth = os.environ.get("V2_GROWTH", str(ROOT / "knowledge" / "city_growth.jsonl"))
+    agent = Agent(STORE, trace_path=TRACE, avoid=wedges.is_wedged, growth_path=growth)
     print(f"[агент] база: {STORE}; трасса: {TRACE}")
     print(agent.store.report(limit=5))
 

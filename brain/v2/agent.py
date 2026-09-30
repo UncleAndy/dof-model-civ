@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any, Optional
 
@@ -17,10 +18,15 @@ from .store import KnowledgeStore
 
 class Agent:
     def __init__(self, store_path: str | Path, trace_path: str | Path | None = None,
-                 avoid=None) -> None:
+                 avoid=None, growth_path: str | Path | None = None) -> None:
         self.store = KnowledgeStore(store_path)
         self.avoid = avoid
         self.journal = Journal(trace_path or (Path(store_path).parent / "traces.jsonl"))
+        #: Замер роста города: на каждом ходу пишем (размер, число предложенных переходов,
+        #: число разрешённых позиций постройки). Нужен, чтобы ОТВЕТИТЬ ЗАМЕРОМ на вопрос
+        #: «растёт ли набор возможностей города вместе с городом», а не предположить это.
+        self.growth_path = Path(growth_path) if growth_path else None
+        self._growth_seen: set = set()
         self._pending = None          # шаг, отправленный в среду
         self._before = None           # снимок состояния до шага
         self._turn: Optional[int] = None
@@ -38,6 +44,7 @@ class Agent:
         # 1) знание: влить наблюдение (наборы возможностей накапливаются)
         self.store.observe(obs, available, own_id)
         g = self.store.graph
+        self._record_growth(g, menu)
 
         # 2) генератор: пути и цели без пути
         paths, open_goals = generator.generate(g, menu, own_id, avoid=self.avoid)
@@ -94,6 +101,31 @@ class Agent:
         return to_env_action(step)
 
     # ---------------------------------------------------------------- эффект
+    def _record_growth(self, graph, menu: dict) -> None:
+        """Замер: размер города ↔ число предложенных ему переходов."""
+        if self.growth_path is None:
+            return
+        from .sensors import valid_options
+        for e in graph.by_kind("city"):
+            if not e.is_own:
+                continue
+            key = (self._turn, e.eid)
+            if key in self._growth_seen:
+                continue
+            self._growth_seen.add(key)
+            opts = valid_options(menu, "city", e.eid.split(":")[-1])
+            fams = sorted({o.split("_")[0] for o in opts})
+            rec = {"ход": self._turn, "город": e.eid, "размер": e.attrs.get("size"),
+                   "переходов_предложено": len(opts),
+                   "семейств": len(fams),
+                   "позиций_постройки": e.attrs.get("n_buildable"),
+                   "еда_прирост": e.attrs.get("surplus_food"),
+                   "щиты": e.attrs.get("shield_stock"),
+                   "дней_до_постройки": e.attrs.get("turns_to_prod_complete"),
+                   "семейства": fams[:8]}
+            with self.growth_path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
     def record_outcome(self, obs: dict, own_id: int) -> Optional[dict]:
         """Записать, что изменилось после шага (реального действия или закрытия хода)."""
         if self._before is None:
