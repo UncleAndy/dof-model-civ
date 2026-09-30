@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any, Iterable, Optional
 
 from . import sensors
+from .families import family_of_options
 from .provenance import Origin, Value, json_default
 
 # признаки для аналогии (решение 6.3), в порядке сравнения
@@ -340,6 +341,12 @@ def build_graph(obs: dict, available: dict, own_id: int = 0,
             te.attrs["capabilities"] = sorted(caps)
             if opts:
                 te.attrs["observations"] = te.attrs.get("observations", 0) + 1
+            # DoF в двух видах (решение D1): механическое число и семейное (различные
+            # возможности). В индекс идёт семейное — иначе `goto_0..7` раздувают счёт.
+            fams = family_of_options(caps)
+            te.attrs["families"] = sorted(fams)
+            te.attrs["dof_mechanical"] = len(caps)
+            te.attrs["dof_families"] = len(fams)
             te.dof = Value.measured(len(caps), source=f"набор возможностей типа {a.type_name}",
                                     note=f"наблюдён за {te.attrs.get('observations', 0)} ходов")
             e.dof = te.dof
@@ -391,6 +398,8 @@ def build_graph(obs: dict, available: dict, own_id: int = 0,
             e = g.entity(eid)
             opts = sensors.valid_options(menu, section, actor_key)
             e.attrs["capabilities"] = sorted(set(e.attrs.get("capabilities") or []) | set(opts))
+            e.attrs["dof_mechanical"] = len(e.attrs["capabilities"])
+            e.attrs["dof_families"] = len(family_of_options(e.attrs["capabilities"]))
             e.dof = sensors.measured_dof(menu, section, actor_key, actor_known=True)
 
     # --- занятые клетки ---

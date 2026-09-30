@@ -1,0 +1,282 @@
+"""Генератор решений v2 — шаг 1 Decision Calculus («Dynamic Generation & Time-Bounded
+Diversification»).
+
+ЧТО ОН ДЕЛАЕТ. Порождает **пути** (а не одиночные действия), опираясь на граф знаний:
+цель выводится из графа, путь к цели собирается по грамматике семейств, каждый шаг проверяется
+на законность (меню), на клин стенда (внешний фильтр `avoid`) и помечается обратимостью.
+
+ЧЕГО ОН НЕ ДЕЛАЕТ. Не ранжирует и не оценивает полезность: любая оценка здесь была бы моим
+коэффициентом, то есть подгонкой. Ранжирует calculus (шаги 3–4 спеки). Генератор только
+порождает, помечает и указывает происхождение ожидания.
+
+РЕШЕНИЯ, ОБЪЯВЛЕННЫЕ ДО ДАННЫХ (Andy: «выбери на своё усмотрение», 2026-09-30):
+
+* **D1. Семейство действия** — имя без числовых и именных хвостовых параметров
+  (`brain/v2/families.py`): `goto_0..7` = одно семейство `goto`, но `build_city` и `build_road`
+  остаются разными. DoF хранится в двух видах: механическое число (все варианты) и семейное
+  (различные возможности). В индекс идёт **семейное** — иначе «различность» путей фиктивна.
+* **D2. Глубина пути — 3 шага** (как в v1; H = 3).
+* **D3. Путей — от 3 до 5**, нижняя граница спеки; отбор внутри — по объявленному порядку целей
+  (структура, не оценка полезности).
+* **D4. Пробный путь** включается всегда, когда граф имеет открытые вопросы; он конкурирует
+  наравне (решает calculus), а при всех NetDelta ≤ 0 остаётся единственным законным ходом.
+* **D5. План на несколько ходов**: исполняется **первый шаг**, план пересобирается каждый ход
+  (шаг 5 спеки: значимое изменение состояния → немедленный пересмотр).
+
+ПОРЯДОК ЦЕЛЕЙ (объявлен, не оценка): снять неизвестность → основать город → поднять канал →
+проба. Цель без достижимого пути **докладывается как открытая**, а не выдумывается.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any, Callable, Iterable, Optional
+
+from metrics.reversibility import classify_reversibility
+
+from .families import action_family, family_counts
+from .knowledge import KnowledgeGraph
+
+MAX_PATHS = 5
+MIN_PATHS = 3
+MAX_DEPTH = 3
+
+#: порядок целей — структура, объявленная до данных (не оценка полезности)
+GOAL_ORDER = ("unknown", "found_city", "channel", "probe")
+
+
+@dataclass
+class Step:
+    ctrl: str
+    actor: str
+    action: str
+    reversible: bool = True
+    variants: int = 1          # сколько вариантов у этого семейства в меню
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"ctrl": self.ctrl, "actor": self.actor, "action": self.action,
+                "reversible": self.reversible, "variants": self.variants}
+
+
+@dataclass
+class Path:
+    goal: str                  # unknown | found_city | channel | probe
+    kind: str                  # "цель" | "проба"
+    steps: list[Step]
+    expectation: str           # ожидаемый эффект — словами, с происхождением
+    source: str                # откуда взята цель (из графа: почему)
+    irreversible: bool = False
+    effect: tuple = ()         # признак ЭФФЕКТА (для требования спеки «генуинно различные»)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"goal": self.goal, "kind": self.kind,
+                "steps": [s.to_dict() for s in self.steps],
+                "expectation": self.expectation, "source": self.source,
+                "irreversible": self.irreversible, "effect": list(self.effect)}
+
+    def summary(self) -> str:
+        acts = " → ".join(f"{s.ctrl}/{s.actor}/{s.action}" for s in self.steps)
+        irr = " [НЕОБРАТИМ]" if self.irreversible else ""
+        return f"[{self.kind}/{self.goal}]{irr} {acts} — {self.expectation}"
+
+
+def _own_actors(graph: KnowledgeGraph) -> list:
+    return [e for e in graph.by_kind("unit") if e.is_own]
+
+
+def _caps_of_type(graph: KnowledgeGraph, type_name: Optional[str]) -> list[str]:
+    if not type_name:
+        return []
+    te = graph.entity(f"unit_type:{type_name}")
+    return list((te.attrs.get("capabilities") if te else None) or [])
+
+
+def _legal(graph: KnowledgeGraph, menu: dict, ctrl: str, actor: str) -> list[str]:
+    from .sensors import valid_options
+    return valid_options(menu, ctrl, actor)
+
+
+# ---------------------------------------------------------------- цели из графа
+
+def derive_goals(graph: KnowledgeGraph, menu: dict) -> list[dict]:
+    """Цели выводятся из графа и меню. Ни одна не выдумана человеком."""
+    goals: list[dict] = []
+
+    # 1) снять неизвестность: сущности с неизвестным DoF, которые нам доступны
+    for u in graph.unknowns():
+        if u["kind"] in ("unit", "city", "controller"):
+            goals.append({"goal": "unknown", "eid": u["eid"], "why": u["why"],
+                          "probe": u["probe"]})
+    # 2) основать город: у своего юнита есть возможность build_city, а городов мало
+    own_cities = [e for e in graph.by_kind("city") if e.is_own]
+    for a in _own_actors(graph):
+        caps = _caps_of_type(graph, a.name)
+        if "build_city" in caps and len(own_cities) < 2:
+            goals.append({"goal": "found_city", "eid": a.eid,
+                          "why": f"у типа {a.name} есть возможность build_city; городов {len(own_cities)}"})
+    # 3) поднять канал: у канала есть законные переходы
+    for e in sorted(graph.by_kind("controller"), key=lambda x: x.eid):
+        if not e.is_own or not e.name:
+            continue
+        ctrl, _, actor = e.name.partition("/")
+        opts = _legal(graph, menu, ctrl, actor)
+        if opts:
+            goals.append({"goal": "channel", "eid": e.eid, "ctrl": ctrl, "actor": actor,
+                          "options": opts,
+                          "why": f"канал {e.name}: {len(opts)} законных переходов"})
+    return goals
+
+
+# ---------------------------------------------------------------- пути к цели
+
+def _step(menu: dict, ctrl: str, actor: str, action: str, family_variants: int) -> Step:
+    return Step(ctrl=ctrl, actor=actor, action=action,
+                reversible=classify_reversibility(action), variants=family_variants)
+
+
+def _path_unknown(goal: dict, graph: KnowledgeGraph, menu: dict) -> Optional[Path]:
+    """Снять неизвестность: цель достижима, если её можно закрыть доступным действием.
+
+    Если речь о типе юнита, которого у нас нет, — путь не строится: цель остаётся открытой
+    (её закроет появление такого юнита). Это честнее, чем выдумать путь.
+    """
+    eid = goal["eid"]
+    if eid.startswith("city:"):
+        # имена городских переходов неизвестны: закрыть можно только имея город и наблюдая меню
+        return None
+    if eid.startswith("controller:"):
+        ctrl, _, actor = eid.split(":", 1)[1].partition("/")
+        opts = _legal(graph, menu, ctrl, actor)
+        if not opts:
+            return None
+        fam = family_counts(opts)
+        a = opts[0]
+        return Path(goal="unknown", kind="проба",
+                    steps=[_step(menu, ctrl, actor, a, fam[action_family(a)])],
+                    expectation=f"закрыть неизвестность {eid}: увидеть эффект перехода",
+                    source=goal["why"])
+    return None
+
+
+def _path_found_city(goal: dict, graph: KnowledgeGraph, menu: dict) -> Optional[Path]:
+    eid = goal["eid"]
+    actor = eid.split(":", 1)[1]
+    opts = _legal(graph, menu, "unit", actor)
+    if "build_city" not in opts:
+        return None
+    e = graph.entity(eid)
+    site = ""
+    if e is not None and e.attrs.get("x") is not None:
+        site = f" в клетке ({e.attrs['x']},{e.attrs['y']})"
+    return Path(goal="found_city", kind="цель",
+                steps=[_step(menu, "unit", actor, "build_city", 1)],
+                expectation=f"+1 сущность (город){site} со своим набором возможностей → "
+                            "DoF множится, а не складывается",
+                source=goal["why"],
+                effect=("found_city", e.attrs.get("x") if e else None,
+                        e.attrs.get("y") if e else None))
+
+
+def _path_channel(goal: dict, graph: KnowledgeGraph, menu: dict) -> Optional[Path]:
+    ctrl, actor, opts = goal["ctrl"], goal["actor"], goal["options"]
+    fam = family_counts(opts)
+    # представитель семейства выбирается детерминированно; выбор внутри семейства —
+    # вопрос ценности, и его решает проекция (её пока нет), поэтому здесь только пометка
+    a = opts[0]
+    return Path(goal="channel", kind="цель",
+                steps=[_step(menu, ctrl, actor, a, fam[action_family(a)])],
+                expectation=f"канал {ctrl}: смена раскладки/цели; в семействе "
+                            f"{action_family(a)} вариантов {fam[action_family(a)]}",
+                source=goal["why"],
+                effect=("channel", ctrl, action_family(a)))
+
+
+def _path_probe(graph: KnowledgeGraph, menu: dict,
+                used: Optional[set] = None) -> Optional[Path]:
+    """Проба: законное действие, чьё семейство ещё не исполнялось нашим типом.
+
+    Определение механическое: семейство наблюдалось в наборе возможностей, но не исполнялось.
+    Исполнение записывает эффект — это и есть прирост знания (аксиома 5).
+    `used` — пары (актор, семейство), уже занятые другими путями этого хода: проба не должна
+    дублировать уже предложенный путь.
+    """
+    used = used or set()
+    for a in sorted(_own_actors(graph), key=lambda x: x.eid):
+        actor = a.eid.split(":")[-1]
+        opts = _legal(graph, menu, "unit", actor)
+        if not opts:
+            continue
+        caps = _caps_of_type(graph, a.name)
+        exercised = set(a.attrs.get("exercised_families") or [])
+        for o in sorted(opts):
+            if action_family(o) in exercised or (actor, action_family(o)) in used:
+                continue
+            fam = family_counts(opts)
+            return Path(goal="probe", kind="проба",
+                        steps=[_step(menu, "unit", actor, o, fam[action_family(o)])],
+                        expectation="+1 записанный эффект: прирост знания о мире",
+                        source=f"семейство {action_family(o)} ещё не исполнялось типом {a.name}",
+                        effect=("probe", actor, action_family(o)))
+    return None
+
+
+# ---------------------------------------------------------------- сборка
+
+def generate(graph: KnowledgeGraph, menu: dict, own_id: int = 0,
+             avoid: Optional[Callable[[str, str], bool]] = None) -> tuple[list[Path], list[dict]]:
+    """Порождает пути (3–5) и отдельно — цели без достижимого пути.
+
+    `avoid` — внешний фильтр запрещённых действий (реестр клинов стенда). Модель не знает про
+    стенд, поэтому фильтр передаёт вызывающий.
+    """
+    goals = derive_goals(graph, menu)
+    by_kind: dict[str, list[dict]] = {}
+    for g in goals:
+        by_kind.setdefault(g["goal"], []).append(g)
+
+    paths: list[Path] = []
+    for kind in GOAL_ORDER:
+        for g in by_kind.get(kind, []):
+            p = (_path_unknown(g, graph, menu) if kind == "unknown"
+                 else _path_found_city(g, graph, menu) if kind == "found_city"
+                 else _path_channel(g, graph, menu) if kind == "channel"
+                 else None)
+            if p is not None:
+                paths.append(p)
+
+    # фильтр клинов стенда (внешний)
+    if avoid is not None:
+        paths = [p for p in paths
+                 if all(not avoid(s.ctrl, s.action) for s in p.steps)]
+
+    # «генуинно различные пути» (спека): пути с одинаковым ЭФФЕКТОМ — один путь, а не два.
+    # Измерено: два Settlers в одной клетке давали два «разных» пути основания, которые на
+    # деле были одним и тем же городом в (30,25).
+    seen_effects: set = set()
+    distinct: list[Path] = []
+    for p in paths:
+        if p.effect and p.effect in seen_effects:
+            continue
+        seen_effects.add(p.effect)
+        distinct.append(p)
+    paths = distinct
+
+    # коридор 3–5 путей. Пробному пути **зарезервировано место** (решение D4): без этого его
+    # вытесняют целевые пути, и правило «при всех NetDelta ≤ 0 ход тратится на знание» не
+    # выполняется вовсе.
+    has_unknowns = bool(graph.unknowns())
+    cap = MAX_PATHS - 1 if has_unknowns else MAX_PATHS
+    paths = paths[:cap]
+    if has_unknowns:
+        used = {(s.actor, action_family(s.action)) for p in paths for s in p.steps}
+        p = _path_probe(graph, menu, used)
+        if p is not None:
+            if not p.effect or p.effect not in seen_effects:
+                paths.append(p)
+    for p in paths:
+        p.irreversible = any(not s.reversible for s in p.steps)
+
+    # цели, для которых пути не нашлось: докладываем как открытые, не выдумываем
+    covered = {p.goal for p in paths}
+    open_goals = [g for g in goals if g["goal"] not in covered
+                  or g["goal"] == "unknown" and not any(p.goal == "unknown" for p in paths)]
+    return paths, open_goals
