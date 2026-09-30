@@ -6,7 +6,7 @@ through the same recorder, so comparisons are apples-to-apples:
 
 * the DoF index and entity count come from the same extractor call,
 * an irreversible action is classified with the same
-  :func:`env.action_mapper.classify_reversibility` rule regardless of which
+  :func:`metrics.reversibility.classify_reversibility` rule regardless of which
   agent produced it,
 * a turn with no action (no-op, or nothing valid available) is recorded as a
   *skipped* turn instead of silently counting as an irreversible-free action.
@@ -20,7 +20,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-from env.action_mapper import classify_reversibility
+from .reversibility import classify_reversibility
 
 
 @dataclass

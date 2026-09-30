@@ -6,17 +6,30 @@
     "first_turn": 9,
     "seen": 1,
     "context": {
-      "agent": "dof_expansionist"
+      "agent": "dof_expansionist",
+      "source": "v1, живой прогон"
     }
   },
-  "city/city_change_specialist": {
+  "city/city_change_specialist_0": {
     "ctrl_type": "city",
     "action_name": "city_change_specialist_0",
     "family": "city_change_specialist",
     "first_turn": 9,
     "seen": 1,
     "context": {
-      "agent": "dof_expansionist"
+      "agent": "dof_expansionist",
+      "source": "v1, живой прогон"
+    }
+  },
+  "unit/plant": {
+    "ctrl_type": "unit",
+    "action_name": "plant",
+    "family": "plant",
+    "first_turn": 1,
+    "seen": 1,
+    "context": {
+      "agent": "random",
+      "source": "v2, живой прогон 30.09.2026: шаг не вернулся за 60 с"
     }
   }
 }

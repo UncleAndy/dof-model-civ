@@ -38,11 +38,20 @@ def main():
         print(f"ERROR: Cannot connect to Freeciv-web: {e}", file=sys.stderr)
         sys.exit(1)
 
-    from env.entity_extractor import GameStateExtractor
-    from env.config import CONFIG
-
     agent = RandomAgent()
-    extractor = GameStateExtractor(my_player_id=CONFIG.my_player_id)
+
+    def _seen(obs) -> dict[str, int]:
+        """Сколько сущностей каждого вида видно — прямо из наблюдения.
+
+        Раньше это считал экстрактор v1; в v2 прибор не должен зависеть от модели, поэтому
+        берём размеры секций наблюдения как есть (это факт мира, а не вывод модели).
+        """
+        out: dict[str, int] = {}
+        for key in ('unit', 'city', 'tech', 'dipl', 'gov', 'player'):
+            section = (obs or {}).get(key)
+            if hasattr(section, '__len__'):
+                out[key] = len(section)
+        return out
 
     observations, info = env.reset(client_port=args.port)
     done = False
@@ -53,14 +62,12 @@ def main():
     while not done and step < args.turns:
         try:
             action = agent.act(observations, info)
-            dof_state = extractor.extract(observations, info, info.get("turn", step))
 
             turn_log.append({
                 "step": step,
                 "turn": info.get("turn", step),
                 "action": str(action),
-                "entity_count": len(dof_state.state.entities),
-                "psi_digest": dof_state.state.psi.get("digest", ""),
+                "seen": _seen(observations),
             })
 
             observations, reward, terminated, truncated, info = env.step(action)
