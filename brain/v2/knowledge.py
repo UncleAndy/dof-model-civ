@@ -83,6 +83,11 @@ class Edge:
                    origin=Origin(d.get("origin", Origin.MEASURED.value)), attrs=d.get("attrs") or {})
 
 
+#: Горизонт держания флага «источник коллапса» — решение Andy (п.3): весь срок прогноза.
+#: 20 ходов = то же окно, которым измеряется длящийся опыт (E1).
+COLLAPSE_HORIZON = 20
+
+
 class KnowledgeGraph:
     def __init__(self) -> None:
         self.entities: dict[str, Entity] = {}
@@ -97,6 +102,28 @@ class KnowledgeGraph:
         self.rules: dict = {}
         self.world: dict = {}
         self.observations: int = 0     # сколько раз мир наблюдался в этот граф
+
+        #: ИСТОЧНИКИ КОЛЛАПСА (решения Andy, §10.33/§10.34): только те чужие сущности, чьё
+        #: НАПАДЕНИЕ наблюдено на открытых клетках. Мирный чужой — обычная сущность со своим DoF
+        #: (и она ПЛЮСУЕТСЯ к общему DoF). Флаг держится весь горизонт прогноза, не один ход.
+        #: eid -> {"до_хода": int, "владелец": int|None, "почему": str}
+        self.collapse: dict[str, dict] = {}
+
+    # --- источники коллапса ---
+    def mark_collapse_source(self, eid: str, turn: int, owner: Optional[int],
+                             why: str, horizon: int = COLLAPSE_HORIZON) -> None:
+        """Пометить чужую сущность источником коллапса ПО НАБЛЮДЁННОМУ нападению."""
+        self.collapse[eid] = {"до_хода": int(turn) + int(horizon),
+                              "с_хода": int(turn), "владелец": owner, "почему": why}
+
+    def collapse_sources(self, turn: Optional[int] = None) -> dict[str, dict]:
+        """Активные источники коллапса. Без `turn` — все записанные."""
+        if turn is None:
+            return dict(self.collapse)
+        return {k: v for k, v in self.collapse.items() if int(turn) < int(v.get("до_хода", 0))}
+
+    def is_collapse_source(self, eid: str, turn: Optional[int] = None) -> bool:
+        return eid in self.collapse_sources(turn)
 
     # --- сборка ---
     def add_entity(self, e: Entity) -> Entity:
@@ -181,6 +208,8 @@ class KnowledgeGraph:
         g = KnowledgeGraph()
         g.world = {k: v for k, v in self.world.items() if k != "games"}
         g.world["games"] = self.world.get("games", 0)
+        # флаги «источник коллапса» привязаны к конкретной партии и её ходу: не переносятся
+        g.collapse = {}
         g.rules = dict(self.rules)
         g.observations = self.observations
         g.effects = {k: dict(v) for k, v in self.effects.items()}
@@ -256,6 +285,7 @@ class KnowledgeGraph:
         return {"world": self.world, "rules": self.rules, "observations": self.observations,
                 "effects": self.effects,
                 "observed": self.observed,
+                "collapse": self.collapse,
                 "entities": [e.to_dict() for e in self.entities.values()],
                 "edges": [e.to_dict() for e in self.edges]}
 
@@ -267,6 +297,7 @@ class KnowledgeGraph:
         g.observations = d.get("observations", 0)
         g.effects = d.get("effects") or {}
         g.observed = d.get("observed") or {}
+        g.collapse = d.get("collapse") or {}
         for ed in d.get("entities") or []:
             g.add_entity(Entity.from_dict(ed))
         for ed in d.get("edges") or []:
@@ -348,7 +379,8 @@ def _analogy_dof(g: "KnowledgeGraph", attrs: dict, type_name: Optional[str]) -> 
 # ---------------------------------------------------------------- сборка графа
 
 def build_graph(obs: dict, available: dict, own_id: int = 0,
-                prior: Optional[KnowledgeGraph] = None) -> KnowledgeGraph:
+                prior: Optional[KnowledgeGraph] = None,
+                turn: Optional[int] = None) -> KnowledgeGraph:
     """Сенсоры -> граф знаний.
 
     `prior` — граф прошлого наблюдения: наборы возможностей и связи **накапливаются**, а не
@@ -359,6 +391,8 @@ def build_graph(obs: dict, available: dict, own_id: int = 0,
     menu = sensors.read_menu(available)
     g.world = {"xsize": w.xsize, "ysize": w.ysize, "area": w.area(),
                "n_players": len(w.players), "own_id": own_id}
+    if turn is not None:
+        g.world["ход"] = int(turn)     # нужен горизонту держания флага «источник коллапса»
     # Второй, независимый канал о чужих: карта мира «клетка -> владелец юнита». Нужен, чтобы
     # отличить «на карте никого» от «сенсор не читает чужого» (измерено: секция `unit` давала
     # ноль чужих за 110 ходов — без этого счётчика нельзя понять, мир молчит или сенсор слеп).
@@ -470,7 +504,7 @@ def build_graph(obs: dict, available: dict, own_id: int = 0,
         g.ensure(eid, "unit", owner=a.owner, is_own=False, name=a.type_name)
         e = g.entity(eid)
         e.attrs.update({"x": a.x, "y": a.y, "moves_left": a.moves_left,
-                        **_type_feature_attrs(a)})
+                        "виден_наблюдение": g.observations, **_type_feature_attrs(a)})
         e.dof = _analogy_dof(g, e.attrs, a.type_name)
         g.add_edge(Edge(src=eid, dst=f"player:{a.owner}", kind="belongs_to"))
         if a.type_name:
@@ -508,7 +542,8 @@ def build_graph(obs: dict, available: dict, own_id: int = 0,
             _e = g.entity(_eid)
             _e.attrs.update({"x": _x, "y": _y, "moves_left": None,
                              "type_attack_strength": None, "type_defense_strength": None,
-                             "type_move_rate": None, "источник": "карта:unit_owner"})
+                             "type_move_rate": None, "источник": "карта:unit_owner",
+                             "виден_наблюдение": g.observations})
             _e.dof = _analogy_dof(g, _e.attrs, None)
             g.add_edge(Edge(src=_eid, dst=f"player:{_owner}", kind="belongs_to"))
 

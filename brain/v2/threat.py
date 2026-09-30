@@ -76,17 +76,37 @@ def attack_of(graph: KnowledgeGraph, e) -> tuple[Optional[float], str]:
     return mean_a, f"выведено: среднее по {n} известным типам (незнание ≠ ноль)"
 
 
-def threats(graph: KnowledgeGraph) -> list[dict]:
-    """T1: чужие сущности с атакой. Мирные чужие угрозой не считаются."""
+def threats(graph: KnowledgeGraph, turn: Optional[int] = None) -> list[dict]:
+    """T1: угрозы — ТОЛЬКО сущности, чьё нападение НАБЛЮДЕНО (решения Andy, §10.33/§10.34).
+
+    Мирный чужой угрозой не считается: он обычная сущность со своим DoF и ПЛЮСУЕТСЯ к общему
+    DoF. Близость боеспособного соседа нападением не является — «догадка из тумана нападением
+    не считается». Поэтому до первого наблюдённого нападения список угроз пуст, и цена риска
+    равна нулю не потому, что опасности нет, а потому что нападения ещё не было.
+
+    Позиция источника берётся только если он виден в ТЕКУЩЕМ наблюдении: иначе сущность остаётся
+    источником (флаг держится горизонт), но без устаревших координат.
+    """
+    seen_at = graph.observations
+    if turn is None:
+        turn = (graph.world or {}).get("ход")
     out = []
-    for e in graph.by_kind("unit"):
-        if e.is_own or e.attrs.get("x") is None:
+    for eid in graph.collapse_sources(turn):
+        e = graph.entity(eid)
+        if e is None or e.is_own or e.attrs.get("x") is None:
             continue
+        if e.attrs.get("виден_наблюдение") not in (None, seen_at):
+            continue                    # источник известен, но сейчас не виден
         a, origin = attack_of(graph, e)
-        if a is not None and a > 0:
-            out.append({"eid": e.eid, "attack": float(a), "x": e.attrs["x"], "y": e.attrs["y"],
-                        "move_rate": e.attrs.get("type_move_rate") or 1,
-                        "происхождение_атаки": origin})
+        if a is None or a <= 0:
+            continue
+        info = graph.collapse_sources(turn).get(eid) or {}
+        out.append({"eid": e.eid, "attack": float(a), "x": e.attrs["x"], "y": e.attrs["y"],
+                    "move_rate": e.attrs.get("type_move_rate") or 1,
+                    "происхождение_атаки": origin,
+                    "источник_коллапса": True,
+                    "почему": info.get("почему"), "с_хода": info.get("с_хода"),
+                    "владелец": info.get("владелец")})
     return out
 
 

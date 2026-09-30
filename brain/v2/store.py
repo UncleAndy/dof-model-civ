@@ -26,9 +26,10 @@ class KnowledgeStore:
         self.games = self.graph.world.get("games", 0)
 
     # --- наблюдение ---
-    def observe(self, obs: dict, available: dict, own_id: int = 0) -> KnowledgeGraph:
+    def observe(self, obs: dict, available: dict, own_id: int = 0,
+                turn: Optional[int] = None) -> KnowledgeGraph:
         """Влить одно наблюдение (ход) в базу. Возвращает обновлённый граф."""
-        self.graph = build_graph(obs, available, own_id=own_id, prior=self.graph)
+        self.graph = build_graph(obs, available, own_id=own_id, prior=self.graph, turn=turn)
         return self.graph
 
     def end_game(self, save: bool = True) -> None:

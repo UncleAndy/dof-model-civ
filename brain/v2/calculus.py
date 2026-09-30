@@ -78,13 +78,25 @@ def impute(graph: KnowledgeGraph, kind: str) -> tuple[Optional[float], int]:
     return vals[len(vals) // 2], len(vals)
 
 
-def calc_set(graph: KnowledgeGraph) -> tuple[list[dict], list[dict]]:
+def calc_set(graph: KnowledgeGraph, turn: Optional[int] = None) -> tuple[list[dict], list[dict]]:
     """Шаг 2 спеки: какие сущности входят в расчёт, какие исключены и почему."""
+    if turn is None:
+        turn = (graph.world or {}).get("ход")
     included: list[dict] = []
     excluded: list[dict] = []
     for kind in CALC_KINDS:
         for e in sorted(graph.by_kind(kind), key=lambda x: x.eid):
             v, origin = dof_of(graph, e)
+            # ИСТОЧНИК КОЛЛАПСА: его возможности — НЕ наши (решения Andy, §10.33: для атакующего
+            # знак был неверный — он прибавлял системе свои опции). Мирные чужие по-прежнему
+            # плюсуются; исключается только тот, чьё нападение наблюдено.
+            if not e.is_own and graph.is_collapse_source(e.eid, turn):
+                excluded.append({"eid": e.eid,
+                                 "why": "источник коллапса: его возможности не наши (нападение "
+                                        "наблюдено)",
+                                 "origin": origin,
+                                 "под_ударом_do": v})
+                continue
             if v is None:
                 imp, n = impute(graph, kind)
                 if imp is None or imp <= 0:

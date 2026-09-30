@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 from typing import Any, Optional
 
+from . import attack as attack_mod
 from . import calculus, effects, experiment, generator, sensors
 from .generator import Step
 from .executor import Journal, to_env_action
@@ -55,6 +56,9 @@ class Agent:
         self._turn: Optional[int] = None
         self._last_choice: Optional[tuple] = None   # (контроллер, актор, семейство)
         self._last_index: Optional[float] = None    # индекс на момент прошлого выбора
+        #: Полный срез нашего состояния на прошлом ходу: по нему наблюдается НАПАДЕНИЕ
+        #: (решения Andy, §10.33/§10.34). Нападение = только факт, не догадка.
+        self._prev_slice: Optional[dict] = None
 
     # ---------------------------------------------------------------- решение
     def decide(self, obs: dict, info: dict, own_id: int,
@@ -65,10 +69,17 @@ class Agent:
         menu = sensors.read_menu(available)
 
         # 1) знание: влить наблюдение (наборы возможностей накапливаются)
-        self.store.observe(obs, available, own_id)
+        turn = (info or {}).get("turn")
+        self.store.observe(obs, available, own_id, turn=turn)
         g = self.store.graph
         self._record_growth(g, menu)
-        turn = (info or {}).get("turn")
+
+        # 1.2) НАПАДЕНИЕ: сравнить полные срезы. Источником коллапса становится только тот
+        # чужой, чьё нападение НАБЛЮДЕНО (§10.33/§10.34), и держится весь горизонт.
+        events, self._prev_slice = attack_mod.observe_slice(
+            g, obs, own_id, turn, self._prev_slice, last_choice=self._last_choice)
+        for ev in events:
+            self.journal.write({"ход": turn, "нападение": ev})
 
         # 1.5) длящийся опыт: продолжаем или закрываем (E3: прерывается, если действие отпало)
         if self._experiment is not None:
@@ -134,6 +145,7 @@ class Agent:
             "индекс": decision.trace["index_current"],
             "риск": decision.trace.get("риск"),
             "чужое": _foreign_summary(g),
+            "источники_коллапса": g.collapse_sources((g.world or {}).get("ход")),
             "кальк_включено": len(decision.trace["calc_included"]),
             "кальк_исключено": decision.trace["calc_excluded"],
             "кандидаты": [{"эффект": c["path"]["effect"], "net_delta": c["net_delta"],
