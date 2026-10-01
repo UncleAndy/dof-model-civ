@@ -309,6 +309,12 @@ class Agent:
         # Пишем только для ударных семейств: для остальных чужая сторона не при чём.
         if fam == "produce":
             self._produce_started = str(getattr(step, "action", "") or "")[len("produce_"):] or None
+            # Запоминаем НАЗВАНИЕ стройки в самом городе: мир публикует только код и индекс, а на
+            # кадре видео нужно читаемое имя (иначе «стройка к6 за 2х» ничего не говорит).
+            if self._produce_started and step.ctrl == "city":
+                _ce = self.store.graph.entity(f"city:{step.actor}")
+                if _ce is not None:
+                    _ce.attrs["стройка"] = self._produce_started
         if fam in ("attack", "conquer_city") and self._before_foe is not None:
             fight = effects.fight_diff(self._before, after, self._before_foe,
                                        effects.foe_snapshot(obs, own_id))

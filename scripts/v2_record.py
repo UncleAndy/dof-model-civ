@@ -266,6 +266,159 @@ def _composite(frames: list[Path], ov_dir: Optional[Path], out_dir: Path) -> lis
     return result
 
 
+def _font(size: int):
+    """Мелкий моноширинный шрифт (DejaVu Sans Mono) — числа выравниваются по колонкам."""
+    import glob
+    from PIL import ImageFont
+    for pat in ("/nix/store/*dejavu-fonts*/share/fonts/truetype/DejaVuSansMono.ttf",
+                "/nix/store/*dejavu-fonts*/share/fonts/truetype/DejaVuSans.ttf"):
+        hits = sorted(glob.glob(pat))
+        if hits:
+            try:
+                return ImageFont.truetype(hits[0], size)
+            except Exception:  # noqa: BLE001
+                continue
+    return ImageFont.load_default()
+
+
+def _counts(items: list[str]) -> list[tuple[str, int]]:
+    """Свернуть повторы: [Warriors, Warriors, Explorer] → [(Explorer,1), (Warriors,2)].
+
+    Повторяющиеся типы помечаются как «x N» — иначе список юнитов в городе занимает пол-экрана.
+    """
+    seen: dict[str, int] = {}
+    for x in items:
+        seen[x] = seen.get(x, 0) + 1
+    return sorted(seen.items(), key=lambda kv: (-kv[1], kv[0]))
+
+
+def _state_lines(obs: dict, turn, own_id: int, graph, index) -> tuple[list[str], list[str]]:
+    """Текст состояния: СЛЕВА города, СПРАВА юниты. Только то, что публикует мир и что посчитано."""
+    obs = obs or {}
+    cities = [c for c in (obs.get("city") or {}).values() if c.get("owner") == own_id]
+    units = [u for u in (obs.get("unit") or {}).values() if u.get("owner") == own_id]
+    left = [f"ХОД {turn}"]
+    if isinstance(index, (int, float)):
+        left.append(f"индекс {index:.2f}")
+    left.append(f"ГОРОДА: {len(cities)}")
+    # Кто стоит В ГОРОДЕ: в Freeciv «внутри» города — это его клетка. Сопоставляем по координатам
+    # (поле `home_city` означает «город содержит юнита», это другое).
+    by_tile: dict[tuple, list[str]] = {}
+    for u in units:
+        by_tile.setdefault((u.get("x"), u.get("y")), []).append(
+            str(u.get("type_rule_name") or "?"))
+    for c in sorted(cities, key=lambda x: str(x.get("name"))):
+        cid = str(c.get("id"))
+        name = str(c.get("name") or cid)
+        left.append(f"{name} р{c.get('size')}")
+        prod = c.get("production_kind")
+        eta = c.get("turns_to_prod_complete")
+        e = graph.entity(f"city:{cid}") if graph is not None else None
+        # Название стройки: мир публикует только код, поэтому берём то, что агент сам записал.
+        pname = (e.attrs.get("стройка") if e is not None else None) or f"код{prod}"
+        # 32767 (и вообще огромные значения) — это «срок неизвестен», а не число ходов.
+        eta_txt = f"за {eta}х" if isinstance(eta, int) and 0 < eta < 1000 else "срок неизвестен"
+        left.append(f"  стройка {pname} {eta_txt}")
+        left.append(f"  еда{c.get('surplus_food')} щит{c.get('prod_shield')} "
+                    f"наука{c.get('science')}")
+        d = getattr(getattr(e, "dof", None), "v", None) if e is not None else None
+        d_txt = f"{float(d):.0f}" if isinstance(d, (int, float)) else "—"
+        left.append(f"  действий {d_txt}")
+        # ПОСТРОЙКИ: вертикальным списком (имена восстановлены из вектора `improvements`).
+        imps = list(e.attrs.get("improvements_present") or []) if e is not None else []
+        left.append("  постройки:")
+        if imps:
+            for nm, cnt in _counts(imps):
+                left.append(f"    {nm}" + (f" x {cnt}" if cnt > 1 else ""))
+        else:
+            left.append("    —")
+        # ЮНИТЫ В ГОРОДЕ — вертикальным списком, только имена, повторы как «x N».
+        here = by_tile.get((c.get("x"), c.get("y"))) or []
+        left.append("  в городе:")
+        if here:
+            for nm, cnt in _counts(here):
+                left.append(f"    {nm}" + (f" x {cnt}" if cnt > 1 else ""))
+        else:
+            left.append("    —")
+    # ЮНИТЫ — справа: одна строка на юнита; ОДИНАКОВЫЕ строки сворачиваются как «x N».
+    right = ["ЮНИТЫ: " + str(len(units))]
+    ulines: list[str] = []
+    for u in units:
+        uid = None
+        for k, v in (obs.get("unit") or {}).items():
+            if v is u:
+                uid = str(k)
+                break
+        t = str(u.get("type_rule_name") or "?")
+        e = graph.entity(f"unit:{uid}") if (graph is not None and uid) else None
+        d = getattr(getattr(e, "dof", None), "v", None) if e is not None else None
+        d_txt = f"д{float(d):.0f}" if isinstance(d, (int, float)) else "д—"
+        fort = " УКР" if (e is not None and e.attrs.get("наш_укреплён")) else ""
+        ulines.append(f"{t} HP{u.get('health')} ход{u.get('moves_left')} "
+                      f"({u.get('x')},{u.get('y')}) {d_txt}{fort}")
+    for line, cnt in _counts(ulines):
+        right.append(line + (f" x {cnt}" if cnt > 1 else ""))
+    return left, right
+
+
+def _clip(text: str, font, max_w: int) -> str:
+    """Обрезать строку по ШИРИНЕ (колонка не должна занимать больше трети кадра)."""
+    if font.getlength(text) <= max_w:
+        return text
+    while text and font.getlength(text + "…") > max_w:
+        text = text[:-1]
+    return text + "…"
+
+
+def _draw_state(frames: list[Path], states: dict, out_dir: Path) -> list[Path]:
+    """Нанести текст состояния на кадры: города слева, юниты справа.
+
+    Контраст без заливки: светлые глифы с ТЁМНОЙ обводкой — читаемо и на тёмном, и на светлом фоне
+    (панель не рисуем, чтобы не закрывать карту). Колонка ≤ 1/3 ширины кадра, по высоте — сколько есть.
+    """
+    if not frames or not states:
+        return frames
+    from PIL import Image, ImageDraw
+    out_dir.mkdir(parents=True, exist_ok=True)
+    result: list[Path] = []
+    for f in frames:
+        st = states.get(f.name)
+        if not st:
+            result.append(f)
+            continue
+        try:
+            img = Image.open(f).convert("RGB")
+            draw = ImageDraw.Draw(img)
+            size = max(11, img.width // 170)          # мелкий шрифт
+            font = _font(size)
+            lh = size + 3
+            margin = 3 * lh                             # отступ ≈ 3 строки текста (сверху, слева, справа)
+            max_w = int(img.width / 3) - 2 * margin   # колонка ≤ 1/3 ширины, с запасом по краям
+            left, right = st
+            y = margin
+            for line in left:                          # ГОРОДА — слева
+                draw.text((margin, y), _clip(line, font, max_w), font=font,
+                          fill=(255, 255, 255), stroke_width=2, stroke_fill=(0, 0, 0))
+                y += lh
+                if y > img.height - lh:
+                    break
+            y = margin
+            for line in right:                         # ЮНИТЫ — справа
+                txt = _clip(line, font, max_w)
+                w = font.getlength(txt)
+                draw.text((img.width - margin - w, y), txt, font=font,
+                          fill=(255, 255, 255), stroke_width=2, stroke_fill=(0, 0, 0))
+                y += lh
+                if y > img.height - lh:
+                    break
+            dst = out_dir / f.name
+            img.save(dst)
+            result.append(dst)
+        except Exception:  # noqa: BLE001
+            result.append(f)
+    return result
+
+
 def _ffmpeg_path() -> Optional[str]:
     """ffmpeg может не попасть в PATH процесса: ищем и по nix-хранилищу."""
     import glob
@@ -323,6 +476,21 @@ def play(agent: Agent, seed: int, port: int, turns: int) -> dict:
     used: set = set()
     played = actions = 0
     terminated = truncated = False
+    # ТЕКСТ СОСТОЯНИЯ НА КАДРЕ: к каждому новому кадру привязываем состояние ИМЕННО этого момента.
+    states: dict[str, tuple[list[str], list[str]]] = {}
+    seen: set = set()
+
+    def _capture(_obs: dict, _turn) -> None:
+        new = [p for p in _frames_since(before | seen) if p.name not in states]
+        if not new:
+            return
+        idx = getattr(agent, "_last_index", None)
+        graph = getattr(getattr(agent, "store", None), "graph", None)
+        left, right = _state_lines(_obs, _turn, own_id, graph, idx)
+        for p in new:
+            states[p.name] = (left, right)
+            seen.add(p)
+
     try:
         for _ in range(turns):
             for _ in range(MAX_DECISIONS_PER_TURN):
@@ -333,12 +501,14 @@ def play(agent: Agent, seed: int, port: int, turns: int) -> dict:
                 used.add((action[0], action[1]))
                 obs, _r, terminated, truncated, info = step(env, action)
                 agent.record_outcome(obs, own_id)
+                _capture(obs, (info or {}).get("turn"))
                 if terminated or truncated:
                     break
             if terminated or truncated:
                 break
             obs, _r, terminated, truncated, info = step(env, None)
             agent.record_outcome(obs, own_id)
+            _capture(obs, (info or {}).get("turn"))
             used.clear()
             played += 1
             if terminated or truncated:
@@ -351,6 +521,13 @@ def play(agent: Agent, seed: int, port: int, turns: int) -> dict:
     frames = _frames_since(before)
     frames = _composite(frames, SHOTS_ROOT.parent / "overview" / f"port{port}",
                         ROOT / "knowledge" / "frames_overlay" / f"port{port}")
+    if os.environ.get("V2_STATE_TEXT", "1") == "1":
+        frames = _draw_state(frames, states, ROOT / "knowledge" / "frames_text" / f"port{port}")
+        print(f"  [съёмка] текст состояния нанесён на {len(states)} кадров", flush=True)
+        if states:
+            _last = list(states.values())[-1]
+            print("  [текст на кадре] города (слева): " + " | ".join(_last[0][:14]), flush=True)
+            print("  [текст на кадре] юниты (справа): " + " | ".join(_last[1][:8]), flush=True)
     out = ROOT / "knowledge" / f"game_{seed}_port{port}.mp4"
     ok = _to_video(frames, out, FPS)
     print(f"  кадров {len(frames)} → {'видео ' + str(out) if ok else 'PNG в ' + str(SHOTS_ROOT)}",
