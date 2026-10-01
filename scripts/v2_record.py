@@ -316,11 +316,24 @@ def _state_lines(obs: dict, turn, own_id: int, graph, index) -> tuple[list[str],
         e = graph.entity(f"city:{cid}") if graph is not None else None
         # Название стройки: мир публикует только код, поэтому берём то, что агент сам записал.
         pname = (e.attrs.get("стройка") if e is not None else None) or f"код{prod}"
-        # 32767 (и вообще огромные значения) — это «срок неизвестен», а не число ходов.
+        # 32767 (и вообще огромные значения) — это «никогда», а не число ходов. Мир считает так
+        # (`city_turns_to_build`), когда ЧИСТЫЙ приход щитов ≤ 0: тогда постройка не движется
+        # вообще. Показываем ПРИЧИНУ, а не только «неизвестно».
         eta_txt = f"за {eta}х" if isinstance(eta, int) and 0 < eta < 1000 else "срок неизвестен"
+        if eta_txt == "срок неизвестен":
+            gross = c.get("prod_shield")
+            net = c.get("surplus_shield")
+            waste = c.get("city_waste") or 0
+            if isinstance(net, (int, float)) and isinstance(gross, (int, float)) and gross > 0 \
+                    and net <= 0:
+                why = "содержание юнитов" if not waste else f"потери {waste:g}"
+                eta_txt = f"НЕ ИДЁТ: щиты {gross:.0f}→{net:.0f} ({why})"
         left.append(f"  стройка {pname} {eta_txt}")
-        left.append(f"  еда{c.get('surplus_food')} щит{c.get('prod_shield')} "
-                    f"наука{c.get('science')}")
+        gross_s = c.get("prod_shield")
+        net_s = c.get("surplus_shield")
+        sh_txt = (f"щит{net_s:.0f}/{gross_s:.0f}" if isinstance(net_s, (int, float))
+                  and isinstance(gross_s, (int, float)) else f"щит{gross_s}")
+        left.append(f"  еда{c.get('surplus_food')} {sh_txt} наука{c.get('science')}")
         d = getattr(getattr(e, "dof", None), "v", None) if e is not None else None
         d_txt = f"{float(d):.0f}" if isinstance(d, (int, float)) else "—"
         left.append(f"  действий {d_txt}")
