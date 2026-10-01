@@ -125,10 +125,15 @@ def play(agent: Agent, seed: int, port: int, turns: int) -> dict:
             ensure_ascii=False, default=json_default))
         print(f"  [снимок] {dump}", flush=True)
 
+    # ВАЖНО: пустое наблюдение — это НЕ «потеряли всё». Мир при серверной проблеме отдаёт
+    # `observation = {}` и `truncated = True` (freeciv_base_env.py:146), и тогда итог читается как
+    # «0 городов, 0 юнитов». Поэтому различаем явно: конец партии, обрыв и пустое наблюдение.
     return {"seed": seed, "port": port, "ходов_сыграно": played, "счёт": me.get("score"),
             "городов": len(cities), "юнитов": len(units),
             "золото": me.get("gold"), "наука_баллов": me.get("bulbs_researched"),
-            "действий": actions, "ходов_без_действия": turns_without_action}
+            "действий": actions, "ходов_без_действия": turns_without_action,
+            "партия_окончена": bool(terminated), "обрыв": bool(truncated),
+            "наблюдение_пустое": not bool(obs)}
 
 
 def main() -> int:
