@@ -77,16 +77,49 @@ def dof_of(graph: KnowledgeGraph, e) -> tuple[Optional[float], str]:
 
 
 def impute(graph: KnowledgeGraph, kind: str) -> tuple[Optional[float], int]:
-    """Среднее по известным того же вида — как моделировать незнание (не нулём)."""
+    """Среднее по известным того же вида — как моделировать незнание (не нулём).
+
+    Если ни одной сущности этого вида в графе НЕТ (типичный случай для города: пока агент своего не
+    основал, городов нет вовсе), берём **измеренный DoF вида**, накопленный за прошлые партии в
+    канале наблюдений. Это разрывает замкнутый круг «нет города → нет замера → нет цены → нет города»
+    (найдено замером: все 601 кандидат `found_city` имели `net_delta: null`, §10.88).
+
+    Для города срез — **размер 1** (новый город рождается размером 1); записи с пустым окном меню
+    (0 переходов, загрязнение `PersistentCityProduction`) в канал не попадают вовсе.
+    """
     vals = []
     for e in graph.by_kind(kind):
         v, _ = dof_of(graph, e)
         if v is not None:
             vals.append(v)
-    if not vals:
-        return None, 0
-    vals.sort()
-    return vals[len(vals) // 2], len(vals)
+    if vals:
+        vals.sort()
+        return vals[len(vals) // 2], len(vals)
+    measured = None
+    if kind == "city":
+        # 1) ДОСТИЖИМОЕ значение своих городов (В1), 2) расчёт по измеренным частям, 3) прежний канал.
+        own = (graph.observed_median("dof_city_reach", {"размер": 1})
+               or graph.observed_median("dof_city_reach"))
+        if own and own > 0:
+            return float(own), 1
+        f_own = (graph.observed_median("city_own_families", {"размер": 1})
+                 or graph.observed_median("city_own_families"))
+        n_build = graph.observed_median("city_size_buildable", {"размер": 1})
+        types = [float(t.attrs.get("dof_families") or 0) for t in graph.by_kind("unit_type")]
+        types = [v for v in types if v > 0]
+        if f_own and n_build and types:
+            # В1 при отсутствии своего города: свои семейства + разрешённые постройки × средняя
+            # измеренная DoF типа. Все три части ИЗМЕРЕНЫ; среднее — по правилу «незнание ≠ ноль».
+            est = float(f_own) + float(n_build) * (sum(types) / len(types))
+            if est > 0:
+                return est, 1
+        measured = (graph.observed_median("dof_city", {"размер": 1})
+                    or graph.observed_median("dof_city"))
+    else:
+        measured = graph.observed_median(f"dof_{kind}")
+    if measured and measured > 0:
+        return float(measured), 1
+    return None, 0
 
 
 def calc_set(graph: KnowledgeGraph, turn: Optional[int] = None) -> tuple[list[dict], list[dict]]:
@@ -207,7 +240,7 @@ def _option_net(graph: KnowledgeGraph, cur_v, ctrl: str, action: str,
                 imp, _ = impute(graph, kind)
                 if imp and imp > 0:
                     delta -= n * math.log(imp)
-            k = int((proj.changes or {}).get("city_buildable_delta", 0) or 0)
+            k = float((proj.changes or {}).get("city_buildable_delta", 0) or 0)
             if k:
                 own = [e for e in graph.by_kind("city") if e.is_own]
                 vals = [d for d, _ in (dof_of(graph, e) for e in own) if d and d > 0]
@@ -215,7 +248,7 @@ def _option_net(graph: KnowledgeGraph, cur_v, ctrl: str, action: str,
                     v = sorted(vals)[len(vals) // 2]
                     if v + k > 0:
                         delta += math.log(v + k) - math.log(v)
-                        why = f"меню города: +{k} позиций (измерено)"
+                        why = f"меню города: {k:+.2f} позиций за действие (измерено)"
                         gained = True
 
     # --- выигрыши из измеренного состояния (не зависят от записи эффекта) ---

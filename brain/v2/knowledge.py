@@ -352,6 +352,43 @@ def _dist(f1: tuple, f2: tuple) -> Optional[float]:
     return sum(abs(float(x) - float(y)) for x, y in pairs)
 
 
+def _city_reachable_dof(g: "KnowledgeGraph", menu: dict, city) -> tuple[float, str]:
+    """В1: DoF города = свои действия + то, что он ПОЗВОЛЯЕТ системе создать.
+
+    Смысл (решение Andy, §10.91): город — единственный, кто создаёт новые сущности, и именно это
+    делает его самым «свободным» в игре. Считаем разрешённые сейчас предметы производства
+    (`produce_*`), беря для каждого ИЗМЕРЕННЫЙ DoF его типа (у юнитов — семейства, паспорт публикует
+    мир). Для тех, чей DoF ещё не измерен (улучшения и чудеса), берём среднее по известным типам —
+    правило «незнание ≠ ноль», а не 0.
+
+    Возвращаем (значение, пояснение). Валюта одна с юнитами — семейства.
+    """
+    ok, published = sensors.city_producibles(menu, city.cid)
+    own_fams = family_of_options(sensors.valid_options(menu, "city", str(city.cid)))
+    total = float(len(own_fams))
+    vals: list[float] = []
+    unknown: list[str] = []
+    for name in ok:
+        te = g.entity(f"unit_type:{name}")
+        v = te.attrs.get("dof_families") if te is not None else None
+        if isinstance(v, (int, float)) and v > 0:
+            vals.append(float(v))
+        else:
+            unknown.append(name)
+    fill = 0.0
+    if unknown:
+        known_types = [float(t.attrs.get("dof_families") or 0) for t in g.by_kind("unit_type")]
+        known_types = [v for v in known_types if v > 0]
+        fill = (sum(known_types) / len(known_types)) if known_types else 0.0
+        vals.extend([fill] * len(unknown))
+    total += sum(vals)
+    note = (f"достижимое: разрешено {len(ok)} постр. из {len(published)} опубликованных"
+            f"{' (' + ', '.join(ok[:4]) + ('…' if len(ok) > 4 else '') + ')' if ok else ''}; "
+            f"DoF построек {sum(vals):.1f}"
+            + (f", из них {len(unknown)} не измерено — средним {fill:.1f}" if unknown else ""))
+    return total, note
+
+
 def _dof_by_type(g: "KnowledgeGraph") -> dict[str, tuple]:
     """Тип -> (вектор признаков, DoF). База для аналогии (6.3)."""
     table: dict[str, tuple] = {}
@@ -522,8 +559,28 @@ def build_graph(obs: dict, available: dict, own_id: int = 0,
                         "food_stock": (c.attrs or {}).get("food_stock"),
                         "growth_in": (c.attrs or {}).get("growth_in")})
         n, note = sensors.city_option_count(c, menu)
-        e.dof = Value.measured(n, source="город:меню постройки", note=note)
+        # В5+В1 (решение Andy, §10.91): город считается в ТОЙ ЖЕ валюте, что юниты (семейства), и по
+        # тому, что он ПОЗВОЛЯЕТ системе: свои действия + создание всего, что ему разрешено строить.
+        # Раньше город считался только по своему меню, поэтому выглядел беднее поселенца, хотя может
+        # производить юнитов, улучшения и чудеса (у каждого — свой измеренный DoF).
+        own_fams = family_of_options(sensors.valid_options(menu, "city", str(c.cid)))
+        reach, reach_note = _city_reachable_dof(g, menu, c)
+        e.attrs["n_actions"] = n
+        e.attrs["dof_own_families"] = len(own_fams)
+        ok_prod, all_prod = sensors.city_producibles(menu, c.cid)
+        e.attrs["n_produce_allowed"] = len(ok_prod)
+        e.attrs["n_produce_published"] = len(all_prod)
+        e.dof = Value.measured(reach, source="город: свои действия + достижимые возможности",
+                               note=f"{note}; {reach_note}")
         g.add_edge(Edge(src=eid, dst=f"player:{own_id}", kind="belongs_to"))
+        # Каналы замера для будущих партий: ДОСТИЖИМОЕ значение по размеру (В1) и прежнее — число
+        # переходов меню (справка). Пустое окно (0 переходов) не пишем: это загрязнение (§10.69).
+        if reach > 0:
+            g.note_observation("dof_city_reach", {"значение": reach, "размер": c.size,
+                                                  "источник": "город: свои действия + постройки"})
+        if n > 0:
+            g.note_observation("dof_city", {"значение": n, "размер": c.size,
+                                            "источник": "меню города (наблюдено агентом)"})
 
     # --- чужие акторы: DoF по аналогии ---
     for a in sensors.foreign_actors(obs, own_id):

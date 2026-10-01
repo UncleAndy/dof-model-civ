@@ -217,6 +217,29 @@ def measured_dof(menu: dict, section: str, actor_key: str, actor_known: bool = F
                           note=";".join(opts[:6]) + ("…" if len(opts) > 6 else ""))
 
 
+def city_producibles(menu: dict, city_cid) -> tuple[list[str], list[str]]:
+    """Что город МОЖЕТ построить: (разрешённые сейчас, опубликованные вообще).
+
+    Мир публикует меню города целиком — `city_work_*`/`city_unwork_*` по каждой клетке,
+    `city_buy_production`, смену специалистов и **каждый предмет производства** `produce_<Имя>`.
+    Разрешена сейчас лишь часть (её и можно сделать действием); остальное — ГЕЙТ по технологиям
+    и ресурсам: это будущий DoF, который открывает наука (указание Andy № 1).
+
+    Возвращаем именно предметы производства: за ними стоят сущности со своим DoF (у юнитов он
+    измерен), поэтому город считается по тому, что он ПОЗВОЛЯЕТ системе создать (решение В1).
+    """
+    sec = (menu.get("city") or {}).get(str(city_cid))
+    if not sec:
+        return [], []
+    if isinstance(sec, dict):
+        names_all = [a for a in sec if str(a).startswith("produce_")]
+        names_ok = [a for a, ok in sec.items() if ok and str(a).startswith("produce_")]
+        return names_ok, names_all
+    # список (как в сохранённых наблюдениях): различить «разрешено» нечем — считаем всё публикуемым
+    names = [a for a in sec if str(a).startswith("produce_")]
+    return names, names
+
+
 def city_option_count(city: City, menu: dict) -> tuple[int, str]:
     """Число возможных действий города (поправка Andy: город не двигается, но меню у него есть).
 

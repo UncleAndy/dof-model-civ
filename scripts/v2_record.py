@@ -52,14 +52,24 @@ SHOTS_ROOT = Path(log_dir) / "screenshots"
 #: Это тот же смысл, что у штатной правки CivRealm (`build_server.py:
 #: update_javascript_for_clean_screenshot` — там авто-открытие окон закомментировано в JS клиента),
 #: но делается в НАШЕМ браузере: стенд не трогаем (docker недоступен и это стенд пользователя).
-#: ВАЖНО (измерено): правило `.ui-dialog` прятать НЕЛЬЗЯ — в этом контейнере лежит и обзорная
-#: карта, из-за чего она получала размер 0x0 и «вся карта» пропадала. Прячем только окна сообщений.
+#: Прячем ВСЕ окна, включая контейнеры `.ui-dialog`: замечание Andy — окна перекрывают карту.
+#: (Обзорную карту в кадр больше не вклеиваем: Andy выбрал вариант БЕЗ оверлея, общим планом.)
 HIDE_CSS = """
-#game_chatbox_panel, .chatbox_dialog, .ui-widget-overlay,
+#game_chatbox_panel, .chatbox_dialog, .ui-dialog, .ui-widget-overlay,
 #dialog, #city_dialog, #tech_dialog, #diplomacy_dialog, #messages_panel,
 #pregame_text_input, #game_dialog, #nation_dialog, #spacer_dialog,
 #units_dialog, #report_dialog { display: none !important; }
 """
+
+#: Размер окна съёмки. Чем больше окно, тем БОЛЬШЕ карты видно в кадре (замечание Andy: нужен
+#: общий план, а не детали). Ширина карты — 78 клеток, так что 2560x1440 показывает почти всю.
+WINDOW = os.environ.get("V2_WINDOW", "2560x1440")
+
+#: ТУМАН: снимать ОТ ЛИЦА нашего агента (видно только то, что он реально видит), а не наблюдателем.
+#: Механика (проверено по коду CivRealm): наблюдатель входит командой `/observe` без имени и видит ВСЮ
+#: карту без тумана; наш собственный вид — `/observe <имя игрока>` — туман уважает.
+#: `V2_FOG=0` возвращает прежний режим (наблюдатель, вся карта открыта).
+FOG = os.environ.get("V2_FOG", "1") == "1"
 
 
 def _start_ui_hiding(env, overview_dir: Optional[Path] = None) -> None:
@@ -91,6 +101,12 @@ def _start_ui_hiding(env, overview_dir: Optional[Path] = None) -> None:
                 if not said_driver:
                     print("  [съёмка] драйвер наблюдения получен", flush=True)
                     said_driver = True
+                    try:
+                        w, h = (int(x) for x in WINDOW.lower().split("x"))
+                        driver.set_window_size(w, h)      # больше окна — больше карты в кадре
+                        print(f"  [съёмка] окно {w}x{h}", flush=True)
+                    except Exception:  # noqa: BLE001
+                        pass
                 try:
                     driver.execute_script(
                         "var s=document.getElementById('hermes_hide_ui');"
@@ -101,13 +117,22 @@ def _start_ui_hiding(env, overview_dir: Optional[Path] = None) -> None:
                         ".forEach(function(d){d.style.display='none';});"
                         "['game_chatbox_panel','messages_panel'].forEach(function(id){"
                         "var e=document.getElementById(id);if(e){e.style.display='none';}});")
-                    # обзорная карта: показать ВМЕСТЕ С РОДИТЕЛЯМИ (её контейнер — .ui-dialog,
-                    # который мы больше не скрываем) и перерисовать
-                    driver.execute_script(
-                        "try{var o=document.getElementById('overview_map');"
-                        "if(o){var n=o;while(n&&n.style){n.style.display='block';"
-                        "n.style.visibility='visible';n=n.parentElement;}}}catch(e){}"
-                        "try{if(typeof redraw_overview==='function'){redraw_overview();}}catch(e){}")
+                    # обзорная карта: нужна ТОЛЬКО для режима с оверлеем (V2_OVERVIEW=1). Показываем её
+                    # вместе с родителями и перерисовываем; иначе не трогаем (её контейнер скрыт).
+                    if overview_dir is not None:
+                        driver.execute_script(
+                            "try{var o=document.getElementById('overview_map');"
+                            "if(o){var n=o;while(n&&n.style){n.style.display='block';"
+                            "n.style.visibility='visible';n=n.parentElement;}}}catch(e){}"
+                            "try{if(typeof redraw_overview==='function'){redraw_overview();}}catch(e){}")
+                    if FOG:
+                        # Камера на НАШ ЮНИТ (как штатный локальный вид): в кадре оказывается именно та
+                        # область, которую агент открыл, а остальное остаётся тёмным (неизвестным).
+                        # Проверено: камера на центре карты даёт почти чёрный кадр (95 %), потому что
+                        # открытый агентом пятачок лежит в стороне от центра.
+                        driver.execute_script(
+                            "try{var u=Object.entries(units);"
+                            "if(u.length){center_tile_mapcanvas(tiles[u[0][1].tile]);}}catch(e){}")
                     if overview_dir is not None:
                         try:
                             # Снимок ЭЛЕМЕНТА в этом браузере падает (WebDriverException),
@@ -141,6 +166,48 @@ def _start_ui_hiding(env, overview_dir: Optional[Path] = None) -> None:
             time.sleep(1.5)
 
     threading.Thread(target=loop, daemon=True).start()
+
+
+#: Действующий env — нужен, чтобы при SIGTERM закрыть браузер съёмки (иначе Firefox остаётся
+#: висеть и грузит процессор: измерено — 18 таких утечек, каждая 20–50 % CPU).
+_ACTIVE: dict = {"env": None}
+
+
+def _cleanup_env(env) -> None:
+    """Закрыть наблюдение и БРАУЗЕР съёмки. Без этого процессы копятся."""
+    if env is None:
+        return
+    try:
+        base = getattr(env, "unwrapped", env)
+        ctrl = getattr(base, "civ_controller", None)
+        mon = getattr(ctrl, "monitor", None) if ctrl is not None else None
+        if mon is not None:
+            try:
+                mon.stop_monitor()
+            except Exception:  # noqa: BLE001
+                pass
+            drv = getattr(mon, "_driver", None)
+            if drv is not None:
+                try:
+                    drv.quit()
+                except Exception:  # noqa: BLE001
+                    pass
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        env.close()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _on_terminate(sig, _frm):  # noqa: ANN001
+    print(f"  [съёмка] сигнал {sig}: закрываю браузер и выхожу", flush=True)
+    _cleanup_env(_ACTIVE.get("env"))
+    os._exit(143)
+
+
+signal.signal(signal.SIGTERM, _on_terminate)
+signal.signal(signal.SIGINT, _on_terminate)
 
 
 class StepTimeout(Exception):
@@ -243,9 +310,11 @@ def play(agent: Agent, seed: int, port: int, turns: int) -> dict:
     fc_args["client_port"] = port
     env = gymnasium.make("civrealm/FreecivBase-v0")
     before = set(SHOTS_ROOT.rglob("*.png")) if SHOTS_ROOT.exists() else set()
-    ov_dir = SHOTS_ROOT.parent / "overview" / f"port{port}"
+    ov_dir = (SHOTS_ROOT.parent / "overview" / f"port{port}"
+              if os.environ.get("V2_OVERVIEW") == "1" else None)
     obs, info = env.reset(client_port=port, seed=seed)
-    _start_ui_hiding(env, ov_dir)   # прячем окна и снимаем обзорную карту (вся карта)
+    _ACTIVE["env"] = env
+    _start_ui_hiding(env, ov_dir)   # прячем окна (и, если просили, снимаем обзорную карту)
     try:
         own_id = env.get_playerid()
     except Exception:  # noqa: BLE001
@@ -276,10 +345,8 @@ def play(agent: Agent, seed: int, port: int, turns: int) -> dict:
                 break
     except StepTimeout:
         print("  [клин] шаг не вернулся — партия прервана", flush=True)
-    try:
-        env.close()
-    except Exception:  # noqa: BLE001
-        pass
+    _cleanup_env(env)
+    _ACTIVE["env"] = None
 
     frames = _frames_since(before)
     frames = _composite(frames, SHOTS_ROOT.parent / "overview" / f"port{port}",
@@ -301,7 +368,8 @@ def play(agent: Agent, seed: int, port: int, turns: int) -> dict:
 def main() -> int:
     fc_args["debug.take_screenshot"] = True      # штатные кадры CivRealm
     fc_args["debug.headless"] = True             # браузер без окна
-    fc_args["debug.global_view_screenshot"] = True   # камера на центр карты, а не на один юнит
+    fc_args["debug.global_view_screenshot"] = not FOG   # FOG: наш вид (туман), иначе наблюдатель (вся карта)
+    print(f"[запись] туман: {'наш вид агента' if FOG else 'наблюдатель (вся карта)'}; окно {WINDOW}")
     agent = Agent(STORE, trace_path=TRACE, avoid=wedges.is_wedged)
     print(f"[запись] база: {STORE}; кадры: {SHOTS_ROOT}")
     results = []
