@@ -152,7 +152,9 @@ def observe_slice(graph: KnowledgeGraph, obs: dict, own_id: int, turn: Optional[
             # поэтому укрепление помним сами (см. `agent.decide`), а атаку чужого берём по типу или
             # средним по известным (правило «незнание ≠ ноль»).
             _ue = graph.entity(f"unit:{v['кто']}")
-            _atk, _atk_src = threat.attack_of(graph, f["eid"], f.get("name"))
+            _fe = graph.entity(f["eid"])            # чужой есть в графе: и по наблюдению, и по карте
+            _atk, _atk_src = (threat.attack_of(graph, _fe) if _fe is not None
+                              else (None, "чужой не в графе — атаку взять неоткуда"))
             fight.update({
                 "наш_укреплён": (bool(_ue.attrs.get("наш_укреплён")) if _ue is not None else None),
                 "наш_до": (_ue.attrs.get("type_defense_strength") if _ue is not None else None),
