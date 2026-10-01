@@ -373,8 +373,16 @@ def _city_reachable_dof(g: "KnowledgeGraph", menu: dict, city) -> tuple[float, s
         v = te.attrs.get("dof_families") if te is not None else None
         if isinstance(v, (int, float)) and v > 0:
             vals.append(float(v))
-        else:
-            unknown.append(name)
+            continue
+        # Улучшение или чудо: своего меню у него нет. Берём ИЗМЕРЕННЫЙ вклад, если он накоплен
+        # (канал `improvement_unlock`: насколько улучшение расширяет опубликованное меню города,
+        # сравнение «с ним / без него» по одинаковому размеру города). Если замера ещё нет — в
+        # «неизвестные», и они закрываются средним по известным (правило «незнание ≠ ноль»).
+        measured = g.observed_median("improvement_unlock", {"улучшение": name})
+        if measured is not None:
+            vals.append(max(0.0, float(measured)))
+            continue
+        unknown.append(name)
     fill = 0.0
     if unknown:
         known_types = [float(t.attrs.get("dof_families") or 0) for t in g.by_kind("unit_type")]
@@ -387,6 +395,51 @@ def _city_reachable_dof(g: "KnowledgeGraph", menu: dict, city) -> tuple[float, s
             f"DoF построек {sum(vals):.1f}"
             + (f", из них {len(unknown)} не измерено — средним {fill:.1f}" if unknown else ""))
     return total, note
+
+
+def _median(vals: list[float]) -> float:
+    v = sorted(vals)
+    return v[len(v) // 2]
+
+
+def measure_improvement_unlock(g: "KnowledgeGraph") -> int:
+    """Измерить вклад улучшений: насколько наличие улучшения расширяет меню города.
+
+    Сравнение «с улучшением / без» **по одинаковому размеру города** (размер — главный смешивающий
+    фактор). Мера — число ОПУБЛИКОВАННЫХ предметов производства (канал `city_output`): это то, что
+    улучшение ОТКРЫВАЕТ. Если разница ≤ 0, улучшение новых действий не добавляет — тогда пишем 0
+    (его ценность в скорости, а не в меню), а не выдумываем величину.
+
+    Вызывается при завершении партии: знание накапливается между партиями, а не берётся со стороны.
+    """
+    rows = [r for r in (g.observed.get("city_output") or []) if isinstance(r, dict)]
+    if not rows:
+        return 0
+    names = sorted({n for r in rows for n in (r.get("улучшения") or [])})
+    done = 0
+    for name in names:
+        with_, without_ = [], []
+        for r in rows:
+            pub = r.get("публикуемых")
+            if not isinstance(pub, (int, float)):
+                continue
+            target = with_ if name in (r.get("улучшения") or []) else without_
+            target.append((r.get("размер"), float(pub)))
+        if len(with_) < 3 or len(without_) < 3:
+            continue
+        diffs = []
+        for size in {s for s, _ in with_}:
+            w = [v for s, v in with_ if s == size]
+            o = [v for s, v in without_ if s == size]
+            if len(w) >= 2 and len(o) >= 2:
+                diffs.append(_median(w) - _median(o))
+        if not diffs:
+            continue
+        g.note_observation("improvement_unlock", {"улучшение": name,
+                                                  "значение": max(0.0, _median(diffs)),
+                                                  "n_с": len(with_), "n_без": len(without_)})
+        done += 1
+    return done
 
 
 def _dof_by_type(g: "KnowledgeGraph") -> dict[str, tuple]:
@@ -506,6 +559,9 @@ def build_graph(obs: dict, available: dict, own_id: int = 0,
                 continue
             ieid = f"improvement:{iname}"
             g.ensure(ieid, "improvement", name=iname)
+            if isinstance(im.get("id"), int):
+                # id нужен, чтобы читать вектор `improvements` в записи города (индекс = id).
+                g.entity(ieid).attrs["id"] = im["id"]
             g.add_edge(Edge(src=teid, dst=ieid, kind="unlocks"))
 
     # --- свои юниты: наблюдаем их меню и накапливаем в набор возможностей ТИПА ---
@@ -570,6 +626,20 @@ def build_graph(obs: dict, available: dict, own_id: int = 0,
         ok_prod, all_prod = sensors.city_producibles(menu, c.cid)
         e.attrs["n_produce_allowed"] = len(ok_prod)
         e.attrs["n_produce_published"] = len(all_prod)
+        # Какие улучшения в городе УЖЕ стоят: вектор `improvements` в записи города, индекс = id
+        # улучшения (связь подтверждена замером: у города-столицы стоит индекс 21 = Palace).
+        id2name = {e2.attrs.get("id"): e2.name for e2 in g.by_kind("improvement")
+                   if isinstance(e2.attrs.get("id"), int)}
+        imp_vec = sensors._as_list(c.improvements)
+        present = [id2name[i] for i, v in enumerate(imp_vec) if v and i in id2name]
+        e.attrs["improvements_present"] = present
+        e.attrs["n_improvements"] = len(present)
+        # Канал для ЗАМЕРА вклада улучшений: выходы города и размер открытого меню. Нужен, чтобы
+        # сравнивать «с улучшением / без» по одним и тем же размерам города, а не выдумывать DoF.
+        g.note_observation("city_output", {
+            "размер": c.size, "улучшений": len(present), "улучшения": present[:12],
+            "наука": (c.attrs or {}).get("science"), "щиты": c.prod_shield,
+            "еда": c.surplus_food, "публикуемых": len(all_prod)})
         e.dof = Value.measured(reach, source="город: свои действия + достижимые возможности",
                                note=f"{note}; {reach_note}")
         g.add_edge(Edge(src=eid, dst=f"player:{own_id}", kind="belongs_to"))

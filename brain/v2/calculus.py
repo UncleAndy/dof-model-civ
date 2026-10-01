@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 import math
+import os
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -97,6 +98,11 @@ def impute(graph: KnowledgeGraph, kind: str) -> tuple[Optional[float], int]:
         return vals[len(vals) // 2], len(vals)
     measured = None
     if kind == "city":
+        if os.environ.get("V2_NO_CITY_PRICE") == "1":
+            # АБЛЯЦИЯ для парного сравнения (пункт 1 Andy): цена города выключена — тогда
+            # `found_city` снова без числа, как было до правки В1. Нужна, чтобы вклад именно этой
+            # правки измерялся на одних и тех же сидах, а не сравнивался с прошлыми прогонами.
+            return None, 0
         # 1) ДОСТИЖИМОЕ значение своих городов (В1), 2) расчёт по измеренным частям, 3) прежний канал.
         own = (graph.observed_median("dof_city_reach", {"размер": 1})
                or graph.observed_median("dof_city_reach"))

@@ -33,9 +33,16 @@ class KnowledgeStore:
         return self.graph
 
     def end_game(self, save: bool = True) -> None:
-        """Партия окончена: счётчик партий и запись на диск."""
+        """Партия окончена: счётчик партий, СВЕДЕНИЕ ЗАМЕРОВ и запись на диск."""
         self.games += 1
         self.graph.world["games"] = self.games
+        # Вклад улучшений измеряется по накопленному каналу города («с улучшением / без», по
+        # одинаковому размеру) — знание сводится в конце партии, а не берётся со стороны.
+        try:
+            from .knowledge import measure_improvement_unlock
+            measure_improvement_unlock(self.graph)
+        except Exception:  # noqa: BLE001
+            pass
         if save:
             self.save()
 

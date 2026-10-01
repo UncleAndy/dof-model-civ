@@ -147,6 +147,19 @@ def observe_slice(graph: KnowledgeGraph, obs: dict, own_id: int, turn: Optional[
             if isinstance(_before_h, int) and isinstance(f.get("health"), int) \
                     and f["health"] < _before_h:
                 fight["чужой_ранен"] = 1
+            # ЧТО НУЖНО, ЧТОБЫ ЦЕНА ОТВЕТА НА УГРОЗУ СТАЛА ИЗМЕРИМОЙ: у боя должен быть признак
+            # «наш юнит был укреплён» и сила сторон. Публикуемого поля активности мир не отдаёт,
+            # поэтому укрепление помним сами (см. `agent.decide`), а атаку чужого берём по типу или
+            # средним по известным (правило «незнание ≠ ноль»).
+            _ue = graph.entity(f"unit:{v['кто']}")
+            _atk, _atk_src = threat.attack_of(graph, f["eid"], f.get("name"))
+            fight.update({
+                "наш_укреплён": (bool(_ue.attrs.get("наш_укреплён")) if _ue is not None else None),
+                "наш_до": (_ue.attrs.get("type_defense_strength") if _ue is not None else None),
+                "наш_хп_до": (prev.get("units") or {}).get(v["кто"], {}).get("health"),
+                "чужой_атака": _atk,
+                "чужой_атака_источник": _atk_src,
+            })
             graph.note_observation("бой", fight)
             graph.mark_collapse_source(f["eid"], turn, f.get("owner"), why)
             graph.note_observation("нападение", {"ход": turn, "вид": v["вид"], "как": v["как"],

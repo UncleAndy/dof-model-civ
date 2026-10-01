@@ -228,6 +228,13 @@ class Agent:
             self._last_index = cur_idx
             return None
         self._last_choice = (step.ctrl, step.actor, action_family(step.action))
+        # Помним, укреплён ли наш юнит: мир публикуемого поля активности не отдаёт, а без этого
+        # признака цена ОТВЕТА на угрозу не измерима (сравнение исходов боёв «укреплён / нет»).
+        # `fortify` — укреплён; любое другое действие снимает укрепление.
+        if step.ctrl == "unit":
+            _ue = self.store.graph.entity(f"unit:{step.actor}")
+            if _ue is not None:
+                _ue.attrs["наш_укреплён"] = (action_family(step.action) == "fortify")
         self._last_index = cur_idx
         return to_env_action(step)
 
