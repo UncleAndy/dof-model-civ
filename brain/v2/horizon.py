@@ -333,17 +333,27 @@ def _derived_eta(graph: KnowledgeGraph, type_name: str) -> tuple[Optional[int], 
     if cost is None:
         return None, ""
     best: Optional[int] = None
+    stalled = False
     for e in graph.by_kind("city"):
         if not e.is_own:
             continue
-        shields = e.attrs.get("prod_shield")
+        # ЧИСТЫЙ прирост щитов: содержание юнитов может съесть всю выработку, и тогда мир
+        # возвращает «никогда» (FC_INFINITY). Валовой прирост здесь врал бы (замер §10.98).
+        shields = e.attrs.get("surplus_shield")
+        if shields is None:
+            shields = e.attrs.get("prod_shield")
         stock = e.attrs.get("shield_stock")
+        if isinstance(shields, (int, float)) and shields <= 0:
+            stalled = True
+            continue
         if not isinstance(shields, (int, float)) or shields <= 0:
             continue
         left = cost - float(stock if isinstance(stock, (int, float)) else 0)
         eta = max(1, int(math.ceil(left / float(shields))))
         best = eta if best is None else min(best, eta)
     if best is None:
+        if stalled:
+            return None, "НЕ ИДЁТ: чистый прирост щитов ≤ 0 (содержание юнитов)"
         return None, ""
     return best, "выведено из цены и щитов (мир публикует и то, и другое)"
 

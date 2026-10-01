@@ -362,10 +362,21 @@ def _city_reachable_dof(g: "KnowledgeGraph", menu: dict, city) -> tuple[float, s
     правило «незнание ≠ ноль», а не 0.
 
     Возвращаем (значение, пояснение). Валюта одна с юнитами — семейства.
+
+    Производственная часть обнуляется по ИЗМЕРЕННОМУ состоянию: если чистый прирост щитов
+    (`surplus_shield`) ≤ 0, мир прямо говорит «никогда» (`FC_INFINITY` → 32767), то есть ни один
+    предмет производства недостижим. Тогда город сохраняет только свои действия (смена производства,
+    покупка и т.п.), а «достижимое» не приписывается. Отсутствие поля — не ноль (аксиома 5):
+    считаем как раньше.
     """
     ok, published = sensors.city_producibles(menu, city.cid)
     own_fams = family_of_options(sensors.valid_options(menu, "city", str(city.cid)))
     total = float(len(own_fams))
+    net_shields = getattr(city, "surplus_shield", None)
+    stalled = isinstance(net_shields, int) and net_shields <= 0
+    if stalled:
+        return total, (f"производство НЕ ИДЁТ: чистые щиты {net_shields} ≤ 0 (содержание юнитов) — "
+                       f"разрешённые {len(ok)} постр. недостижимы, DoF только свои действия")
     vals: list[float] = []
     unknown: list[str] = []
     for name in ok:
@@ -607,6 +618,7 @@ def build_graph(obs: dict, available: dict, own_id: int = 0,
         e = g.entity(eid)
         e.attrs.update({"x": c.x, "y": c.y, "size": c.size, "surplus_food": c.surplus_food,
                         "prod_food": c.prod_food, "prod_shield": c.prod_shield,
+                        "surplus_shield": c.surplus_shield,
                         "shield_stock": c.shield_stock,
                         "turns_to_prod_complete": c.turns_to_prod_complete,
                         "n_buildable": c.n_buildable,

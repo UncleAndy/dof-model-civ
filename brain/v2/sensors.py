@@ -95,6 +95,7 @@ class City:
     prod_food: Optional[int]
     prod_shield: Optional[int]
     prod_trade: Optional[int]
+    surplus_shield: Optional[int]
     surplus_food: Optional[int]
     shield_stock: Optional[int]
     turns_to_prod_complete: Optional[int]
@@ -140,6 +141,7 @@ def read_cities(obs: dict) -> list[City]:
             cid=int(cid), owner=c.get("owner"), name=c.get("name"), size=c.get("size"),
             x=c.get("x"), y=c.get("y"), prod_food=c.get("prod_food"),
             prod_shield=c.get("prod_shield"), prod_trade=c.get("prod_trade"),
+            surplus_shield=c.get("surplus_shield"),
             surplus_food=c.get("surplus_food"), shield_stock=c.get("shield_stock"),
             turns_to_prod_complete=c.get("turns_to_prod_complete"),
             can_build_unit=_as_list(c.get("can_build_unit")),

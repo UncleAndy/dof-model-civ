@@ -56,6 +56,7 @@ def main() -> int:
         own_id = 0
     used: set = set()
     bad = good = 0
+    shown_ok = 0
     with OUT.open("w") as fh:
         try:
             for _ in range(TURNS):
@@ -94,6 +95,22 @@ def main() -> int:
                         elif not bad_eta and good < 6:
                             good += 1
                             print("нормальный срок:", json.dumps(row, ensure_ascii=False), flush=True)
+                        net = c.get("surplus_shield")
+                        if isinstance(net, int) and net <= 0:
+                            graph = getattr(getattr(agent, "store", None), "graph", None)
+                            ce = graph.entity(f"city:{cid}") if graph is not None else None
+                            if ce is not None and ce.dof is not None:
+                                print(f"  ЗАСТОЙ ход {(info or {}).get('turn')}: DoF города "
+                                      f"{ce.dof.v} (разрешено было {ce.attrs.get('n_produce_allowed')} "
+                                      f"постр.); «{ce.dof.note}»", flush=True)
+                        elif shown_ok < 4:
+                            shown_ok += 1
+                            graph = getattr(getattr(agent, "store", None), "graph", None)
+                            ce = graph.entity(f"city:{cid}") if graph is not None else None
+                            if ce is not None and ce.dof is not None:
+                                print(f"  ИДЁТ ход {(info or {}).get('turn')}: DoF города {ce.dof.v} "
+                                      f"(разрешено {ce.attrs.get('n_produce_allowed')} постр.); "
+                                      f"«{ce.dof.note}»", flush=True)
                     if term or trunc:
                         break
                 else:
