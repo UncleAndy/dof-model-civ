@@ -32,22 +32,28 @@ from .threat import cheb, offset_of
 FRONTIER_REACH = 12
 
 
+def covered(graph: KnowledgeGraph) -> set:
+    """Клетки, которые наши юниты УЖЕ видели (набор индексов x*ysize+y).
+
+    ИЗМЕРЕНО (§10.82): в этом мире `map.terrain` НЕ помечает нераскрытое — вся карта известна с
+    начала, а туман скрывает ЧУЖИЕ юниты и города. Поэтому «неизвестная клетка» — это клетка, куда
+    ещё не доходил обзор наших юнитов. Радиус обзора публикуется миром в паспорте типа
+    (`type_vision_radius_sq`), так что покрытие вычисляется, а не выдумывается.
+    """
+    return set((graph.world or {}).get("покрытие") or ())
+
+
 def unrevealed_near(graph: KnowledgeGraph, x: int, y: int) -> Optional[tuple[int, int]]:
-    """Ближайшая нераскрытая клетка к точке — по опубликованной миром карте раскрытия."""
+    """Ближайшая клетка, которую наши юниты ещё НЕ видели."""
     w = graph.world or {}
     xsize, ysize = int(w.get("xsize") or 0), int(w.get("ysize") or 0)
     if not xsize or not ysize:
         return None
-    revealed = w.get("раскрытие")
-    if not revealed:
-        return None
+    seen = covered(graph)
     best = None
     for i in range(xsize):
         for j in range(ysize):
-            try:
-                if revealed[i][j]:
-                    continue
-            except (IndexError, TypeError):
+            if (i * ysize + j) in seen:
                 continue
             d = cheb(x, y, i, j, xsize)
             if best is None or d < best[0]:

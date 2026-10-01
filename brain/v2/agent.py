@@ -63,6 +63,35 @@ class Agent:
         #: Вариант постройки, запущенный нами: срок этого варианта мир опубликует на следующем
         #: ходу — это и есть ИЗМЕРЕННЫЙ срок (атрибуция по нашему действию, не по догадке).
         self._produce_started: Optional[str] = None
+        #: Для связи discovery: сколько сущностей появилось на раскрытую клетку (измерение).
+        self._last_entities: Optional[int] = None
+        self._last_revealed: Optional[int] = None
+        #: Покрытие карты обзором наших юнитов (состояние партии). Радиус обзора публикуется
+        #: миром в паспорте типа; покрытие нужно цели «исследование» (§10.81/§10.82).
+        self._covered: set = set()
+
+    def _update_coverage(self, graph) -> int:
+        """Обновить покрытие карты обзором своих юнитов; вернуть, сколько клеток покрыто всего.
+
+        Радиус берётся из ОПУБЛИКОВАННОГО паспорта типа (`type_vision_radius_sq`), а не назначен.
+        """
+        import math as _math
+        w = graph.world or {}
+        ysize = int(w.get("ysize") or 0)
+        if not ysize:
+            return len(self._covered)
+        for e in graph.by_kind("unit"):
+            if not e.is_own or e.attrs.get("x") is None:
+                continue
+            sq = e.attrs.get("type_vision_radius_sq")
+            r = int(_math.sqrt(sq)) if isinstance(sq, (int, float)) and sq >= 0 else 1
+            x0, y0 = e.attrs["x"], e.attrs["y"]
+            for i in range(x0 - r, x0 + r + 1):
+                for j in range(y0 - r, y0 + r + 1):
+                    if j < 0 or j >= ysize:
+                        continue
+                    self._covered.add((i % int(w.get("xsize") or 1)) * ysize + j)
+        return len(self._covered)
 
     # ---------------------------------------------------------------- решение
     def decide(self, obs: dict, info: dict, own_id: int,
@@ -77,6 +106,16 @@ class Agent:
         self.store.observe(obs, available, own_id, turn=turn)
         g = self.store.graph
         self._record_growth(g, menu)
+
+        # 1.1) СВЯЗЬ DISCOVERY (измерение для цены исследования, §10.81): сколько сущностей
+        # приходит на одну раскрытую клетку. Обе величины измерены, ничего не предполагается.
+        _rev = self._update_coverage(g)
+        g.world["покрытие"] = self._covered
+        _ents = len(g.entities)
+        if self._last_revealed is not None and _rev > self._last_revealed:
+            g.note_observation("discovery", {"клеток": int(_rev - self._last_revealed),
+                                             "сущностей": max(0, int(_ents - (self._last_entities or 0)))})
+        self._last_revealed, self._last_entities = _rev, _ents
 
         # 1.2) НАПАДЕНИЕ: сравнить полные срезы. Источником коллапса становится только тот
         # чужой, чьё нападение НАБЛЮДЕНО (§10.33/§10.34), и держится весь горизонт.

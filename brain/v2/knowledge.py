@@ -206,7 +206,7 @@ class KnowledgeGraph:
         иначе юнит из прошлой игры «склеится» с одноимённым юнитом новой и знание испортится.
         """
         g = KnowledgeGraph()
-        g.world = {k: v for k, v in self.world.items() if k != "games"}
+        g.world = {k: v for k, v in self.world.items() if k not in ("games", "покрытие")}
         g.world["games"] = self.world.get("games", 0)
         # флаги «источник коллапса» привязаны к конкретной партии и её ходу: не переносятся
         g.collapse = {}
@@ -429,6 +429,9 @@ def build_graph(obs: dict, available: dict, own_id: int = 0,
 
     _count_owners(sensors._as_list(w.unit_owner))
     g.world["владельцы_юнитов"] = _own_counts
+    # ИЗМЕРЕНО (§10.82): `map.terrain` в этом мире НЕ помечает нераскрытое — вся карта известна
+    # с начала, а туман скрывает чужие юниты и города. Поэтому «покрытие» (клетки, куда доходил
+    # обзор наших юнитов) ведёт агент, а не мир. Состояние партии — в постоянную базу не идёт.
     g.rules = dict(w.rules)
     g.observations += 1
 

@@ -27,6 +27,7 @@ from typing import Any, Optional
 
 from metrics.reversibility import classify_reversibility
 
+from . import explore as explore_mod
 from . import threat
 from .families import action_family
 from .horizon import eta_of, production_gain, research_gain
@@ -269,6 +270,18 @@ def _option_net(graph: KnowledgeGraph, cur_v, ctrl: str, action: str,
                     delta += g_m
                     why = why_m
                     gained = True
+                # ИССЛЕДОВАНИЕ (цель `explore`, §10.81): раскрытая карта — единственный способ
+                # увидеть чужие сущности, а мирные чужие ПЛЮСУЮТСЯ к общему DoF. Цена — из
+                # измеренного: клеток на ход × сущностей на клетку × ln(DoF обнаруженной).
+                g_e, why_e = explore_mod.explore_gain(
+                    graph, action, str(actor), dof_of,
+                    lambda gg: impute(gg, "unit"))
+                if g_e > 0:
+                    delta += g_e
+                    why = why_e
+                    gained = True
+                elif why_e and not g_m:
+                    why = why_e
             if fam == "attack":
                 st = graph.fight_stats()
                 if st["n"] < MIN_FIGHTS:

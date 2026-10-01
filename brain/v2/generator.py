@@ -33,6 +33,7 @@ from typing import Any, Callable, Iterable, Optional
 
 from metrics.reversibility import classify_reversibility
 
+from . import explore as explore_mod
 from . import threat
 from .families import action_family, family_counts
 from .horizon import is_noop
@@ -48,7 +49,7 @@ PER_KIND_CAP = 2
 #: порядок целей — структура, объявленная до данных (не оценка полезности).
 #: «выход из-под удара» первым: аксиома 3 (некомпенсация) — не дать сущности коллапсировать,
 #: это приоритетнее любого приобретения.
-GOAL_ORDER = ("escape", "strike", "unknown", "found_city", "channel", "probe")
+GOAL_ORDER = ("escape", "strike", "explore", "unknown", "found_city", "channel", "probe")
 
 
 @dataclass
@@ -135,6 +136,22 @@ def derive_goals(graph: KnowledgeGraph, menu: dict) -> list[dict]:
             if threat.cheb(u.attrs["x"], u.attrs["y"], src["x"], src["y"], xsize) <= 1:
                 goals.append({"goal": "strike", "eid": u.eid, "target": src["eid"],
                               "why": f"{u.eid} может ударить по источнику коллапса {src['eid']}"})
+
+    # 0-тер) ИССЛЕДОВАНИЕ: раскрыть карту — единственный способ увидеть чужие города, юниты и
+    # ресурсы, а мирные чужие ПЛЮСУЮТСЯ к общему DoF (решение Andy, §10.33). Цена — из измеренного
+    # (см. `explore.explore_gain`). Цель появляется, только если рядом есть нераскрытая клетка.
+    for u in graph.by_kind("unit"):
+        if not u.is_own or u.attrs.get("x") is None:
+            continue
+        near = explore_mod.unrevealed_near(graph, u.attrs["x"], u.attrs["y"])
+        if near is None:
+            continue
+        xsize = int((graph.world or {}).get("xsize") or 0)
+        d = threat.cheb(u.attrs["x"], u.attrs["y"], near[0], near[1], xsize)
+        if d > explore_mod.FRONTIER_REACH:
+            continue
+        goals.append({"goal": "explore", "eid": u.eid,
+                      "why": f"{u.eid}: нераскрытая клетка ({near[0]},{near[1]}) в {d} клетках"})
 
     # 1) снять неизвестность: сущности с неизвестным DoF, которые нам доступны
     for u in graph.unknowns():
@@ -238,6 +255,25 @@ def _path_escape(goal: dict, graph: KnowledgeGraph, menu: dict,
                 expectation="выход из-под удара: сохранить слагаемое ln(DoF) сущности "
                             "(миникас, аксиома 5)",
                 source=goal["why"], effect=("escape", actor))
+
+
+def _path_explore(goal: dict, graph: KnowledgeGraph, menu: dict,
+                  avoid: Optional[Callable[[str, str], bool]] = None) -> Optional[Path]:
+    """Идти к нераскрытой зоне: направления предлагаются все, выбор — за calculus.
+
+    Генератор не решает, куда идти (это была бы оценка). Он отдаёт все законные направления, а
+    calculus выбирает то, которое приближает к нераскрытой клетке, и считает цену из измеренного.
+    """
+    actor = goal["eid"].split(":", 1)[1]
+    opts = [o for o in _legal(graph, menu, "unit", actor) if o in threat.DIR8_MEASURED]
+    if avoid is not None:
+        opts = [o for o in opts if not avoid("unit", o)]
+    if not opts:
+        return None
+    return Path(goal="explore", kind="цель",
+                steps=[_step(menu, "unit", actor, opts[0], 1, alternatives=opts)],
+                expectation="раскрыть карту: цена из измерения (клеток/ход × сущностей/клетка)",
+                source=goal["why"], effect=("explore", actor))
 
 
 def _path_strike(goal: dict, graph: KnowledgeGraph, menu: dict,
@@ -371,6 +407,7 @@ def generate(graph: KnowledgeGraph, menu: dict, own_id: int = 0,
                 break
             p = (_path_escape(g, graph, menu, avoid=avoid) if kind == "escape"
                  else _path_strike(g, graph, menu, avoid=avoid) if kind == "strike"
+                 else _path_explore(g, graph, menu, avoid=avoid) if kind == "explore"
                  else _path_unknown(g, graph, menu) if kind == "unknown"
                  else _path_found_city(g, graph, menu) if kind == "found_city"
                  else _path_channel(g, graph, menu, avoid=avoid) if kind == "channel"
