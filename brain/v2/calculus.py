@@ -32,7 +32,8 @@ from metrics.reversibility import classify_reversibility
 from . import explore as explore_mod
 from . import threat
 from .families import action_family
-from .horizon import eta_of, production_gain, research_gain
+from .horizon import (city_crowding_penalty, eta_of, production_gain, research_gain,
+                      site_food_penalty)
 from .horizon import tau as tau_window
 from .knowledge import KnowledgeGraph
 from .projection import project
@@ -365,6 +366,19 @@ def _option_net(graph: KnowledgeGraph, cur_v, ctrl: str, action: str,
                 if g_f < 0:
                     delta += g_f
                     why = why_f
+                    gained = True
+                # §10.108: ПЕРЕНАСЕЛЁННОСТЬ и ПЛОДОРОДИЕ участка — иначе агент ставил города
+                # вплотную (замер: 2-й город всегда на мин. дистанции 2 от первого).
+                g_cc, why_cc = city_crowding_penalty(graph, str(actor))
+                if g_cc > 0:                       # штраф положительный — вычитаем
+                    delta -= g_cc
+                    why = f"{why_cc}; {why}" if why else why_cc
+                    gained = True
+                _imp_city, _n = impute(graph, "city")
+                g_sf, why_sf = site_food_penalty(graph, str(actor), dof_city=_imp_city)
+                if g_sf < 0:                       # штраф отрицательный — прибавляем
+                    delta += g_sf
+                    why = f"{why_sf}; {why}" if why else why_sf
                     gained = True
 
     if delta is None:

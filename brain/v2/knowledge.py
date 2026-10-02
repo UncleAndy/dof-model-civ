@@ -663,6 +663,13 @@ def build_graph(obs: dict, available: dict, own_id: int = 0,
         if n > 0:
             g.note_observation("dof_city", {"значение": n, "размер": c.size,
                                             "источник": "меню города (наблюдено агентом)"})
+        # ЗАМЕР (§10.108): «террейн центральной клетки → еда, что даёт город». Нужно, чтобы оценить
+        # плодородие участка при основании нового города, а не считать все участки равными.
+        _t = g.entity(f"tile:{c.x},{c.y}")
+        if _t is not None and isinstance(_t.attrs.get("terrain"), (int, float)) \
+                and isinstance(c.prod_food, (int, float)):
+            g.note_observation("terrain_food", {"terrain": _t.attrs["terrain"],
+                                                "еда": float(c.prod_food)})
 
     # --- чужие акторы: DoF по аналогии ---
     for a in sensors.foreign_actors(obs, own_id):

@@ -324,6 +324,90 @@ def switch_penalty(graph: KnowledgeGraph, actor: Optional[str], target: str) -> 
                      f"(−{penalty:.3f})")
 
 
+def city_crowding_penalty(graph: KnowledgeGraph, actor: str) -> tuple[float, str]:
+    """§10.108, штраф 1 — ПЕРЕНАСЕЛЁННОСТЬ: новый город делит работовую зону со своими городами.
+
+    Участок основания — клетка поселенца. Работовая зона города — из опубликованного устава мира
+    (`border_city_radius_sq`), геометрия, без коэффициентов. Если доля `ov` работовых клеток нового
+    города уже лежит в зоне своего города, новый вносит в индекс `ln(DoF)` только остаток, то есть
+    штраф = −ln(1 − ov) (это простая функция доли, число не подбирается). ov=0 → штрафа нет.
+    """
+    s = graph.entity(f"unit:{actor}")
+    if s is None or s.attrs.get("x") is None:
+        return 0.0, ""
+    x, y = s.attrs["x"], s.attrs["y"]
+    xsize = int((graph.world or {}).get("xsize") or 0)
+    try:
+        r_sq = int((graph.rules or {}).get("border_city_radius_sq") or 0)
+    except (TypeError, ValueError):
+        r_sq = 0
+    if r_sq <= 0:
+        return 0.0, "радиус работовой зоны города неизвестен — перенаселённость не оценить"
+    own = [c for c in graph.by_kind("city") if c.is_own and c.attrs.get("x") is not None]
+    if not own:
+        return 0.0, ""
+    R = int(math.sqrt(r_sq)) + 1
+    offsets = [(dx, dy) for dx in range(-R, R + 1) for dy in range(-R, R + 1)
+               if dx * dx + dy * dy <= r_sq]
+    total = len(offsets)
+    if not total:
+        return 0.0, ""
+    shared = 0
+    for dx, dy in offsets:
+        tx = (x + dx) % xsize if xsize else x + dx
+        ty = y + dy
+        for c in own:
+            dxc = abs((c.attrs["x"] - tx + xsize // 2) % xsize - xsize // 2)
+            dyc = abs(c.attrs["y"] - ty)
+            if dxc * dxc + dyc * dyc <= r_sq:
+                shared += 1
+                break
+    ov = shared / float(total)
+    if ov <= 0:
+        return 0.0, ""
+    ov = min(ov, 0.95)
+    pen = -math.log(1.0 - ov)
+    return pen, (f"перенаселённость: работовая зона нового города перекрыта со своими городами "
+                 f"({len(own)}) на {ov * 100:.0f}% → −{pen:.3f}")
+
+
+def site_food_penalty(graph: KnowledgeGraph, actor: str, dof_city: Optional[float]) -> tuple[float, str]:
+    """§10.108, штраф 2 — ПЛОДОРОДИЕ участка: сможет ли новый город прокормить себя.
+
+    Ожидаемая еда центральной клетки участка берётся из ЗАМЕРА (`terrain_food`: что дают наши
+    города на этом террейне); нет замера — средняя по нашим городам (правило «незнание ≠ ноль»).
+    Прирост = еда − `food_cost`×1 (население 1). Если прирост > 0 — штрафа нет; если дефицит, город
+    не растёт, и его реальный DoF обнуляется (как застой §10.98) → минус полный ln(DoF города).
+    """
+    s = graph.entity(f"unit:{actor}")
+    if s is None or s.attrs.get("x") is None:
+        return 0.0, ""
+    tile = graph.entity(f"tile:{s.attrs['x']},{s.attrs['y']}")
+    terrain = (tile.attrs.get("terrain") if tile is not None else None)
+    rows = [r for r in (graph.observed.get("terrain_food") or []) if isinstance(r, dict)]
+    same = [float(r["еда"]) for r in rows
+            if r.get("terrain") == terrain and isinstance(r.get("еда"), (int, float))]
+    if same:
+        same.sort()
+        exp_food, fsrc = same[len(same) // 2], f"замер: на террейне {terrain} еда {same[len(same) // 2]:g}"
+    else:
+        allf = sorted(float(r["еда"]) for r in rows if isinstance(r.get("еда"), (int, float)))
+        if not allf:
+            return 0.0, "еды по участкам ещё не измерено — плодородие не оценить (незнание ≠ ноль)"
+        exp_food, fsrc = allf[len(allf) // 2], f"средняя по своим городам: еда {allf[len(allf) // 2]:g}"
+    try:
+        food_cost = float((graph.rules or {}).get("food_cost") or 2)
+    except (TypeError, ValueError):
+        food_cost = 2.0
+    growth = exp_food - food_cost  # население 1
+    if growth > 0:
+        return 0.0, f"участок кормится: {fsrc} > {food_cost:g}"
+    if not dof_city or dof_city <= 0:
+        return 0.0, "участок не прокормит город, но его DoF неизвестен — считать нечем"
+    return -math.log(dof_city), (f"участок не прокормит город ({fsrc} ≤ {food_cost:g}) → "
+                                 f"город не растёт, DoF обнуляется (−{math.log(dof_city):.3f})")
+
+
 def _measured_eta(graph: KnowledgeGraph, type_name: str) -> tuple[Optional[int], str]:
     """Измеренный срок: записан наблюдением, когда этот вариант был текущим производством."""
     v = graph.observed_median("produce_eta", {"вариант": type_name})
