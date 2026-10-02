@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import math
 import os
+import random
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -51,6 +52,29 @@ MIN_FIGHTS = 5
 #: открытый вопрос (аксиома 5: незнание сужает путь), и почти без потери цены. Без этого варианта
 #: с неизвестным сроком не выбирают НИКОГДА, и он навсегда остаётся неизвестным.
 TIE_MARGIN = 0.05
+
+#: Ничья разрешается СЛУЧАЙНО (решение Andy), но генератор случайности — с фиксированным seed,
+#: иначе плечи сравнения перестают быть парными и прогоны не воспроизведутся.
+_TIE_RNG = random.Random(int(os.environ.get("V2_TIE_SEED", "0")))
+
+
+def _norm_actor(actor: Any) -> Any:
+    """Актор к одному виду: число, если строка целиком цифровая (иначе ключи не совпадают)."""
+    return int(actor) if isinstance(actor, str) and actor.isdigit() else actor
+
+
+def _is_excluded(ctrl: str, actor: Any, action: str, exclude: set) -> bool:
+    """Запрещено ли это действие: оно уже сделано в этом ходу или исчерпано его семейство."""
+    a = _norm_actor(actor)
+    return ((ctrl, a, action) in exclude
+            or (ctrl, a, "family", action_family(action)) in exclude)
+
+
+def _pick_max(rows: list[dict]) -> dict:
+    """Максимум по `net_delta`; при ничьей — случайный выбор среди равных (seed фиксирован)."""
+    top = max(r["net_delta"] for r in rows)
+    tied = [r for r in rows if abs(r["net_delta"] - top) <= 1e-9]
+    return _TIE_RNG.choice(tied) if len(tied) > 1 else tied[0]
 
 
 def _family_dof(e) -> Optional[float]:
@@ -268,7 +292,7 @@ def _option_net(graph: KnowledgeGraph, cur_v, ctrl: str, action: str,
             elif why_h:
                 why = why_h
         if fam == "produce":
-            g_p, why_p = production_gain(graph, action)
+            g_p, why_p = production_gain(graph, action, actor=str(actor) if actor is not None else None)
             # Ступень срока: если он ВЗЯТ СРЕДНИМ по измеренным (то есть сам неизвестен), вариант
             # помечается — при почти равной цене предпочтение отдаётся ему (см. TIE_MARGIN).
             _eta, _et_src = eta_of(graph, str(action)[len("produce_"):])
@@ -376,39 +400,72 @@ def evaluate(graph: KnowledgeGraph, paths: list, own_id: int = 0,
     candidates: list[dict] = []
     best = None
     best_net = None
+    tied: list = []
     multiplier = None
 
     for p in paths:
         step = p.steps[0]
         alts = step.alternatives or [step.action]
+        # Варианты, уже сделанные в этом ходу (или семейство которых исчерпано), выкидываем ДО
+        # выбора: иначе один путь канала блокировался бы целиком из-за одного исчерпанного варианта.
+        alts = [a for a in alts if not _is_excluded(step.ctrl, step.actor, a, exclude)]
+        if not alts:
+            candidates.append({"path": p.to_dict(), "projection": None, "net_delta": None,
+                               "why": "исключён: все варианты уже использованы в этом ходу",
+                               "multiplier": False, "исключён": True})
+            continue
         kg, kg_why = (knowledge_gain(graph, alts) if step.ctrl == "city" else (0.0, ""))
         results = [_option_net(graph, cur_v, step.ctrl, a, actor=step.actor,
                                depth=len(p.steps), kg=kg, kg_why=kg_why)
                    for a in alts[:120]]
         positive = [r for r in results if r["net_delta"] is not None and r["net_delta"] > 0]
-        pick = max(positive, key=lambda r: r["net_delta"]) if positive else results[0]
+        # «ОСТАВИТЬ ТЕКУЩУЮ ПОСТРОЙКУ» — не действие, а БАЗА сравнения (§10.103). Мир не предлагает
+        # уже начатую постройку как вариант, поэтому она не участвовала в выборе, и город менял
+        # вариант каждый ход, не доводя ничего до конца. Смена оправдана только если даёт больше,
+        # чем продолжение начатой постройки.
+        if step.ctrl == "city":
+            _ce = graph.entity(f"city:{step.actor}")
+            _cur = _ce.attrs.get("стройка") if _ce is not None else None
+            if _cur:
+                _keep, _ = production_gain(graph, f"produce_{_cur}", actor=step.actor)
+                if _keep > 0:
+                    results = [r for r in results
+                               if not (action_family(r["action"]) == "produce"
+                                       and (r["net_delta"] or 0) <= _keep)]
+                    positive = [r for r in results
+                                if r["net_delta"] is not None and r["net_delta"] > 0]
+                    if not results:
+                        candidates.append({"path": p.to_dict(), "projection": None,
+                                           "net_delta": None,
+                                           "why": f"смена производства не выгоднее продолжения "
+                                                  f"{_cur} ({_keep:+.3f}) — город продолжает стройку",
+                                           "multiplier": False, "исключён": True})
+                        continue
+        pick = _pick_max(positive) if positive else results[0]
         if positive:
             # Объявленное правило разрешения ничьей: если вариант с НЕИЗВЕСТНЫМ сроком постройки
             # отстаёт от лучшего меньше чем на TIE_MARGIN, берём его — так открытый вопрос
             # закрывается за счёт хода, который всё равно был бы потрачен на постройку.
-            best_r = max(positive, key=lambda r: r["net_delta"])
+            best_r = _pick_max(positive)
             margin = abs(best_r["net_delta"]) * TIE_MARGIN
             close = [r for r in positive
                      if r.get("unknown_eta")
                      and best_r["net_delta"] - r["net_delta"] <= margin]
             if close:
                 pick = close[0]
-        # Исключение проверяем ПОСЛЕ выбора варианта: иначе оно не срабатывало, потому что
-        # сверялось с представителем по алфавиту, а не с тем, что реально было выбрано.
-        if ((step.ctrl, step.actor) in exclude
-                or (step.ctrl, step.actor, action_family(pick["action"])) in exclude):
+        # Исключение — последняя проверка (страховка): вариант мог стать исключённым после выбора.
+        if _is_excluded(step.ctrl, step.actor, pick["action"], exclude):
             candidates.append({"path": p.to_dict(), "projection": None, "net_delta": None,
-                               "why": "исключён: актор уже действовал или повтор без изменения",
+                               "why": "исключён: вариант уже использован в этом ходу",
                                "multiplier": False, "исключён": True})
             continue
         if pick["action"] != step.action:
             step.action = pick["action"]
             step.reversible = classify_reversibility(pick["action"])
+            # Метка эффекта канала должна показывать РЕАЛЬНО выбранное семейство, а не
+            # представителя по алфавиту: иначе протокол говорит «city_unwork», а выбрано «produce».
+            if isinstance(p.effect, tuple) and len(p.effect) == 3 and p.effect[0] == "channel":
+                p.effect = ("channel", p.effect[1], action_family(pick["action"]))
         net = pick["net_delta"]
         why = pick["why"]
         if pick["multiplier"] and multiplier is None:
@@ -416,9 +473,23 @@ def evaluate(graph: KnowledgeGraph, paths: list, own_id: int = 0,
         candidates.append({"path": p.to_dict(), "projection": pick["projection"],
                            "net_delta": net, "why": why, "multiplier": pick["multiplier"],
                            "вариантов_рассмотрено": len(results),
-                           "лучший_вариант": pick["action"] if positive else None})
-        if net is not None and net > 0 and (best_net is None or net > best_net):
-            best, best_net = p, net
+                           "лучший_вариант": pick["action"] if positive else None,
+                           # Протокол Proof of Implementation: какие варианты рассматривались и с
+                           # какой ценой — иначе «почему выбран этот» не проверить.
+                           "варианты": [{"действие": r["action"], "net_delta": r["net_delta"],
+                                         "срок_неизвестен": bool(r.get("unknown_eta"))}
+                                        for r in sorted(results,
+                                                        key=lambda x: (x["net_delta"] is None,
+                                                                       -(x["net_delta"] or 0)))[:8]]})
+        if net is not None and net > 0:
+            if best_net is None or net > best_net + 1e-9:
+                best, best_net, tied = p, net, [p]
+            elif abs(net - best_net) <= 1e-9:
+                tied.append(p)
+
+    # Ничья по цене разрешается случайно (решение Andy), seed фиксирован — воспроизводимость.
+    if len(tied) > 1:
+        best = _TIE_RNG.choice(tied)
 
     if best is not None:
         reason = f"наибольший NetDelta = {best_net:+.3f} > 0"

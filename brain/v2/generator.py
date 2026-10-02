@@ -40,11 +40,17 @@ from .horizon import is_noop
 from .horizon import tau as tau_window
 from .knowledge import KnowledgeGraph
 
-MAX_PATHS = 5
+#: Пределы коридора. БЫЛИ 5 и 2 — это артефакт эпохи «одно действие за ход»: коридор урезался,
+#: потому что за ход исполнялось одно действие. Замер §10.105: при таких пределах из 15 юнитов
+#: двигались 2 (у остальных цели были, а пути не строились), юниты копились в городах и города
+#: теряли производство (§10.98). Теперь агент выполняет все действия за ход, поэтому коридор
+#: ограничивать нечем: дубли отсекает «генуинно различные пути» (по эффекту), а повтор — правило
+#: «одна настройка на актора за ход». Число оставлено как предохранитель от вырожденного роста.
+MAX_PATHS = 200
 MIN_PATHS = 3
 MAX_DEPTH = 3
-#: Сколько путей ОДНОГО вида цели допускается до урезания коридора (объявлено).
-PER_KIND_CAP = 2
+#: Сколько путей ОДНОГО вида цели допускается (было 2 — та же причина, что у MAX_PATHS).
+PER_KIND_CAP = 200
 
 #: порядок целей — структура, объявленная до данных (не оценка полезности).
 #: «выход из-под удара» первым: аксиома 3 (некомпенсация) — не дать сущности коллапсировать,
@@ -109,11 +115,49 @@ def _legal(graph: KnowledgeGraph, menu: dict, ctrl: str, actor: str) -> list[str
     return valid_options(menu, ctrl, actor)
 
 
+#: Структурный минимум защитников в городе (решение Andy: «некоторое количество военных юнитов в
+#: городе — это его защитный ресурс в случае нападения»). Число объявлено структурой, а НЕ подобрано:
+#: сколько защитников реально нужно, должен показать замер боёв (`v2_defense_report.py`), после чего
+#: константа заменяется измеренной величиной.
+GARRISON_MIN = 1
+
+
+def _is_defender(e) -> bool:
+    """Юнит способен защищать: в паспорте типа есть атака > 0."""
+    atk = e.attrs.get("type_attack_strength")
+    return isinstance(atk, (int, float)) and atk > 0
+
+
+def garrison_set(graph: KnowledgeGraph) -> set:
+    """Юниты-гарнизоны: в каждом своём городе остаются первые GARRISON_MIN защитников (по номеру).
+
+    Гарнизон не получает цели «исследовать»: иначе город оголяется. От угрозы он по-прежнему
+    уходит (цель `escape`) и бьёт (цель `strike`) — это не отменяется.
+    """
+    cities = [c for c in graph.by_kind("city") if c.is_own and c.attrs.get("x") is not None]
+    if not cities:
+        return set()
+    xsize = int((graph.world or {}).get("xsize") or 0)
+    units = [u for u in graph.by_kind("unit")
+             if u.is_own and u.attrs.get("x") is not None and _is_defender(u)]
+    keep: set = set()
+    for c in cities:
+        cx, cy = c.attrs["x"], c.attrs["y"]
+        near = [u for u in units
+                if threat.cheb(u.attrs["x"], u.attrs["y"], cx, cy, xsize) <= 1]
+        near.sort(key=lambda u: (int(u.eid.split(":")[1])
+                                 if u.eid.split(":")[1].isdigit() else 0))
+        keep.update(u.eid for u in near[:GARRISON_MIN])
+    return keep
+
+
 # ---------------------------------------------------------------- цели из графа
 
 def derive_goals(graph: KnowledgeGraph, menu: dict) -> list[dict]:
     """Цели выводятся из графа и меню. Ни одна не выдумана человеком."""
     goals: list[dict] = []
+    # Гарнизоны городов: эти юниты остаются защищать и не получают цели «исследовать».
+    keep_garrison = garrison_set(graph)
 
     # 0) выйти из-под удара: наши сущности, досягаемые наблюдённой угрозой (аксиомы 3/4/5)
     for eid, info in sorted(threat.exposure(graph, threat.STRIKE_TURNS).items()):
@@ -143,15 +187,17 @@ def derive_goals(graph: KnowledgeGraph, menu: dict) -> list[dict]:
     for u in graph.by_kind("unit"):
         if not u.is_own or u.attrs.get("x") is None:
             continue
+        if u.eid in keep_garrison:
+            continue          # гарнизон города не уходит исследовать (решение Andy, §10.101)
         near = explore_mod.unrevealed_near(graph, u.attrs["x"], u.attrs["y"])
         if near is None:
             continue
-        xsize = int((graph.world or {}).get("xsize") or 0)
-        d = threat.cheb(u.attrs["x"], u.attrs["y"], near[0], near[1], xsize)
-        if d > explore_mod.FRONTIER_REACH:
-            continue
+        # Отсечки по расстоянию НЕТ (замер §10.105): при пороге 12/30 юнит, у которого ближний круг
+        # раскрыт, не получал цели вовсе и оставался в городе — города набивались своими юнитами и
+        # теряли производство (§10.98). Движение к ближайшей нераскрытой клетке — единственный
+        # источник нового DoF, и оно осмысленно на любой дистанции; порог был догадкой.
         goals.append({"goal": "explore", "eid": u.eid,
-                      "why": f"{u.eid}: нераскрытая клетка ({near[0]},{near[1]}) в {d} клетках"})
+                      "why": f"{u.eid}: нераскрытая клетка ({near[0]},{near[1]})"})
 
     # 1) снять неизвестность: сущности с неизвестным DoF, которые нам доступны
     for u in graph.unknowns():

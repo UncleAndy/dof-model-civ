@@ -36,6 +36,7 @@ from PIL import Image  # noqa: E402
 from selenium.webdriver.common.by import By  # noqa: E402
 
 from baselines import wedges  # noqa: E402
+from brain.v2 import executor  # noqa: E402
 from brain.v2.agent import Agent  # noqa: E402
 
 STORE = os.environ.get("V2_STORE", str(ROOT / "knowledge" / "world.json"))
@@ -45,7 +46,8 @@ SEEDS = [int(s) for s in os.environ.get("V2_SEEDS", "9000").split(",")]
 PORT_BASE = int(os.environ.get("V2_PORT_BASE", "6300"))
 FPS = int(os.environ.get("V2_FPS", "6"))
 STEP_TIMEOUT = float(os.environ.get("V2_STEP_TIMEOUT", "30"))
-MAX_DECISIONS_PER_TURN = 8
+#: ПРЕДОХРАНИТЕЛЬ, а не политика: ход длится, пока есть действия с ценой > 0 (см. agent/calculus).
+MAX_DECISIONS_PER_TURN = 400
 SHOTS_ROOT = Path(log_dir) / "screenshots"
 
 #: Что скрываем в браузере съёмки, чтобы окна сообщений не перекрывали карту.
@@ -511,7 +513,8 @@ def play(agent: Agent, seed: int, port: int, turns: int) -> dict:
                 if action is None:
                     break
                 actions += 1
-                used.add((action[0], action[1]))
+                for k in executor.used_keys(action):
+                    used.add(k)
                 obs, _r, terminated, truncated, info = step(env, action)
                 agent.record_outcome(obs, own_id)
                 _capture(obs, (info or {}).get("turn"))

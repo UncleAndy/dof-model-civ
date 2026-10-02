@@ -220,7 +220,8 @@ def _science_rate(graph: KnowledgeGraph) -> float:
     return float(rate) if isinstance(rate, (int, float)) and rate > 0 else 0.0
 
 
-def production_gain(graph: KnowledgeGraph, action: str) -> tuple[float, str]:
+def production_gain(graph: KnowledgeGraph, action: str,
+                    actor: Optional[str] = None) -> tuple[float, str]:
     """Ожидаемый прирост индекса от постройки в городе за горизонт.
 
     Срок постройки берётся в объявленном порядке, и ВСЕ три источника — измеренные или
@@ -259,8 +260,68 @@ def production_gain(graph: KnowledgeGraph, action: str) -> tuple[float, str]:
         dof, dsrc = imp, f"среднее по своим типам ({cnt})"
     frac = min(1.0, H / float(max(1, eta)))
     gain = math.log(dof) * frac
-    return gain, (f"{src}: за {eta} ход(ов) появится {type_name} → +1 сущность (DoF {dof:g}: "
-                  f"{dsrc}); в τ={H:.0f} укладывается {frac * 100:.0f}% ({hw})")
+    why = (f"{src}: за {eta} ход(ов) появится {type_name} → +1 сущность (DoF {dof:g}: "
+           f"{dsrc}); в τ={H:.0f} укладывается {frac * 100:.0f}% ({hw})")
+    # ЦЕНА ОТКАЗА ОТ НАЧАТОЙ ПОСТРОЙКИ (§10.102): смена варианта теряет вложенные щиты.
+    pen, pwhy = switch_penalty(graph, actor, type_name)
+    if pen > 0:
+        gain -= pen
+        why = f"{why} | {pwhy}"
+    return gain, why
+
+
+def switch_penalty(graph: KnowledgeGraph, actor: Optional[str], target: str) -> tuple[float, str]:
+    """Цена ОТКАЗА от начатой постройки, в единицах ln(DoF). Всё — из измеренного.
+
+    Замер (§10.102): при смене производства город теряет щиты (`shield_stock` падает). Потеря
+    берётся медианой по каналу `produce_switch`; перевод в ценность — структурная формула:
+
+        потеря_в_ходах = потерянные_щиты / чистый_прирост_щитов
+        цена = ln(DoF текущей постройки) × min(1, потеря_в_ходах / срок текущей постройки)
+
+    Смысл: теряются щиты, уже вложенные в ТЕКУЩУЮ постройку; если потерянный объём работы больше её
+    срока, текущая постройка не состоится никогда — теряется вся её ценность (потолок 1). Пока замер
+    не накоплен, цена равна нулю с причиной: величина не выдумывается.
+    """
+    if actor is None:
+        return 0.0, ""
+    city = graph.entity(f"city:{actor}")
+    if city is None:
+        return 0.0, ""
+    cur = city.attrs.get("стройка")          # название текущей постройки (знает агент)
+    if not cur or cur == target:
+        return 0.0, ""
+    rows = [r for r in (graph.observed.get("produce_switch") or [])
+            if isinstance(r, dict) and r.get("сменил") is True]
+    losses = [int(r.get("потеряно") or 0) for r in rows]
+    losses = [x for x in losses if x > 0]
+    if not losses:
+        return 0.0, "потеря щитов при смене производства ещё не измерена"
+    losses.sort()
+    lost = losses[len(losses) // 2]
+    net = city.attrs.get("surplus_shield")
+    if not isinstance(net, (int, float)) or net <= 0:
+        net = city.attrs.get("prod_shield")
+    if not isinstance(net, (int, float)) or net <= 0:
+        return 0.0, "чистый прирост щитов неизвестен — перевести потерю нечем"
+    eta_cur, _src = eta_of(graph, cur)
+    if not eta_cur or eta_cur <= 0:
+        return 0.0, f"срок текущей постройки {cur} неизвестен — считать нечем"
+    te = graph.entity(f"unit_type:{cur}")
+    dof_cur = None
+    if te is not None and isinstance(te.attrs.get("dof_families"), int) and te.attrs["dof_families"] > 0:
+        dof_cur = float(te.attrs["dof_families"])
+    if dof_cur is None:
+        imp, _cnt = _impute_unit(graph)
+        dof_cur = imp
+    if not dof_cur or dof_cur <= 0:
+        return 0.0, "DoF текущей постройки неизвестен — считать нечем"
+    turns_lost = float(lost) / float(net)
+    frac = min(1.0, turns_lost / float(eta_cur))
+    penalty = math.log(dof_cur) * frac
+    return penalty, (f"отказ от {cur}: потеряно {lost} щитов = {turns_lost:.2f} ход. при {net:g} щит/ход "
+                     f"и сроке {eta_cur} → теряется {frac * 100:.0f}% ценности {cur} "
+                     f"(−{penalty:.3f})")
 
 
 def _measured_eta(graph: KnowledgeGraph, type_name: str) -> tuple[Optional[int], str]:

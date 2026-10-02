@@ -22,6 +22,37 @@ def to_env_action(step) -> tuple:
     return (step.ctrl, actor, step.action)
 
 
+#: Семейства, которые можно повторять в одном ходу: юнит шагает, пока у него есть очки движения,
+#: и бьёт, если цель рядом. Всё остальное (производство города, налоги, цель науки, правительство) —
+#: решение-настройка: один раз за ход на актора. Это НЕ ограничение «один актор — одно действие»:
+#: разные семейства одного актора доступны все, ограничивается только повтор одной и той же настройки.
+REPEATABLE_FAMILIES = frozenset({"goto", "attack"})
+
+
+def norm_actor(actor: Any) -> Any:
+    """Актор к одному виду: число, если строка целиком цифровая.
+
+    Иначе ключи «использовано» не совпадают: журнал пишет число, а путь — строку.
+    """
+    return int(actor) if isinstance(actor, str) and actor.isdigit() else actor
+
+
+def used_keys(action: tuple) -> list[tuple]:
+    """Ключи выполненного действия для набора «использовано».
+
+    Всегда — точное действие; для нерастяжимых семейств ещё и семейство целиком, чтобы город не
+    переключал производство по семь раз за ход (это было измерено).
+    """
+    ctrl, actor, act = action[0], action[1], action[2]
+    base = (ctrl, norm_actor(actor))
+    keys = [base + (act,)]
+    from .families import action_family
+    fam = action_family(act)
+    if fam not in REPEATABLE_FAMILIES:
+        keys.append(base + ("family", fam))
+    return keys
+
+
 class Journal:
     """Журнал решений: протокол (Proof of Implementation) и сверка «объявлено ↔ использовано»."""
 

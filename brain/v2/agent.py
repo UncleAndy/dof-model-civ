@@ -13,7 +13,7 @@ from typing import Any, Optional
 from . import attack as attack_mod
 from . import calculus, effects, experiment, generator, sensors
 from .generator import Step
-from .executor import Journal, to_env_action
+from .executor import Journal, norm_actor, to_env_action
 from .families import action_family
 from .store import KnowledgeStore
 
@@ -164,10 +164,15 @@ class Agent:
         paths, open_goals = generator.generate(g, menu, own_id, avoid=self.avoid)
 
         # 3) DOF-фильтр: индекс, NetDelta, выбор
-        # Исключаем: (а) акторов, которые уже действовали в этом ходу (конвенция civrealm — одно
-        # действие на актора за ход), (б) прошлый выбор, если состояние значимо не изменилось
+        # Исключаем: (а) действия, уже выполненные в этом ходу (и исчерпанные семейства настроек),
+        # (б) прошлый выбор, если состояние значимо не изменилось
         # (измерено: без этого агент повторял `set_tech_goal` каждый ход).
         cur_idx = calculus.index(g)["value"]
+        # `used_actors` — ключи вида (ctrl, актор, действие) и (ctrl, актор, "family", семейство),
+        # которые наполняет вызывающий. Никакого «один актор — одно действие за ход» здесь нет
+        # (это было непроверенное допущение): за ход доступны все возможные действия, ограничивается
+        # только повтор одной и той же НАСТРОЙКИ (производство, налоги, цель науки) — иначе город
+        # переключал производство по семь раз за ход и съедал бюджет юнитов.
         exclude = set(used_actors)
         if (self._last_choice is not None and self._last_index is not None
                 and cur_idx == self._last_index):
@@ -175,11 +180,6 @@ class Agent:
         decision = calculus.evaluate(g, paths, own_id, exclude=exclude)
         chosen = decision.chosen
         step = chosen.steps[0] if chosen is not None else None
-
-        # конвенция civrealm: один актор — одно действие за ход
-        if step is not None and (step.ctrl, step.actor) in used_actors:
-            decision.trace["reason"] += " | актор уже действовал в этом ходу"
-            chosen, step = None, None
 
         self._pending = step
         self._before = effects.snapshot(obs, own_id)
@@ -207,7 +207,9 @@ class Agent:
             "кальк_включено": len(decision.trace["calc_included"]),
             "кальк_исключено": decision.trace["calc_excluded"],
             "кандидаты": [{"эффект": c["path"]["effect"], "net_delta": c["net_delta"],
-                           "почему": c["why"]} for c in decision.trace["candidates"]],
+                           "почему": c["why"], "варианты": c.get("варианты"),
+                           "лучший_вариант": c.get("лучший_вариант")}
+                          for c in decision.trace["candidates"]],
         })
 
         if step is None:
@@ -227,7 +229,7 @@ class Agent:
             self._last_choice = None
             self._last_index = cur_idx
             return None
-        self._last_choice = (step.ctrl, step.actor, action_family(step.action))
+        self._last_choice = (step.ctrl, norm_actor(step.actor), "family", action_family(step.action))
         # Помним, укреплён ли наш юнит: мир публикуемого поля активности не отдаёт, а без этого
         # признака цена ОТВЕТА на угрозу не измерима (сравнение исходов боёв «укреплён / нет»).
         # `fortify` — укреплён; любое другое действие снимает укрепление.
@@ -315,6 +317,23 @@ class Agent:
                 _ce = self.store.graph.entity(f"city:{step.actor}")
                 if _ce is not None:
                     _ce.attrs["стройка"] = self._produce_started
+                # ЗАМЕР (§10.102): сколько щитов ТЕРЯЕТСЯ при смене производства. Мир публикует
+                # `shield_stock`, поэтому величина измеряется, а не подбирается. Без этого у
+                # «отказа от начатой постройки» цены нет, и город переключает производство
+                # каждый ход, не доводя ни одну постройку до конца.
+                _cid = str(step.actor)
+                _b = (self._before.get("cities") or {}).get(_cid)
+                _a = (after.get("cities") or {}).get(_cid)
+                if _b and _a and isinstance(_b[2], int) and isinstance(_a[2], int):
+                    _switched = None
+                    if len(_b) > 6 and len(_a) > 6:
+                        _switched = (_b[5], _b[6]) != (_a[5], _a[6])
+                    self.store.graph.note_observation("produce_switch", {
+                        "ход": self._turn, "город": _cid, "размер": _a[0],
+                        "щиты_до": _b[2], "щиты_после": _a[2],
+                        "потеряно": max(0, _b[2] - _a[2]),
+                        "сменил": _switched, "до": _b[5:7] if len(_b) > 6 else None,
+                        "после": _a[5:7] if len(_a) > 6 else None})
         if fam in ("attack", "conquer_city") and self._before_foe is not None:
             fight = effects.fight_diff(self._before, after, self._before_foe,
                                        effects.foe_snapshot(obs, own_id))

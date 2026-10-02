@@ -62,7 +62,8 @@ def snapshot(obs: dict, own_id: int = 0) -> dict[str, Any]:
         # рост меню (например, от новой технологии) виден как измеренный факт.
         buildable = sum(1 for v in _seq(c.get("can_build_unit")) if v)
         cities[str(cid)] = [c.get("size"), c.get("surplus_food"), c.get("shield_stock"),
-                            c.get("turns_to_prod_complete"), buildable]
+                            c.get("turns_to_prod_complete"), buildable,
+                            c.get("production_kind"), c.get("production_value")]
 
     players = obs.get("player") or {}
     p = players.get(str(own_id)) or players.get(own_id) or {}
@@ -125,6 +126,11 @@ def diff(before: dict, after: dict) -> dict[str, int]:
             bump("city_shrank")
         if isinstance(b[2], int) and isinstance(a[2], int) and a[2] != b[2]:
             bump("city_shields_changed")
+            # ВЕЛИЧИНА изменения щитов (а не только факт): нужна для замера потери при смене
+            # производства — это цена отказа от начатой постройки (§10.102).
+            bump("city_shields_delta", int(a[2] - b[2]))
+        if len(b) > 6 and len(a) > 6 and (b[5], b[6]) != (a[5], a[6]):
+            bump("city_prod_switched")
         if b[3] != a[3]:
             bump("city_prod_eta_changed")
         if isinstance(b[4], int) and isinstance(a[4], int) and a[4] != b[4]:

@@ -27,6 +27,7 @@ import civrealm  # noqa: E402,F401
 from civrealm.configs import fc_args  # noqa: E402
 
 from baselines import wedges  # noqa: E402
+from brain.v2 import executor  # noqa: E402
 from brain.v2.agent import Agent  # noqa: E402
 
 STORE = os.environ.get("V2_STORE", str(ROOT / "knowledge" / "world.json"))
@@ -35,7 +36,9 @@ TURNS = int(os.environ.get("V2_TURNS", "60"))
 SEEDS = [int(s) for s in os.environ.get("V2_SEEDS", "9000,9001").split(",")]
 PORT_BASE = int(os.environ.get("V2_PORT_BASE", "6300"))
 STEP_TIMEOUT = float(os.environ.get("V2_STEP_TIMEOUT", "30"))
-MAX_DECISIONS_PER_TURN = 8
+#: ПРЕДОХРАНИТЕЛЬ, а не политика: ход длится, пока есть действия с ценой > 0 (см. agent/calculus).
+#: Значение выбрано с запасом, чтобы не обрезать ход; политику ограничивает сам агент.
+MAX_DECISIONS_PER_TURN = 400
 
 
 class StepTimeout(Exception):
@@ -82,7 +85,8 @@ def play(agent: Agent, seed: int, port: int, turns: int) -> dict:
                     break
                 acted_this_turn = True
                 actions += 1
-                used.add((action[0], action[1]))
+                for k in executor.used_keys(action):
+                    used.add(k)
                 obs, _r, terminated, truncated, info = step(env, action)
                 agent.record_outcome(obs, own_id)
                 if terminated or truncated:
