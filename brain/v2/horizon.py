@@ -334,9 +334,10 @@ def city_crowding_penalty(graph: KnowledgeGraph, actor: str) -> tuple[float, str
     штраф = −ln(1 − ov) (это простая функция доли, число не подбирается). ov=0 → штрафа нет.
 
     §10.108, штраф 1б — РАЗНОС: города должны стоять не ближе `CITY_SPACING` друг к другу, иначе их
-    зоны добычи пересекаются и ресурсная база делится. spacing_pen = −ln(d / CITY_SPACING) при
-    d < CITY_SPACING (d — дистанция до ближайшего своего города), иначе 0. Чистая функция дистанции,
-    без подбираемых коэффициентов: на дистанции CITY_SPACING штраф 0, чем ближе — тем больше.
+    зоны добычи пересекаются. spacing_pen = Σ −ln(d/CITY_SPACING) по всем своим городам ближе порога
+    (d — дистанция до каждого). Суммирование по всем городам, а не только по ближайшему: быть
+    зажатым между двумя своими так же плохо, как вплотную к одному. Масштаб — прежняя чистая
+    функция дистанции, без свободных коэффициентов.
     """
     s = graph.entity(f"unit:{actor}")
     if s is None or s.attrs.get("x") is None:
@@ -352,21 +353,21 @@ def city_crowding_penalty(graph: KnowledgeGraph, actor: str) -> tuple[float, str
     own = [c for c in graph.by_kind("city") if c.is_own and c.attrs.get("x") is not None]
     if not own:
         return 0.0, ""
-    # §10.108 штраф 1б: дистанция до ближайшего своего города (тороидальная по x).
-    d_min = None
+    # §10.108 штраф 1б: разнос по ВСЕМ своим городам (не только ближайшему).
+    spacing_pen = 0.0
+    why_parts = []
     for c in own:
         dxc = abs((c.attrs["x"] - x + xsize // 2) % xsize - xsize // 2)
         dyc = abs(c.attrs["y"] - y)
         d = math.sqrt(dxc * dxc + dyc * dyc)
-        if d_min is None or d < d_min:
-            d_min = d
-    spacing_pen = 0.0
+        if d < CITY_SPACING and d > 0:
+            d_safe = max(d, 0.5)   # поселенец на клетке города (d=0) → считаем как 0.5
+            spacing_pen += -math.log(d_safe / float(CITY_SPACING))
+            why_parts.append(f"{d:.1f}")
     why_spacing = ""
-    if d_min is not None and d_min < CITY_SPACING:
-        d_safe = max(d_min, 0.5)   # поселенец на клетке города (d=0) → считаем как 0.5
-        spacing_pen = -math.log(d_safe / float(CITY_SPACING))
-        why_spacing = (f"разнос: ближайший свой город на дистанции {d_min:.1f} < "
-                       f"{CITY_SPACING} → −{spacing_pen:.3f}")
+    if spacing_pen > 0:
+        why_spacing = (f"разнос: свои города ближе {CITY_SPACING} на [{', '.join(why_parts)}] "
+                       f"→ −{spacing_pen:.3f}")
     R = int(math.sqrt(r_sq)) + 1
     offsets = [(dx, dy) for dx in range(-R, R + 1) for dy in range(-R, R + 1)
                if dx * dx + dy * dy <= r_sq]
