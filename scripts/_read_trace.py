@@ -6,6 +6,7 @@ for line in open('/home/hermes/projects/AI/DOF-MODEL-CIV/knowledge/traces_probe_
         continue
     r = d.get('решение') or {}
     if r.get('action') == 'build_city':
+        v = d.get('выбрано') or {}
         print('ход', d.get('ход'), 'actor', r.get('actor'),
-              '| выб:', d.get('выбрано', {}).get('goal'),
-              '| why:', (d.get('выбрано', {}).get('source') or '')[:120])
+              '| goal:', v.get('goal'),
+              '| source:', (v.get('source') or '')[:90])

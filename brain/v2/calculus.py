@@ -33,7 +33,7 @@ from . import explore as explore_mod
 from . import threat
 from .families import action_family
 from .horizon import (city_crowding_penalty, eta_of, production_gain, research_gain,
-                      site_food_penalty)
+                      settler_spacing_factor, settler_uncrowding_gain, site_food_penalty)
 from .horizon import tau as tau_window
 from .knowledge import KnowledgeGraph
 from .projection import project
@@ -95,7 +95,14 @@ def dof_of(graph: KnowledgeGraph, e) -> tuple[Optional[float], str]:
         if te is not None:
             v = _family_dof(te)
             if v is not None:
-                return v, ("измерено" if e.is_own else "выведено (аналогия)")
+                origin = "измерено" if e.is_own else "выведено (аналогия)"
+                if e.is_own:
+                    # §10.108: поселенец под своим городом дешевеет — множитель по близости.
+                    fct, why = settler_spacing_factor(graph, e)
+                    if fct < 1.0:
+                        v = v * fct
+                        origin = f"{origin}; {why}"
+                return v, origin
     v = _family_dof(e)
     if v is not None:
         return v, "измерено"
@@ -346,6 +353,17 @@ def _option_net(graph: KnowledgeGraph, cur_v, ctrl: str, action: str,
                     gained = True
                 elif why_e and not g_m:
                     why = why_e
+                # §10.108 п.3: уход поселенца ПРОЧЬ от города снимает штраф близости (рост ln(DoF)).
+                _ux = graph.entity(f"unit:{actor}")
+                _vx, _ox = dof_of(graph, _ux) if _ux is not None else (None, "")
+                _xsize = int((graph.world or {}).get("xsize") or 0)
+                if _vx and _vx > 0:
+                    g_c, why_c = settler_uncrowding_gain(graph, str(actor), action, float(_vx),
+                                                         _xsize)
+                    if g_c > 0:
+                        delta += g_c
+                        why = f"{why_c}; {why}" if why and why != _ox else why_c
+                        gained = True
             if fam == "attack":
                 st = graph.fight_stats()
                 if st["n"] < MIN_FIGHTS:

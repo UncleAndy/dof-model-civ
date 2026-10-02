@@ -30,6 +30,7 @@ from .knowledge import KnowledgeGraph
 
 HORIZON = 3          # глубина ПУТИ (решение D2), не горизонт оценки
 TAU_QUANTILE = 0.10  # пессимистичный квантиль для приора (объявлено в §10.60)
+CITY_SPACING = 6     # целевой разнос городов (§10.108 штраф 1б): не ближе этой дистанции
 
 
 def tau(graph: KnowledgeGraph) -> tuple[float, str]:
@@ -331,6 +332,11 @@ def city_crowding_penalty(graph: KnowledgeGraph, actor: str) -> tuple[float, str
     (`border_city_radius_sq`), геометрия, без коэффициентов. Если доля `ov` работовых клеток нового
     города уже лежит в зоне своего города, новый вносит в индекс `ln(DoF)` только остаток, то есть
     штраф = −ln(1 − ov) (это простая функция доли, число не подбирается). ov=0 → штрафа нет.
+
+    §10.108, штраф 1б — РАЗНОС: города должны стоять не ближе `CITY_SPACING` друг к другу, иначе их
+    зоны добычи пересекаются и ресурсная база делится. spacing_pen = −ln(d / CITY_SPACING) при
+    d < CITY_SPACING (d — дистанция до ближайшего своего города), иначе 0. Чистая функция дистанции,
+    без подбираемых коэффициентов: на дистанции CITY_SPACING штраф 0, чем ближе — тем больше.
     """
     s = graph.entity(f"unit:{actor}")
     if s is None or s.attrs.get("x") is None:
@@ -346,12 +352,27 @@ def city_crowding_penalty(graph: KnowledgeGraph, actor: str) -> tuple[float, str
     own = [c for c in graph.by_kind("city") if c.is_own and c.attrs.get("x") is not None]
     if not own:
         return 0.0, ""
+    # §10.108 штраф 1б: дистанция до ближайшего своего города (тороидальная по x).
+    d_min = None
+    for c in own:
+        dxc = abs((c.attrs["x"] - x + xsize // 2) % xsize - xsize // 2)
+        dyc = abs(c.attrs["y"] - y)
+        d = math.sqrt(dxc * dxc + dyc * dyc)
+        if d_min is None or d < d_min:
+            d_min = d
+    spacing_pen = 0.0
+    why_spacing = ""
+    if d_min is not None and d_min < CITY_SPACING:
+        d_safe = max(d_min, 0.5)   # поселенец на клетке города (d=0) → считаем как 0.5
+        spacing_pen = -math.log(d_safe / float(CITY_SPACING))
+        why_spacing = (f"разнос: ближайший свой город на дистанции {d_min:.1f} < "
+                       f"{CITY_SPACING} → −{spacing_pen:.3f}")
     R = int(math.sqrt(r_sq)) + 1
     offsets = [(dx, dy) for dx in range(-R, R + 1) for dy in range(-R, R + 1)
                if dx * dx + dy * dy <= r_sq]
     total = len(offsets)
     if not total:
-        return 0.0, ""
+        return spacing_pen, why_spacing
     shared = 0
     for dx, dy in offsets:
         tx = (x + dx) % xsize if xsize else x + dx
@@ -363,12 +384,98 @@ def city_crowding_penalty(graph: KnowledgeGraph, actor: str) -> tuple[float, str
                 shared += 1
                 break
     ov = shared / float(total)
-    if ov <= 0:
+    pen = 0.0
+    why = why_spacing
+    if ov > 0:
+        ov = min(ov, 0.95)
+        pen = -math.log(1.0 - ov)
+        why = (f"перенаселённость: работовая зона нового города перекрыта со своими городами "
+               f"({len(own)}) на {ov * 100:.0f}% → −{pen:.3f}")
+        if why_spacing:
+            why = f"{why_spacing}; {why}"
+    return pen + spacing_pen, why
+
+
+def _nearest_own_city_dist(graph: KnowledgeGraph, x: int, y: int) -> Optional[float]:
+    """Дистанция (евклидова, по X — тороидальная) до ближайшего СВОЕГО города."""
+    own = [c for c in graph.by_kind("city") if c.is_own and c.attrs.get("x") is not None]
+    if not own:
+        return None
+    xsize = int((graph.world or {}).get("xsize") or 0)
+    d_min = None
+    for c in own:
+        if xsize:
+            dxc = abs((c.attrs["x"] - x + xsize // 2) % xsize - xsize // 2)
+        else:
+            dxc = abs(c.attrs["x"] - x)
+        dyc = abs(c.attrs["y"] - y)
+        d = math.sqrt(dxc * dxc + dyc * dyc)
+        if d_min is None or d < d_min:
+            d_min = d
+    return d_min
+
+
+def _spacing_factor(d: float) -> float:
+    """§10.108: множитель ценности по дистанции до ближайшего своего города (без свободных чисел)."""
+    return min(1.0, max(0.0, (d - 1.0) / float(CITY_SPACING - 1)))
+
+
+def settler_spacing_factor(graph: KnowledgeGraph, e) -> tuple[float, str]:
+    """§10.108: множитель DoF поселенца по близости к ближайшему своему городу.
+
+    Поселенец под городом дешевеет (там он почти бесполезен: делит работовую зону), и его ценность
+    растёт с удалением. factor = min(1, max(0, (d − 1) / (CITY_SPACING − 1))), d — дистанция до
+    ближайшего своего города. Опорные точки структурные (без свободных чисел): на дистанции 1
+    ценность ~0, на CITY_SPACING — полная. Применяется только к юнитам, чей тип умеет build_city
+    (поселенцы), и только к своим (у чужих нет наших зон).
+    """
+    if e is None or e.kind != "unit" or e.attrs.get("x") is None:
+        return 1.0, ""
+    te = graph.entity(f"unit_type:{e.name}") if e.name else None
+    caps = list((te.attrs.get("capabilities") if te else None) or [])
+    if "build_city" not in caps:
+        return 1.0, ""
+    d_min = _nearest_own_city_dist(graph, e.attrs["x"], e.attrs["y"])
+    if d_min is None or d_min <= 0:
+        return 1.0, ""
+    factor = _spacing_factor(d_min)
+    if factor >= 1.0:
+        return 1.0, ""
+    return factor, f"близость к городу: дистанция {d_min:.1f} → DoF × {factor:.2f}"
+
+
+def settler_uncrowding_gain(graph: KnowledgeGraph, actor: str, action: str, base_dof: float,
+                            xsize: int) -> tuple[float, str]:
+    """§10.108 п.3: выигрыш от ухода поселенца ПРОЧЬ от города.
+
+    Множитель близости (п.1) дешевит поселенца, но сам по себе не двигает его. Здесь движение,
+    увеличивающее дистанцию до ближайшего своего города, даёт выигрыш = рост ln(DoF) от снятия
+    штрафа: ln(DoF_after) − ln(DoF_before) = ln(factor_after / factor_before). Без свободных чисел —
+    та же функция `_spacing_factor`, а база (DoF поселенца) сокращается в логарифме отношения.
+    """
+    e = graph.entity(f"unit:{actor}")
+    if e is None or e.attrs.get("x") is None or e.name != "Settlers":
         return 0.0, ""
-    ov = min(ov, 0.95)
-    pen = -math.log(1.0 - ov)
-    return pen, (f"перенаселённость: работовая зона нового города перекрыта со своими городами "
-                 f"({len(own)}) на {ov * 100:.0f}% → −{pen:.3f}")
+    from .threat import DIR8_MEASURED, offset_of
+    if offset_of(action) is None or str(action).startswith("attack"):
+        return 0.0, ""
+    dx, dy = offset_of(action)
+    x0, y0 = e.attrs["x"], e.attrs["y"]
+    d_before = _nearest_own_city_dist(graph, x0, y0)
+    if d_before is None or d_before <= 0:
+        return 0.0, ""
+    nx = (x0 + dx) % xsize if xsize else x0 + dx
+    ny = y0 + dy
+    d_after = _nearest_own_city_dist(graph, nx, ny)
+    if d_after is None or d_after <= 0:
+        return 0.0, ""
+    f_before = _spacing_factor(d_before)
+    f_after = _spacing_factor(d_after)
+    if f_after <= f_before:
+        return 0.0, f"{action}: дистанция {d_before:.1f}→{d_after:.1f}, не удаляемся"
+    gain = math.log(f_after) - math.log(f_before)
+    return gain, (f"{action}: уход от города {d_before:.1f}→{d_after:.1f} снимает штраф близости "
+                  f"(×{f_before:.2f}→×{f_after:.2f}) → +{gain:.3f}")
 
 
 def site_food_penalty(graph: KnowledgeGraph, actor: str, dof_city: Optional[float]) -> tuple[float, str]:
