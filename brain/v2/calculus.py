@@ -374,12 +374,18 @@ def _option_net(graph: KnowledgeGraph, cur_v, ctrl: str, action: str,
                 if g_d > 0:
                     _dir_gain += g_d
                     _dir_why = f"{why_d}; {_dir_why}" if _dir_why else why_d
-                # §10.113: ПРИКРЫТИЕ города — военный встаёт к городу, у которого стоит чужой.
+                # §10.113/§10.115: ПРИКРЫТИЕ города и СБЛИЖЕНИЕ с источником. Обе цены — про
+                # снятие ОДНОЙ И ТОЙ ЖЕ угрозы у города (когда источник стоит вплотную к городу,
+                # один и тот же шаг удовлетворяет обе), поэтому берём БОЛЬШУЮ, а не сумму —
+                # иначе снятие угрозы считалось бы дважды.
                 g_cv, why_cv = threat.cover_gain(graph, action, str(actor), dof_of,
                                                  steps_count=depth)
-                if g_cv > 0:
-                    _dir_gain += g_cv
-                    _dir_why = f"{why_cv}; {_dir_why}" if _dir_why else why_cv
+                g_it, why_it = threat.intercept_gain(graph, action, str(actor), dof_of,
+                                                     steps_count=depth)
+                g_dir, why_dir = (g_cv, why_cv) if g_cv >= g_it else (g_it, why_it)
+                if g_dir > 0:
+                    _dir_gain += g_dir
+                    _dir_why = f"{why_dir}; {_dir_why}" if _dir_why else why_dir
                 if _dir_gain > 0:
                     k, why_k = direction_multiplier(graph, str(actor), action)
                     delta += _dir_gain * k

@@ -461,6 +461,78 @@ def cover_gain(graph: KnowledgeGraph, action: str, actor: str, dof_of,
     return best_gain, best_why
 
 
+def hold_set(graph: KnowledgeGraph) -> set:
+    """Дежурные защитники угрожаемых городов: держат позицию (не бегут, не сближаются).
+
+    Почему (измерено): город уязвим, пока рядом чужой и нет защитника; уход оголяет город,
+    а DoF города (множитель) много больше DoF одного юнита. Состав детерминированный:
+    младшие по номеру, по числу чужих в радиусе города. Структурное решение, не подгонка.
+    """
+    xsize = int((graph.world or {}).get("xsize") or 0)
+    own_mil = [u for u in graph.by_kind("unit")
+               if u.is_own and u.attrs.get("x") is not None
+               and isinstance(u.attrs.get("type_attack_strength"), (int, float))
+               and u.attrs["type_attack_strength"] > 0]
+    foes = [f for f in graph.by_kind("unit")
+            if (not f.is_own) and f.attrs.get("x") is not None]
+    hold: set = set()
+    for c in [e for e in graph.by_kind("city") if e.is_own and e.attrs.get("x") is not None]:
+        rsq = (c.attrs or {}).get("city_radius_sq")
+        radius = int(math.isqrt(int(rsq))) if isinstance(rsq, (int, float)) and rsq >= 0 else 4
+        foes_near = [f for f in foes
+                     if cheb(f.attrs["x"], f.attrs["y"], c.attrs["x"], c.attrs["y"], xsize) <= radius]
+        if not foes_near:
+            continue
+        need = max(1, len(foes_near))
+        adj = [u for u in own_mil
+               if cheb(u.attrs["x"], u.attrs["y"], c.attrs["x"], c.attrs["y"], xsize) <= 1]
+        adj.sort(key=lambda u: (int(u.eid.split(":")[1]) if u.eid.split(":")[1].isdigit() else 0))
+        hold.update(u.eid for u in adj[:need])
+    return hold
+
+
+def intercept_gain(graph: KnowledgeGraph, action: str, actor: str, dof_of,
+                    steps_count: int = 1) -> tuple[float, str]:
+    """§10.115: СБЛИЖЕНИЕ с объявленным источником коллапса — чтобы встать вплотную и ударить.
+
+    Только против ВИДИМОГО источника (§10.33/§10.34 — «догадка из тумана нападением не
+    считается») и только пока наш военный НЕ вплотную: иначе цена совпала бы с ценой удара
+    (§10.114) и агент «завис» бы рядом вместо боя. Дежурные защитники (`hold_set`) не сближаются:
+    их уход оголил бы город. Цена шага — риск, который держит источник (`source_price`), без
+    новых коэффициентов.
+    """
+    e = graph.entity(f"unit:{actor}")
+    if e is None or e.attrs.get("x") is None:
+        return 0.0, ""
+    atk = e.attrs.get("type_attack_strength")
+    if not isinstance(atk, (int, float)) or atk <= 0:
+        return 0.0, ""
+    off = offset_of(action)
+    if off is None or str(action).startswith("attack"):
+        return 0.0, ""
+    if e.eid in hold_set(graph):
+        return 0.0, ""
+    xsize = int((graph.world or {}).get("xsize") or 0)
+    pts = []
+    nx, ny = e.attrs["x"], e.attrs["y"]
+    for _ in range(max(1, steps_count)):
+        nx = (nx + off[0]) % xsize if xsize else nx + off[0]
+        ny = ny + off[1]
+        pts.append((nx, ny))
+    best_gain, best_why = 0.0, ""
+    for src in threats(graph):
+        if cheb(e.attrs["x"], e.attrs["y"], src["x"], src["y"], xsize) <= 1:
+            continue                       # уже вплотную — это дело удара (§10.114), не сближения
+        if not any(cheb(px, py, src["x"], src["y"], xsize) <= 1 for px, py in pts):
+            continue                       # план не доводит вплотную к источнику
+        held, who = source_price(graph, src["eid"], dof_of)
+        if held > best_gain:
+            best_gain = held
+            best_why = (f"{action}: сближаемся с источником коллапса {src['eid']} "
+                        f"(вплотную за ≤{max(1, steps_count)} шаг.) — снимаем риск {held:.2f}")
+    return best_gain, best_why
+
+
 def defense_gain(graph: KnowledgeGraph, ctrl: str, action: str, actor: str, dof_of,
                  radius: float = 2.0) -> tuple[float, str]:
     """§10.114: ОТПОР — бьём ТОЛЬКО объявленный источник коллапса (нападение наблюдено).
