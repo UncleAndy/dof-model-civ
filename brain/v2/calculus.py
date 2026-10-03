@@ -32,8 +32,9 @@ from metrics.reversibility import classify_reversibility
 from . import explore as explore_mod
 from . import threat
 from .families import action_family
-from .horizon import (city_crowding_penalty, eta_of, production_gain, research_gain,
-                      settler_spacing_factor, settler_uncrowding_gain, site_food_penalty)
+from .horizon import (city_crowding_penalty, direction_multiplier, eta_of, production_gain,
+                      research_gain, settler_spacing_factor, settler_uncrowding_gain,
+                      site_food_penalty)
 from .horizon import tau as tau_window
 from .knowledge import KnowledgeGraph
 from .projection import project
@@ -335,12 +336,17 @@ def _option_net(graph: KnowledgeGraph, cur_v, ctrl: str, action: str,
                     gained = True
         if actor is not None:
             if fam == "goto":
+                # §10.109: множитель НАПРАВЛЕНИЯ — понижает привлекательность хода на клетку,
+                # где юнит недавно был. Это множитель выигрыша конкретного направления, а НЕ штраф
+                # к «двигаться ли»: юнит с мотивом двигается, просто выбирает менее «притёртое»
+                # направление (выход из тупика сохраняется).
+                _dir_gain = 0.0
+                _dir_why = ""
                 g_m, why_m = threat.movement_gain(graph, ctrl, action, str(actor), dof_of, sw,
                                                   steps_count=depth)
                 if g_m > 0:
-                    delta += g_m
-                    why = why_m
-                    gained = True
+                    _dir_gain += g_m
+                    _dir_why = why_m
                 # ИССЛЕДОВАНИЕ (цель `explore`, §10.81): раскрытая карта — единственный способ
                 # увидеть чужие сущности, а мирные чужие ПЛЮСУЮТСЯ к общему DoF. Цена — из
                 # измеренного: клеток на ход × сущностей на клетку × ln(DoF обнаруженной).
@@ -348,11 +354,10 @@ def _option_net(graph: KnowledgeGraph, cur_v, ctrl: str, action: str,
                     graph, action, str(actor), dof_of,
                     lambda gg: impute(gg, "unit"))
                 if g_e > 0:
-                    delta += g_e
-                    why = why_e
-                    gained = True
+                    _dir_gain += g_e
+                    _dir_why = why_e
                 elif why_e and not g_m:
-                    why = why_e
+                    _dir_why = why_e
                 # §10.108 п.3: уход поселенца ПРОЧЬ от города снимает штраф близости (рост ln(DoF)).
                 _ux = graph.entity(f"unit:{actor}")
                 _vx, _ox = dof_of(graph, _ux) if _ux is not None else (None, "")
@@ -361,9 +366,15 @@ def _option_net(graph: KnowledgeGraph, cur_v, ctrl: str, action: str,
                     g_c, why_c = settler_uncrowding_gain(graph, str(actor), action, float(_vx),
                                                          _xsize)
                     if g_c > 0:
-                        delta += g_c
-                        why = f"{why_c}; {why}" if why and why != _ox else why_c
-                        gained = True
+                        _dir_gain += g_c
+                        _dir_why = f"{why_c}; {_dir_why}" if _dir_why else why_c
+                if _dir_gain > 0:
+                    k, why_k = direction_multiplier(graph, str(actor), action)
+                    delta += _dir_gain * k
+                    why = f"{_dir_why} | {why_k}" if why_k else _dir_why
+                    gained = True
+                elif _dir_why:
+                    why = _dir_why
             if fam == "attack":
                 st = graph.fight_stats()
                 if st["n"] < MIN_FIGHTS:

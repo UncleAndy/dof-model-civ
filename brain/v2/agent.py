@@ -15,6 +15,7 @@ from . import calculus, effects, experiment, generator, sensors
 from .generator import Step
 from .executor import Journal, norm_actor, to_env_action
 from .families import action_family
+from .horizon import TABU_DEPTH
 from .store import KnowledgeStore
 
 
@@ -40,7 +41,9 @@ def _foreign_summary(graph) -> dict:
 
 class Agent:
     def __init__(self, store_path: str | Path, trace_path: str | Path | None = None,
-                 avoid=None, growth_path: str | Path | None = None) -> None:
+                 avoid=None, growth_path: str | Path | None = None,
+                 defense_path: str | Path | None = None,
+                 incursion_path: str | Path | None = None) -> None:
         self.store = KnowledgeStore(store_path)
         self.avoid = avoid
         self.journal = Journal(trace_path or (Path(store_path).parent / "traces.jsonl"))
@@ -49,6 +52,17 @@ class Agent:
         #: «растёт ли набор возможностей города вместе с городом», а не предположить это.
         self.growth_path = Path(growth_path) if growth_path else None
         self._growth_seen: set = set()
+        #: Замер ЗАЩИЩЁННОСТИ города (§10.110): на каждом ходу пишем по каждому своему городу
+        #: позицию, число своих юнитов рядом и число защитников (defense > 0), а также чужих рядом.
+        #: Нужен, чтобы ОТВЕТИТЬ ЗАМЕРОМ на вопрос «были ли у погибших городов защитники».
+        self.defense_path = Path(defense_path) if defense_path else None
+        self._defense_seen: set = set()
+        #: Замер ВТОРЖЕНИЙ на нашу территорию (§10.111): на каждом ходу пишем чужой юнит, стоящий
+        #: на клетке нашей территории (tile_owner == own, объединённая с радиусами наших городов).
+        #: Нужен, чтобы ИЗМЕРИТЬ связь «вторжение → нападение» и цену «потенциального источника».
+        self.incursion_path = Path(incursion_path) if incursion_path else None
+        self._inc_seen: set = set()
+        self._terr_cache: tuple = (None, None)
         #: Действующий ДЛИТЕЛЬНЫЙ ОПЫТ (прирост знания на дистанции, см. experiment.py).
         self._experiment = None
         self._pending = None          # шаг, отправленный в среду
@@ -106,11 +120,23 @@ class Agent:
         self.store.observe(obs, available, own_id, turn=turn)
         g = self.store.graph
         self._record_growth(g, menu)
+        self._record_defense(g, obs, own_id)
+        self._record_incursions(g, obs, own_id)
 
         # 1.1) СВЯЗЬ DISCOVERY (измерение для цены исследования, §10.81): сколько сущностей
         # приходит на одну раскрытую клетку. Обе величины измерены, ничего не предполагается.
         _rev = self._update_coverage(g)
         g.world["покрытие"] = self._covered
+        # §10.109: история последних клеток своих подвижных юнитов (для множителя направления).
+        # Хранится в attrs юнита и переживает ходы; обновляется раз за ход (при смене клетки).
+        for e in g.by_kind("unit"):
+            if not e.is_own or e.attrs.get("x") is None:
+                continue
+            trail = list(e.attrs.get("история_клеток") or [])
+            cur = (e.attrs["x"], e.attrs["y"])
+            if not trail or trail[-1] != cur:
+                trail.append(cur)
+                e.attrs["история_клеток"] = trail[-TABU_DEPTH:]
         _ents = len(g.entities)
         if self._last_revealed is not None and _rev > self._last_revealed:
             g.note_observation("discovery", {"клеток": int(_rev - self._last_revealed),
@@ -275,6 +301,118 @@ class Agent:
                    "семейства": fams[:8]}
             with self.growth_path.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+    def _record_defense(self, graph, obs: dict, own_id: int) -> None:
+        """§10.110: замер по ВСЕМ городам ИЗ НАБЛЮДЕНИЯ (свои и чужие) с владельцем.
+
+        Пишем строку на (ход, город). Отсутствие строки = города нет в наблюдении. Смена `owner`
+        у того же eid = город ЗАХВАЧЕН (стал чужим); город, пропавший из наблюдения и не
+        появившийся как чужой = ушёл из видимости. Это и разделяет «потерян» и «не виден»."""
+        if self.defense_path is None:
+            return
+        from .sensors import read_cities
+        units = [e for e in graph.by_kind("unit")
+                 if e.is_own and e.attrs.get("x") is not None]
+        foes = [e for e in graph.by_kind("unit")
+                if (not e.is_own) and e.attrs.get("x") is not None]
+        game = getattr(self.store, "games", None)
+        for c in read_cities(obs):
+            if c.x is None or c.y is None:
+                continue
+            key = (self._turn, c.cid)
+            if key in self._defense_seen:
+                continue
+            self._defense_seen.add(key)
+            near_own = [u for u in units
+                        if max(abs(u.attrs["x"] - c.x), abs(u.attrs["y"] - c.y)) <= 1]
+            guards = [u for u in near_own
+                      if isinstance(u.attrs.get("type_defense_strength"), (int, float))
+                      and u.attrs["type_defense_strength"] > 0]
+            near_foe = [u for u in foes
+                        if max(abs(u.attrs["x"] - c.x), abs(u.attrs["y"] - c.y)) <= 1]
+            rec = {"партия": game, "ход": self._turn, "город": f"city:{c.cid}",
+                   "owner": c.owner, "свой": c.owner == own_id, "x": c.x, "y": c.y,
+                   "размер": c.size, "своих_рядом": len(near_own),
+                   "защитников_рядом": len(guards), "чужих_рядом": len(near_foe),
+                   "типы_рядом": sorted({u.name for u in near_own})[:6]}
+            with self.defense_path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+    def _territory(self, w, own_id: int, own_cities: list) -> set:
+        """§10.111: наша территория = клетки с `tile_owner == наш` ∪ рабочие радиусы наших городов.
+
+        Обе величины ПУБЛИКУЕТ мир (`map.tile_owner`, `city.city_radius_sq`) — не предположение.
+        Кэшируется на ход (решение вызывается много раз за ход)."""
+        import math as _math
+        if self._terr_cache[0] == self._turn and self._terr_cache[1] is not None:
+            return self._terr_cache[1]
+        xs, ys = int(w.xsize), int(w.ysize)
+        terr: set = set()
+
+        def _tv(x: int, y: int):
+            try:
+                v = w.tile_owner[x][y]
+            except Exception:  # noqa: BLE001
+                return None
+            if isinstance(v, (list, tuple)):
+                v = v[0] if v else None
+            return v
+
+        for x in range(xs):
+            for y in range(ys):
+                if _tv(x, y) == own_id:
+                    terr.add((x, y))
+        for c in own_cities:
+            rsq = c.attrs.get("city_radius_sq")
+            if not isinstance(rsq, (int, float)) or rsq < 0:
+                continue
+            r = int(_math.isqrt(int(rsq)))
+            for i in range(c.x - r, c.x + r + 1):
+                for j in range(c.y - r, c.y + r + 1):
+                    if 0 <= j < ys:
+                        terr.add((i % xs, j))
+        self._terr_cache = (self._turn, terr)
+        return terr
+
+    def _record_incursions(self, graph, obs: dict, own_id: int) -> None:
+        """§10.111: чужой юнит на НАШЕЙ территории — «потенциальный источник коллапса» (замер).
+
+        Пишем событие на (ход, клетка, владелец). Отсутствие события = вторжений не было. По этим
+        данным ИЗМЕРЯЕМ связь «вторжение → нападение» (цена потенциального источника), не назначаем."""
+        if self.incursion_path is None:
+            return
+        from .sensors import read_cities, read_world
+        w = read_world(obs, own_id)
+        own_cities = [c for c in read_cities(obs) if c.owner == own_id and c.x is not None]
+        terr = self._territory(w, own_id, own_cities)
+        if not terr:
+            return
+        foes = [e for e in graph.by_kind("unit") if (not e.is_own) and e.attrs.get("x") is not None]
+        own_units = [e for e in graph.by_kind("unit") if e.is_own and e.attrs.get("x") is not None]
+        game = getattr(self.store, "games", None)
+        for f in foes:
+            px, py = f.attrs["x"], f.attrs["y"]
+            if (px, py) not in terr:
+                continue
+            key = (self._turn, px, py, f.attrs.get("owner"))
+            if key in self._inc_seen:
+                continue
+            self._inc_seen.add(key)
+            near = [u for u in own_units
+                    if max(abs(u.attrs["x"] - px), abs(u.attrs["y"] - py)) <= 1]
+            guards = [u for u in near
+                      if isinstance(u.attrs.get("type_defense_strength"), (int, float))
+                      and u.attrs["type_defense_strength"] > 0]
+            mil = [u for u in near
+                   if isinstance(u.attrs.get("type_attack_strength"), (int, float))
+                   and u.attrs["type_attack_strength"] > 0]
+            dmin = min((max(abs(c.x - px), abs(c.y - py)) for c in own_cities), default=None)
+            rec = {"партия": game, "ход": self._turn, "x": px, "y": py,
+                   "owner": f.owner if f.owner is not None else f.attrs.get("owner"),
+                   "наших_рядом": len(near), "защитников_рядом": len(guards),
+                   "военных_рядом": len(mil), "ближайший_город_дист": dmin}
+            with self.incursion_path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
     def record_outcome(self, obs: dict, own_id: int) -> Optional[dict]:
         """Записать, что изменилось после шага (реального действия или закрытия хода)."""

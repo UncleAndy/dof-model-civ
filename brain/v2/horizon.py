@@ -31,6 +31,8 @@ from .knowledge import KnowledgeGraph
 HORIZON = 3          # глубина ПУТИ (решение D2), не горизонт оценки
 TAU_QUANTILE = 0.10  # пессимистичный квантиль для приора (объявлено в §10.60)
 CITY_SPACING = 6     # целевой разнос городов (§10.108 штраф 1б): не ближе этой дистанции
+TABU_DEPTH = 3       # §10.109: сколько последних клеток юнита помним (множитель направления)
+K_NEAR = 0.3         # §10.109: множитель выигрыша НАПРАВЛЕНИЯ для недавней клетки (k<1)
 
 
 def tau(graph: KnowledgeGraph) -> tuple[float, str]:
@@ -477,6 +479,38 @@ def settler_uncrowding_gain(graph: KnowledgeGraph, actor: str, action: str, base
     gain = math.log(f_after) - math.log(f_before)
     return gain, (f"{action}: уход от города {d_before:.1f}→{d_after:.1f} снимает штраф близости "
                   f"(×{f_before:.2f}→×{f_after:.2f}) → +{gain:.3f}")
+
+
+def direction_multiplier(graph: KnowledgeGraph, actor: str, action: str) -> tuple[float, str]:
+    """§10.109: понижающий множитель НАПРАВЛЕНИЯ движения (не штраф к «двигаться ли»).
+
+    Идея (указание Andy): чтобы юнит не зацикливался, клетки, где он недавно был, должны быть МЕНЕЕ
+    привлекательны как направление — но это множитель выигрыша конкретного хода, а не запрет. Тогда
+    юнит, у которого есть мотив двигаться, двигается ВСЕГДА, и в тупике (когда все `dir8` ведут на
+    недавние клетки) просто выбирает наименее «притёртое» направление и выходит — то есть выход из
+    тупика сохраняется.
+
+    Множитель: k = K_NEAR^(число раз, сколько эта клетка встречается в последних TABU_DEPTH клетках
+    юнита). k=1.0 для свежей клетки. Возвращается k и причина.
+    """
+    e = graph.entity(f"unit:{actor}")
+    if e is None or e.attrs.get("x") is None:
+        return 1.0, ""
+    from .threat import offset_of
+    off = offset_of(action)
+    if off is None or str(action).startswith("attack"):
+        return 1.0, ""
+    xsize = int((graph.world or {}).get("xsize") or 0)
+    x0, y0 = e.attrs["x"], e.attrs["y"]
+    dx, dy = off
+    nx = (x0 + dx) % xsize if xsize else x0 + dx
+    ny = y0 + dy
+    trail = list(e.attrs.get("история_клеток") or [])[-TABU_DEPTH:]
+    hits = sum(1 for (tx, ty) in trail if (tx, ty) == (nx, ny))
+    if hits <= 0:
+        return 1.0, ""
+    k = float(K_NEAR) ** hits
+    return k, (f"{action}: клетка ({nx},{ny}) была недавно {hits}× → направление ×{k:.2f}")
 
 
 def site_food_penalty(graph: KnowledgeGraph, actor: str, dof_city: Optional[float]) -> tuple[float, str]:
