@@ -250,6 +250,26 @@ def production_gain(graph: KnowledgeGraph, action: str,
     H, hw = _horizon(graph)
 
     te = graph.entity(f"unit_type:{type_name}")
+    caps = (te.attrs.get("capabilities") if te is not None else None) or []
+    # §10.116 (вариант 1а, решение Andy): если тип умеет ОСНОВЫВАТЬ город, его ценность — это DoF
+    # города, который он создаст (множитель, аксиома 6), а НЕ собственный набор возможностей юнита.
+    # Горизонтный дисконт `frac` здесь НЕ применяется: поселенец — не расходник, его плод (город) —
+    # постоянный актив, он не исчезает по истечении окна H. Замер (§10.116): ln(DoF города 22)=3.09
+    # против ln(DoF Settlers 13)=2.57; при eta=38 прежняя цена была 0.35 (frac 0.14) — поселенец
+    # проигрывал воину (2.20) и город не основывался.
+    if "build_city" in caps:
+        from .calculus import impute as _impute          # локальный импорт: calculus зависит от horizon
+        c_dof, c_cnt = _impute(graph, "city")
+        if c_dof and c_dof > 0:
+            gain = math.log(c_dof)
+            why = (f"{src}: за {eta} ход(ов) появится {type_name}; тип основывает город → ценность = "
+                   f"DoF города (DoF {c_dof:g}, записей {c_cnt}), без горизонта (город — постоянный актив)")
+            pen, pwhy = switch_penalty(graph, actor, type_name)
+            if pen > 0:
+                gain -= pen
+                why = f"{why} | {pwhy}"
+            return gain, why
+
     dof = None
     dsrc = "тип неизвестен"
     if te is not None:
