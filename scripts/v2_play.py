@@ -142,6 +142,7 @@ def play(agent: Agent, seed: int, port: int, turns: int) -> dict:
 
 def main() -> int:
     growth = os.environ.get("V2_GROWTH", str(ROOT / "knowledge" / "city_growth.jsonl"))
+    results_path = os.environ.get("V2_RESULTS")
     defense = os.environ.get("V2_DEFENSE")
     incursion = os.environ.get("V2_INCURSION")
     agent = Agent(STORE, trace_path=TRACE, avoid=wedges.is_wedged, growth_path=growth,
@@ -156,6 +157,9 @@ def main() -> int:
         r = play(agent, seed, port, TURNS)
         agent.end_game()
         results.append(r)
+        if results_path:
+            with Path(results_path).open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(r, ensure_ascii=False) + "\n")
         print(f"  итог: {r}", flush=True)
         print(agent.store.report(limit=0))
 

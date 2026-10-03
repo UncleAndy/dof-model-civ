@@ -38,6 +38,8 @@ FEATURES = ("attack", "defense", "move_rate", "worker", "can_transport", "vision
 # Конкретные юниты, города и клетки — состояние ПАРТИИ, между партиями не переносится.
 PERMANENT_KINDS = ("unit_type", "tech", "improvement", "controller")
 GAME_KINDS = ("unit", "city", "tile", "player")
+#: §10.111: кэш нашей территории на ход (build_graph вызывается многократно за один ход).
+_TERR_CACHE: dict = {"turn": None, "own": None, "terr": None}
 
 
 @dataclass
@@ -206,7 +208,8 @@ class KnowledgeGraph:
         иначе юнит из прошлой игры «склеится» с одноимённым юнитом новой и знание испортится.
         """
         g = KnowledgeGraph()
-        g.world = {k: v for k, v in self.world.items() if k not in ("games", "покрытие")}
+        g.world = {k: v for k, v in self.world.items()
+                   if k not in ("games", "покрытие", "наша_территория")}
         g.world["games"] = self.world.get("games", 0)
         # флаги «источник коллапса» привязаны к конкретной партии и её ходу: не переносятся
         g.collapse = {}
@@ -530,6 +533,38 @@ def build_graph(obs: dict, available: dict, own_id: int = 0,
 
     _count_owners(sensors._as_list(w.unit_owner))
     g.world["владельцы_юнитов"] = _own_counts
+    # §10.111: НАША ТЕРРИТОРИЯ (публикуемая миром): клетки с `tile_owner == наш` ∪ рабочие радиусы
+    # наших городов (`city_radius_sq`). Нужна расчёту «потенциального источника» — чужого юнита,
+    # стоящего на нашей земле. Кэш на ход: build_graph вызывается много раз за ход.
+    global _TERR_CACHE
+    if _TERR_CACHE.get("turn") == turn and _TERR_CACHE.get("own") == own_id:
+        _terr = _TERR_CACHE["terr"]
+    else:
+        _terr = set()
+        try:
+            for _tx in range(int(w.xsize)):
+                for _ty in range(int(w.ysize)):
+                    _ov = w.tile_owner[_tx][_ty]
+                    if isinstance(_ov, (list, tuple)):
+                        _ov = _ov[0] if _ov else None
+                    if _ov == own_id:
+                        _terr.add((_tx, _ty))
+        except Exception:  # noqa: BLE001
+            pass
+        import math as _mm
+        for _c in sensors.read_cities(obs):
+            if _c.owner != own_id or _c.x is None:
+                continue
+            _rsq = (_c.attrs or {}).get("city_radius_sq")
+            if not isinstance(_rsq, (int, float)) or _rsq < 0:
+                continue
+            _rr = int(_mm.isqrt(int(_rsq)))
+            for _i in range(_c.x - _rr, _c.x + _rr + 1):
+                for _j in range(_c.y - _rr, _c.y + _rr + 1):
+                    if 0 <= _j < int(w.ysize):
+                        _terr.add((_i % int(w.xsize), _j))
+        _TERR_CACHE = {"turn": turn, "own": own_id, "terr": _terr}
+    g.world["наша_территория"] = sorted(_terr)
     # ИЗМЕРЕНО (§10.82): `map.terrain` в этом мире НЕ помечает нераскрытое — вся карта известна
     # с начала, а туман скрывает чужие юниты и города. Поэтому «покрытие» (клетки, куда доходил
     # обзор наших юнитов) ведёт агент, а не мир. Состояние партии — в постоянную базу не идёт.

@@ -368,6 +368,18 @@ def _option_net(graph: KnowledgeGraph, cur_v, ctrl: str, action: str,
                     if g_c > 0:
                         _dir_gain += g_c
                         _dir_why = f"{why_c}; {_dir_why}" if _dir_why else why_c
+                # §10.111: ВЫТЕСНЕНИЕ нарушителя — шаг военного юнита, ставящий его вплотную к
+                # чужому, стоящему на нашей территории. Снимает условную («потенциальную») угрозу.
+                g_d, why_d = threat.displace_gain(graph, action, str(actor), dof_of)
+                if g_d > 0:
+                    _dir_gain += g_d
+                    _dir_why = f"{why_d}; {_dir_why}" if _dir_why else why_d
+                # §10.113: ПРИКРЫТИЕ города — военный встаёт к городу, у которого стоит чужой.
+                g_cv, why_cv = threat.cover_gain(graph, action, str(actor), dof_of,
+                                                 steps_count=depth)
+                if g_cv > 0:
+                    _dir_gain += g_cv
+                    _dir_why = f"{why_cv}; {_dir_why}" if _dir_why else why_cv
                 if _dir_gain > 0:
                     k, why_k = direction_multiplier(graph, str(actor), action)
                     delta += _dir_gain * k
@@ -377,19 +389,27 @@ def _option_net(graph: KnowledgeGraph, cur_v, ctrl: str, action: str,
                     why = _dir_why
             if fam == "attack":
                 st = graph.fight_stats()
+                _g_strike, _why_a = 0.0, ""
                 if st["n"] < MIN_FIGHTS:
                     why = (f"удар по источнику коллапса: боёв наблюдено {st['n']} < {MIN_FIGHTS} "
                            f"— оценивать нечем (по одному бою цену не даём)")
                 else:
                     pose = st["чужой_исчез"] / st["n"]
                     lose = st["наш_потерян"] / st["n"]
-                    g_a, why_a = threat.strike_gain(graph, ctrl, action, str(actor), dof_of,
-                                                    pose, lose, sw)
-                    if why_a:
-                        why = why_a
-                    if g_a > 0:
-                        delta += g_a
-                        gained = True
+                    _g_strike, _why_a = threat.strike_gain(graph, ctrl, action, str(actor), dof_of,
+                                                           pose, lose, sw)
+                    if _why_a:
+                        why = _why_a
+                # §10.114: ОТПОР — бой назначается ТОЛЬКО против объявленного источника коллапса
+                # даже если статистики боёв ещё нет (тогда `strike_gain` считать нечем).
+                # Берём БОЛЬШУЮ из двух цен: обе оценивают снятие угрозы, складывать — двойной счёт.
+                g_def, why_def = threat.defense_gain(graph, ctrl, action, str(actor), dof_of)
+                g_best = max(_g_strike, g_def)
+                if g_best > 0:
+                    delta += g_best
+                    if g_def >= _g_strike and why_def:
+                        why = f"{why_def}; {why}" if why else why_def
+                    gained = True
             if fam == "build_city":
                 g_f, why_f = threat.founding_risk(graph, action, str(actor), dof_of, impute, sw)
                 if g_f < 0:
@@ -555,6 +575,8 @@ def evaluate(graph: KnowledgeGraph, paths: list, own_id: int = 0,
         "calc_excluded": cur["excluded"],
         "dt": DT_DECLARED,
         "риск": _risk,
+        "потенциальные": {"источников": len(threat.potential_sources(graph)),
+                          "цена": round(threat.potential_price(graph, dof_of)[0], 3)},
         "candidates": candidates,
         "chosen": (best.to_dict() if best is not None else None),
         "reason": reason,

@@ -227,6 +227,7 @@ class Agent:
             "причина": decision.trace["reason"],
             "индекс": decision.trace["index_current"],
             "риск": decision.trace.get("риск"),
+            "потенциальные": decision.trace.get("потенциальные"),
             "чужое": _foreign_summary(g),
             "источники_коллапса": g.collapse_sources((g.world or {}).get("ход")),
             "бои": g.fight_stats(),

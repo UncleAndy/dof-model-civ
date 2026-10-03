@@ -28,6 +28,7 @@ Diversification»).
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Optional
 
@@ -55,7 +56,8 @@ PER_KIND_CAP = 200
 #: порядок целей — структура, объявленная до данных (не оценка полезности).
 #: «выход из-под удара» первым: аксиома 3 (некомпенсация) — не дать сущности коллапсировать,
 #: это приоритетнее любого приобретения.
-GOAL_ORDER = ("escape", "strike", "explore", "unknown", "found_city", "channel", "probe")
+GOAL_ORDER = ("escape", "strike", "cover", "explore", "unknown", "found_city", "channel",
+              "probe")
 
 
 @dataclass
@@ -153,15 +155,51 @@ def garrison_set(graph: KnowledgeGraph) -> set:
 
 # ---------------------------------------------------------------- цели из графа
 
+def hold_set(graph: KnowledgeGraph) -> set:
+    """Дежурные защитники угрожаемых городов: НЕ получают цель «бежать».
+
+    Почему это нужно (измерено): город уязвим, пока рядом чужой и нет защитника. Если дежурный
+    защитник уходит из-под удара, город оголяется — а DoF города (множитель) много больше DoF
+    одного юнита, и его потеря дороже. Поэтому дежурный держит позицию (и бьёт — цель `strike`
+    остаётся). Состав — тот же детерминированный, что у `threat.cover_gain`: младшие по номеру,
+    по числу чужих в радиусе города. Это структурное решение (как GARRISON_MIN), не подгонка.
+    """
+    xsize = int((graph.world or {}).get("xsize") or 0)
+    own_mil = [u for u in graph.by_kind("unit")
+               if u.is_own and u.attrs.get("x") is not None
+               and isinstance(u.attrs.get("type_attack_strength"), (int, float))
+               and u.attrs["type_attack_strength"] > 0]
+    foes = [f for f in graph.by_kind("unit")
+            if (not f.is_own) and f.attrs.get("x") is not None]
+    hold: set = set()
+    for c in [e for e in graph.by_kind("city") if e.is_own and e.attrs.get("x") is not None]:
+        rsq = (c.attrs or {}).get("city_radius_sq")
+        radius = int(math.isqrt(int(rsq))) if isinstance(rsq, (int, float)) and rsq >= 0 else 4
+        foes_near = [f for f in foes
+                     if threat.cheb(f.attrs["x"], f.attrs["y"], c.attrs["x"], c.attrs["y"],
+                                    xsize) <= radius]
+        if not foes_near:
+            continue
+        need = max(1, len(foes_near))
+        adj = [u for u in own_mil
+               if threat.cheb(u.attrs["x"], u.attrs["y"], c.attrs["x"], c.attrs["y"], xsize) <= 1]
+        adj.sort(key=lambda u: (int(u.eid.split(":")[1]) if u.eid.split(":")[1].isdigit() else 0))
+        hold.update(u.eid for u in adj[:need])
+    return hold
+
+
 def derive_goals(graph: KnowledgeGraph, menu: dict) -> list[dict]:
     """Цели выводятся из графа и меню. Ни одна не выдумана человеком."""
     goals: list[dict] = []
     # Гарнизоны городов: эти юниты остаются защищать и не получают цели «исследовать».
     keep_garrison = garrison_set(graph)
+    # Дежурные защитники угрожаемых городов: они держат позицию и не бегут (город дороже юнита).
+    hold = hold_set(graph)
 
-    # 0) выйти из-под удара: наши сущности, досягаемые наблюдённой угрозой (аксиомы 3/4/5)
+    # 0) выйти из-под удара: наши сущности, досягаемые наблюдённой угрозой (аксиомы 3/4/5).
+    # Исключение — дежурные защитники: их уход оголил бы город (см. `hold_set`).
     for eid, info in sorted(threat.exposure(graph, threat.STRIKE_TURNS).items()):
-        if eid.startswith("unit:"):
+        if eid.startswith("unit:") and eid not in hold:
             goals.append({"goal": "escape", "eid": eid,
                           "why": f"{eid} под ударом ({info['угроза']} в {info['клеток']} клетках, "
                                  f"{info['ходов']} ход.)"})
@@ -180,6 +218,28 @@ def derive_goals(graph: KnowledgeGraph, menu: dict) -> list[dict]:
             if threat.cheb(u.attrs["x"], u.attrs["y"], src["x"], src["y"], xsize) <= 1:
                 goals.append({"goal": "strike", "eid": u.eid, "target": src["eid"],
                               "why": f"{u.eid} может ударить по источнику коллапса {src['eid']}"})
+
+    # 0-тер-0) ПРИКРЫТЬ город: у города, рядом с которым стоит чужой, военные идут к нему.
+    # Цена прикрытия считается calculus (`threat.cover_gain`) — из условной («потенциальной»)
+    # угрозы города. Здесь только ПУТЬ: без цели движение военного к своему городу не
+    # рассматривалось бы вовсе (он получал `explore` и уходил прочь).
+    xsize_g = int((graph.world or {}).get("xsize") or 0)
+    own_mil_g = [u for u in graph.by_kind("unit")
+                 if u.is_own and u.attrs.get("x") is not None
+                 and isinstance(u.attrs.get("type_attack_strength"), (int, float))
+                 and u.attrs["type_attack_strength"] > 0]
+    for c in [e for e in graph.by_kind("city") if e.is_own and e.attrs.get("x") is not None]:
+        rsq = (c.attrs or {}).get("city_radius_sq")
+        radius = int(math.isqrt(int(rsq))) if isinstance(rsq, (int, float)) and rsq >= 0 else 4
+        foes_near = [f for f in graph.by_kind("unit")
+                     if (not f.is_own) and f.attrs.get("x") is not None
+                     and threat.cheb(f.attrs["x"], f.attrs["y"], c.attrs["x"], c.attrs["y"],
+                                     xsize_g) <= radius]
+        if not foes_near:
+            continue
+        for u in own_mil_g:
+            goals.append({"goal": "cover", "eid": u.eid, "city": c.eid,
+                          "why": f"у {c.eid} рядом чужой ({foes_near[0].eid}) — прикрыть город"})
 
     # 0-тер) ИССЛЕДОВАНИЕ: раскрыть карту — единственный способ увидеть чужие города, юниты и
     # ресурсы, а мирные чужие ПЛЮСУЮТСЯ к общему DoF (решение Andy, §10.33). Цена — из измеренного
@@ -301,6 +361,29 @@ def _path_escape(goal: dict, graph: KnowledgeGraph, menu: dict,
                 expectation="выход из-под удара: сохранить слагаемое ln(DoF) сущности "
                             "(миникас, аксиома 5)",
                 source=goal["why"], effect=("escape", actor))
+
+
+def _path_cover(goal: dict, graph: KnowledgeGraph, menu: dict,
+                avoid: Optional[Callable[[str, str], bool]] = None) -> Optional[Path]:
+    """Прикрыть город: военный юнит идёт к своему городу, у которого стоит чужой.
+
+    Геометрия — как у выхода из-под удара: план из H шагов в одном направлении, потому что цена
+    прикрытия (`threat.cover_gain`) считает КОНЕЦ плана. Юнит, стоящий в 2–3 шагах от города,
+    иначе не получил бы мотива вовсе. Направления предлагаются ВСЕ, выбор — за calculus.
+    """
+    actor = goal["eid"].split(":", 1)[1]
+    opts = [o for o in _legal(graph, menu, "unit", actor) if o in threat.DIR8_MEASURED]
+    if avoid is not None:
+        opts = [o for o in opts if not avoid("unit", o)]
+    if not opts:
+        return None
+    steps = [_step(menu, "unit", actor, opts[0], 1, alternatives=opts)
+             for _ in range(MAX_DEPTH)]
+    return Path(goal="cover", kind="цель",
+                steps=steps,
+                expectation="прикрыть город: встать вплотную к своему городу, у которого чужой; "
+                            "цена — условная угроза (измеряется calculus)",
+                source=goal["why"], effect=("cover", actor, goal.get("city")))
 
 
 def _path_explore(goal: dict, graph: KnowledgeGraph, menu: dict,
@@ -453,6 +536,7 @@ def generate(graph: KnowledgeGraph, menu: dict, own_id: int = 0,
                 break
             p = (_path_escape(g, graph, menu, avoid=avoid) if kind == "escape"
                  else _path_strike(g, graph, menu, avoid=avoid) if kind == "strike"
+                 else _path_cover(g, graph, menu, avoid=avoid) if kind == "cover"
                  else _path_explore(g, graph, menu, avoid=avoid) if kind == "explore"
                  else _path_unknown(g, graph, menu) if kind == "unknown"
                  else _path_found_city(g, graph, menu) if kind == "found_city"
