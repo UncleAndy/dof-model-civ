@@ -33,6 +33,7 @@
             pkgs.maturin
             pkgs.pkg-config
             pkgs.openssl
+            pkgs.git-filter-repo
           ];
 
           shellHook = ''

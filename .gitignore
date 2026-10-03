@@ -219,6 +219,6 @@ __marimo__/
 civrealm/
 .direnv/
 
+knowledge/
 *.mp4
-knowledge/frames_text/
-knowledge/frames_overlay
+*.jsonl
