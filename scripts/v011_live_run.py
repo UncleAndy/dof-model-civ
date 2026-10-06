@@ -41,34 +41,76 @@ from env.entity_extractor import GameStateExtractor  # noqa: E402
 
 _DEMO = {"n": 0, "dirs": ["goto_4", "goto_6", "goto_3", "goto_1"]}
 
+#: Живой драйвер решений, его состояние по ходу и наблюдение предыдущего вызова.
+_DRIVER = None
+_LAST_TURN = None
+_PREV_OBS = None
+#: Откуда пришло действие — эта подпись печатается рядом с решением и не даёт спутать
+#: самопроверку записи с поведением модели (однажды уже спутала: `V011_DEMO_MOVE` остался
+#: в окружении, и прогон «драйвера» на деле был прогоном самопроверки).
+_SOURCE = ["—"]
+#: Строки основания печатаются один раз на ход: планирование идёт на каждое решение, а мотив
+#: основания — величина хода, и шесть её повторов подряд читаются как шесть разных мотивов.
+_FOUNDING_SHOWN: set = set()
+
 
 def decide(obs, info, own_id):  # noqa: ANN001, ANN201
-    """Точка проводки живого агента `v0.11`. По умолчанию — закрыть ход (`None`).
+    """Точка проводки живого агента `v0.11`.
+
+    По умолчанию работает **живой драйвер** (`env.spec_drive.Decider`): он объявляет прирост из
+    измерения и отдаёт выбор ядру, а в мир уходит первый шаг выбранного пути. `None` (закрыть ход) —
+    законный и ожидаемый итог: ядро берёт действие только при `NetDelta > 0`.
 
     `V011_DEMO_MOVE=k` включает **САМОПРОВЕРКУ ЗАПИСИ**: раз в `k` решений берётся шаг нашего юнита в
     одном из четырёх направлений по кругу. Это **не поведение модели** и не должно так читаться: так
     проверяется ровно одно — видно ли движение в кадре. Повод прямой: в пассивном прогоне соседние
-    кадры различаются на **0.01 %** (медиана по 60 кадрам) — владелец модели верно заметил, что на видео
-    ничего не происходит, и причина не в записи, а в отсутствии решений.
-
-    Живого агента вставит сюда порт решающего слоя: форма действия — `(тип, актор, имя)`.
+    кадры различались на **0.01 %** (медиана по 60 кадрам) — владелец модели верно заметил, что на
+    видео ничего не происходит, и причина не в записи, а в отсутствии решений.
     """
+    global _DRIVER, _LAST_TURN, _PREV_OBS, _SOURCE
     k = int(os.environ.get("V011_DEMO_MOVE", "0") or 0)
-    if k <= 0:
+    if k > 0:
+        _SOURCE[0] = "САМОПРОВЕРКА ЗАПИСИ, не поведение модели"
+        units = ((info or {}).get("available_actions") or {}).get("unit") or {}
+        if not units:
+            return None
+        _DEMO["n"] += 1
+        if _DEMO["n"] % k:
+            return None
+        actor_id = sorted(units)[0]
+        names = units.get(actor_id) or {}
+        want = _DEMO["dirs"][(_DEMO["n"] // k) % len(_DEMO["dirs"])]
+        for cand in (want, *sorted(names)):
+            if cand in names and names[cand]:
+                return ("unit", actor_id, cand)
         return None
-    units = ((info or {}).get("available_actions") or {}).get("unit") or {}
-    if not units:
-        return None
-    _DEMO["n"] += 1
-    if _DEMO["n"] % k:
-        return None
-    actor_id = sorted(units)[0]
-    names = units.get(actor_id) or {}
-    want = _DEMO["dirs"][(_DEMO["n"] // k) % len(_DEMO["dirs"])]
-    for cand in (want, *sorted(names)):
-        if cand in names and names[cand]:
-            return ("unit", actor_id, cand)
-    return None
+    from env.entity_extractor import GameStateExtractor  # noqa: PLC0415
+    from env.spec_drive import Decider  # noqa: PLC0415
+
+    turn = (info or {}).get("turn")
+    if _DRIVER is None:
+        _DRIVER = Decider(GameStateExtractor(my_player_id=int(own_id or 0)),
+                          own_id=int(own_id or 0))
+    if _LAST_TURN is not None and turn != _LAST_TURN:
+        _DRIVER.new_turn()
+        _FOUNDING_SHOWN.clear()
+    _LAST_TURN = turn
+    action = _DRIVER.decide(obs, info, turn, prev_obs=_PREV_OBS)
+    _PREV_OBS = obs
+    _SOURCE[0] = ("драйвер: ядро выбрало из измерения" if action is not None
+                  else "драйвер: ядро оставило систему на месте")
+    for f in ((_DRIVER.log[-1].get("основание") if _DRIVER.log else None) or []):
+        key = (f.get("unit"), f.get("прирост"), f.get("причина"))
+        if key in _FOUNDING_SHOWN:
+            continue
+        _FOUNDING_SHOWN.add(key)
+        if f.get("прирост") is not None:
+            print(f"    основание {f['unit']}: DoF {f.get('doF_поселенца')} → "
+                  f"{f.get('doF_города')} = прирост {f['прирост']:+.4f} ({f['причина']})",
+                  flush=True)
+        else:
+            print(f"    основание {f['unit']}: прироста нет — {f['причина']}", flush=True)
+    return action
 
 
 def _args() -> argparse.Namespace:
@@ -135,14 +177,19 @@ def live(port: int, seed: int, turns: int, fps: int, fog: bool) -> dict[str, Any
                 action = decide(obs, info, own_id)
                 if action is None:
                     break
-                if decisions == 0:
-                    print(f"  [решение] {action} (самопроверка записи, не поведение модели)",
-                          flush=True)
+                print(f"  [решение] {action} ({_SOURCE[0]})", flush=True)
+                print(f"    состав ДО действия: "
+                      f"{(getattr(_DRIVER, 'last_plan', None) or {}).get('состав')}", flush=True)
                 decisions += 1
                 with guard():
                     obs, _r, terminated, truncated, info = env.step(action)
                 if not obs or terminated or truncated:
                     break
+            if _DRIVER is not None and _DRIVER.log:
+                e = _DRIVER.log[-1]
+                print(f"  [драйвер] ход {e.get('ход')}: состав {e.get('состав')}, "
+                      f"кандидатов {e.get('кандидатов')}, "
+                      f"выбор {e.get('выбор')}, барьеры {e.get('барьеры')}", flush=True)
             with guard():
                 obs, _r, terminated, truncated, info = env.step(None)
             played += 1
@@ -204,6 +251,9 @@ def live(port: int, seed: int, turns: int, fps: int, fog: bool) -> dict[str, Any
         "кадров": len(frames), "кадров_с_состоянием": len(states),
         "видео": str(out) if ok else None,
         "трасса": str(trace_path),
+        "драйвер": [{"ход": e.get("ход"), "индекс": e.get("индекс"), "состав": e.get("состав"),
+                     "кандидатов": e.get("кандидатов"), "выбор": e.get("выбор"),
+                     "барьеры": e.get("барьеры")} for e in getattr(_DRIVER, "log", [])],
         "нападений_наблюдено": len(attacks),
         "меток_максимум": max((r["меток"] for r in rows), default=0),
         "риск_максимум": round(max(risks), 4) if risks else None,
