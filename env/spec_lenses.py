@@ -32,6 +32,7 @@ from brain.spec.measurement import (
 
 from .config import (
     CONFIG,
+    SPEC_ACTION_CATEGORY,
     SPEC_COUNTING_HORIZON_TURNS,
     SPEC_ENERGY_UNIT,
     SPEC_GROUP_NUMERAIRE,
@@ -39,6 +40,7 @@ from .config import (
     SPEC_LENS_ORDER,
     SPEC_MANDATE_CAP,
     SPEC_MEANS_HORIZON_TURNS,
+    SPEC_VARIABLE_BY_CATEGORY,
     SPEC_OBSERVED_RATES,
     SPEC_PSI_ID,
     SPEC_REQUIREMENT_REDUCTION,
@@ -359,11 +361,44 @@ def frozen_variables(entity_type: str, fields: Mapping[str, Any]) -> list[str]:
         if _num(fields.get("ppl_unhappy"), 0.0) > _num(fields.get("ppl_happy"), 0.0):
             frozen.append("production")
     elif entity_type == "tech":
-        # Завершённая технология сюда не доходит: она не сущность, а открытая дверь
-        # (см. `is_lens_subject`). В наборе остаются только исследуемые технологии,
-        # у которых переменная `research` жива.
-        pass
+        # Известная технология — ОТКРЫТАЯ ДВЕРЬ, а не сущность с решением: мир
+        # не даёт её исследовать, и `research` заморожен внешними правилами.
+        if gate_is_open(fields):
+            frozen.append("research")
     return [v for v in frozen if v in declared]
+
+
+def action_category(name: str) -> str:
+    """Категория акта по имени действия — по самому длинному совпавшему префиксу.
+
+    Неопознанное действие получает `"misc"`, которого нет в классе средств `M(S)`:
+    акт, о котором мы не знаем, что он меняет, путей не создаёт.
+    """
+    best, category = "", "misc"
+    for prefix, cat in SPEC_ACTION_CATEGORY:
+        if name.startswith(prefix) and len(prefix) > len(best):
+            best, category = prefix, cat
+    return category
+
+
+def available_vectors(entity_type: str, fields: Mapping[str, Any],
+                      names: Iterable[str]) -> list[str]:
+    """Векторы реакции сущности: меню минус то, что заморожено (§4.6).
+
+    Меню — предложение мира, а не список возможного. Запись, переменная которой
+    у сущности заморожена, вектором реакции не является: у известной технологии
+    «исследовать её» стоит в меню, а действия такого нет. Одно правило на всё —
+    и для счёта `V`, и для блоков `c/C`, и для актов графа (§3.5): иначе `V`
+    считал бы то, чего сущность не может, а граф — пути, которых нет.
+    """
+    frozen = set(frozen_variables(entity_type, fields))
+    out: list[str] = []
+    for name in names:
+        variable = SPEC_VARIABLE_BY_CATEGORY.get(action_category(name))
+        if variable is not None and variable in frozen:
+            continue
+        out.append(name)
+    return out
 
 
 def constraint_observation(entity_type: str,
@@ -394,22 +429,8 @@ def gate_is_open(fields: Mapping[str, Any]) -> bool:
     return _num(fields.get("inv_state"), 0.0) >= 1.0
 
 
-def is_lens_subject(entity_type: str, fields: Mapping[str, Any]) -> bool:
-    """Сущность — субъект решения, или гейт?
-
-    Завершённая технология — **открытая дверь**, а не сущность. Решения у неё не
-    осталось: исследуемой переменной нет, и собственного вклада в индекс она иметь
-    не может. Её ценность видна там, где она работает — в векторах реакции тех,
-    кому она что-то открыла: открытая технология расширяет меню города, и `V`
-    города растёт вместе с ним. Считать её отдельной сущностью значило бы наказывать
-    систему за уже сделанное (в замере это давало 7 × ln ε = −96.7 — весь индекс).
-
-    По спеке это работа §4.9/§4.2 (`proven_unreachable` ⇒ исключение из `calc`),
-    но у гейта она решается **до** счёта: у открытой двери нет ни пути, ни переменной.
-    """
-    if entity_type == "tech":
-        return not gate_is_open(fields)
-    return True
+# `is_lens_subject` снят: гейт теперь не фильтр отображения, а вычисляемый вердикт
+# §4.9 (`proven_unreachable` ⇒ исключение из `calc`), см. `env/spec_graph.py`.
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -526,7 +547,8 @@ __all__ = [
     "frozen_variables",
     "constraint_observation",
     "gate_is_open",
-    "is_lens_subject",
+    "action_category",
+    "available_vectors",
     "lens_observation",
     "measure",
     "total_index",

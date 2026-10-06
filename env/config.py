@@ -637,3 +637,94 @@ SPEC_INCOME_FIELDS: dict[str, tuple[str, ...]] = {
 #: Наблюдённые значения freeciv: 5 — союз, 3 — война. Война снимает векторы
 #: реакции и потому есть возмущение; союз — нет.
 SPEC_HOSTILE_DIPLOMATIC_STATES: tuple[int, ...] = (3,)
+
+# ── §4.9/§4.2: достижимость и множество счёта ────────────────────────────────
+
+#: Класс допустимых средств `M(S)` — категории актов, по которым вообще строится
+#: путь восстановления. Категория есть свойство **акта**, а не опции (§4.9).
+SPEC_MEANS_CLASS: tuple[str, ...] = (
+    "movement", "terrain", "production", "city_work",
+    "research", "diplomacy", "government",
+)
+
+#: Объявленное действие акта на DoF своей цели (§4.9). Это **не измерение**, а
+#: объявление: акт, завершение которого прибавляет способность (исследование,
+#: производство, улучшение земли), поднимает цель на одну способность; акт
+#: перемещения или дипломатии — нет. Когда появится измеренная таблица приростов
+#: (§4.5), эти значения заменяются ею, и тогда вердикт перестанет опираться на
+#: объявление.
+SPEC_ACT_EFFECT: dict[str, float] = {
+    "research": 1.0,
+    "production": 1.0,
+    "terrain": 1.0,
+    "city_work": 0.0,
+    "movement": 0.0,
+    "diplomacy": 0.0,
+    "government": 0.0,
+}
+
+#: Категория акта по имени действия (сопоставление по самому длинному префиксу).
+#: Порядок здесь не важен: важна длина совпавшего префикса.
+SPEC_ACTION_CATEGORY: tuple[tuple[str, str], ...] = (
+    ("goto", "movement"),
+    ("move", "movement"),
+    ("paradrop", "movement"),
+    ("board", "movement"),
+    ("deboard", "movement"),
+    ("airlift", "movement"),
+    ("disembark", "movement"),
+    ("irrigation", "terrain"),
+    ("mine", "terrain"),
+    ("cultivate", "terrain"),
+    ("plant", "terrain"),
+    ("transform_terrain", "terrain"),
+    ("fortress", "terrain"),
+    ("airbase", "terrain"),
+    ("build_road", "terrain"),
+    ("road", "terrain"),
+    ("railroad", "terrain"),
+    ("pillage", "terrain"),
+    ("city_buy_production", "production"),
+    ("produce_", "production"),
+    ("build_city", "production"),
+    ("city_change_specialist", "city_work"),
+    ("city_work", "city_work"),
+    ("city_unwork", "city_work"),
+    ("research_tech", "research"),
+    ("set_tech_goal", "research"),
+    ("add_clause", "diplomacy"),
+    ("remove_clause", "diplomacy"),
+    ("accept_treaty", "diplomacy"),
+    ("cancel_treaty", "diplomacy"),
+    ("cancel_vision", "diplomacy"),
+    ("stop_negotiation", "diplomacy"),
+    ("change_gov", "government"),
+    ("set_sci_lux_tax", "government"),
+    ("set_tax", "government"),
+    ("set_luxury", "government"),
+)
+
+#: Переменная, которую меняет категория (§4.6). Акт существует, только пока его
+#: переменная не заморожена: у известной технологии `research` заморожен — дверь
+#: уже открыта, и акта у неё нет. `None` — категория системная, своей переменной
+#: у неё нет.
+SPEC_VARIABLE_BY_CATEGORY: dict[str, str | None] = {
+    "movement": "position",
+    "terrain": "position",
+    "production": "production",
+    "city_work": "tile_assignment",
+    "research": "research",
+    "diplomacy": "treaty",
+    "government": None,
+    "misc": None,
+}
+
+#: Горизонт восстановления `T_rec(X)` по типу сущности, в ходах (§4.9). Величина
+#: выводится из типа, а не из состояния: она обязана быть одинаковой для всех
+#: гипотез одного цикла.
+SPEC_RECOVERY_HORIZON_TURNS: dict[str, float] = {
+    "unit": 5.0,
+    "city": 20.0,
+    "tech": 60.0,
+    "diplomacy": 10.0,
+}

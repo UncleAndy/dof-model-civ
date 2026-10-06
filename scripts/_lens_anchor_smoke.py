@@ -15,6 +15,7 @@
 """
 from __future__ import annotations
 
+import collections
 import json
 import math
 import sys
@@ -25,6 +26,7 @@ sys.path.insert(0, str(ROOT))
 
 from brain.spec.measurement import measure_entity  # noqa: E402
 from env.entity_extractor import GameStateExtractor  # noqa: E402
+from env import spec_graph as G  # noqa: E402
 from env import spec_lenses as L  # noqa: E402
 
 OBS_FILE = ROOT / "tests" / "fixtures" / "real_obs_01.json"
@@ -134,6 +136,7 @@ def run_real(steps: int) -> None:
     rows = []
     index_negative = True
     gates = 0
+    last: dict = {}
     for snap in snaps[:steps]:
         obs, info = snap["observation"], snap["info"]
         state = extractor.extract(obs, info, snap["turn"]).state
@@ -142,6 +145,8 @@ def run_real(steps: int) -> None:
         means = L.means_with_income(empire_stocks(obs), empire_incomes(obs))
 
         bindings = {}
+        vectors: dict[str, list[str]] = {}
+        fields_of: dict[str, dict] = {}
         for eid, ent in state.entities.items():
             kind = L.entity_type_of(eid)
             names = menu.get(eid, [])
@@ -149,9 +154,11 @@ def run_real(steps: int) -> None:
                 continue                     # сущности без меню не о чем мерить
             raw = obs.get("dipl" if kind == "diplomacy" else kind, {}) or {}
             fields = raw.get(eid.split("_", 1)[1], {}) or {}
-            if not L.is_lens_subject(kind, fields):
-                gates += 1                   # открытая дверь — не сущность
-                continue
+            names = L.available_vectors(kind, fields, names)
+            if not names:
+                gates += 1                   # все векторы заморожены — дверь открыта
+            vectors[eid] = names
+            fields_of[eid] = fields
             variety = L.variety_counters(names, disturbances(obs, eid, kind))
             if kind == "city":
                 requirements = city_requirements(fields, costs, names)
@@ -168,6 +175,9 @@ def run_real(steps: int) -> None:
             rows.append((snap["turn"], eid, m))
         if L.total_index(measured) > 0:
             index_negative = False
+        last = {"turn": snap["turn"], "state": state, "vectors": vectors,
+                "fields": fields_of, "measured": measured,
+                "dof": {eid: m.current_dof for eid, m in measured.items()}}
 
     for turn, eid, m in rows:
         psi = m.psi
@@ -190,13 +200,54 @@ def run_real(steps: int) -> None:
           all(m.psi["options"] == 1.0 for m in real_options
               if not any(c > 0 for c, _ in m.blocks)),
           f"с требованием: {sum(1 for m in real_options if any(c > 0 for c, _ in m.blocks))}")
-    tech_rows = [eid for _, eid, _ in rows if eid.startswith("tech_")]
     tech_obs = json.load(open(OBS_FILE))[0]["observation"]["tech"]
-    check("A4 открытые гейты не считаются сущностями",
-          gates > 0 and all(
-              not L.gate_is_open(tech_obs.get(eid.split("_", 1)[1], {}))
-              for eid in tech_rows),
-          f"гейтов пропущено: {gates}, техов-субъектов: {len(tech_rows)}")
+    known = {eid for _, eid, _ in rows
+             if eid.startswith("tech_")
+             and L.gate_is_open(tech_obs.get(eid.split("_", 1)[1], {}))}
+    techs_seen = {eid for _, eid, _ in rows if eid.startswith("tech_")}
+    check("A4 у открытой двери нет ни одного вектора реакции, у исследуемой — есть",
+          bool(known) and known < techs_seen
+          and all(not m.variety_counters["V"] for _, eid, m in rows if eid in known)
+          and all(m.variety_counters["V"] > 0 for _, eid, m in rows
+                  if eid in techs_seen - known),
+          f"открытых: {len(known)}, исследуемых: {len(techs_seen - known)}")
+
+    # ── G. §3.5/§4.9/§4.2: граф мира, вердикты, множество счёта ─────────────
+    print(f"\n=== G. Граф мира, вердикты и calc(S) (ход {last['turn']}) ===")
+    graph = G.world_graph(last["vectors"], last["fields"], last["dof"])
+    ctx = G.observation_context(graph, last["dof"])
+    st = G.state_with_measured_dof(last["state"], last["dof"])
+    members, index = G.calc_and_index(st, ctx)
+    verdicts = G.recoverability(st, ctx)
+    counts = collections.Counter(v["verdict"] for v in verdicts.values())
+    reasons = collections.Counter(v["reason"] for v in verdicts.values())
+    print(f"  узлов {len(graph.entities)}, актов {len(graph.acts)}, "
+          f"средств {len(graph.means)}, гор. счёта {ctx.counting_horizon_mks / 1e6:.0f} с, "
+          f"T_rec(unit) {ctx.horizon('unit_113') / 1e6 if ctx.horizon('unit_113') else 0:.0f} с")
+    print(f"  отпечаток наблюдения: {ctx.observation_digest[:16]}…")
+    print(f"  вердикты: {dict(counts)}")
+    for reason, n in reasons.most_common():
+        print(f"    ×{n:<4} {reason}")
+    excluded = sorted(set(st.entities) - members)
+    print(f"  вне счёта ({len(excluded)}): {excluded[:6]}")
+    missing = sorted(set(last["dof"]) - set(st.entities))
+    print(f"  измерено, но не в состоянии: {len(missing)} {missing[:4]}")
+    print(f"  индекс по calc(S): {index:.4f}  (в счёте сущностей: {len(members)})")
+    check("G1 вердикт получен по каждой сущности и ни один не 'undetermined'",
+          bool(verdicts) and all(v["verdict"] != "undetermined" for v in verdicts.values()),
+          f"различных причин: {len(reasons)}")
+    check("G2 открытая дверь исключена вычисленным вердиктом, а не фильтром отображения",
+          bool(excluded) and all(verdicts[e]["verdict"] == "proven_unreachable"
+                                 for e in excluded),
+          f"исключено: {len(excluded)}")
+    check("G3 у каждой исключённой сущности свидетель пуст, а наблюдение полное",
+          all(not verdicts[e]["witness"] and verdicts[e]["observation"] == "complete"
+              for e in excluded))
+    check("G4 в счёте не остаётся сущности с известным нулём",
+          all(st.entities[e].current_dof > 0.0 for e in members),
+          f"нулей в счёте: {sum(1 for e in members if st.entities[e].current_dof <= 0.0)}")
+    check("G5 индекс по calc(S) конечен и отрицателен (§4.1)",
+          math.isfinite(index) and index < 0, f"{index:.4f}")
 
 
 # ── якоря и вырожденные случаи (§4.6) ───────────────────────────────────────
