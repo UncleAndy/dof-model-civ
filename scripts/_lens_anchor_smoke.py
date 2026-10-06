@@ -40,6 +40,7 @@ from env import spec_eta as E  # noqa: E402
 from env import spec_threat as T  # noqa: E402
 from env import spec_work as W  # noqa: E402
 from env import spec_attack as A  # noqa: E402
+from env import switch_channel as SC  # noqa: E402
 from brain.spec.calculus_core import ActionOption, DOFCalculusCore  # noqa: E402
 
 OBS_FILE = ROOT / "tests" / "fixtures" / "real_obs_01.json"
@@ -1149,6 +1150,77 @@ def run_horizon() -> None:
           f"{fog_ev.get('attacked')}/{fog_ev.get('marked')}; своё действие {own_ev.get('attacked')}; "
           f"ранение {wnd_ev.get('marked')}; ход 1 {first_ev.get('attacked')}; "
           f"держится до 25 {held}, на 26 {released}")
+    # ── §10.102 канал `produce_switch` (порт из v2) ─────────────────────────
+    sw_rows = [SC.make_row(turn=5, city="121", switched=True, lost=3,
+                           stock_before=20, stock_after=17, current="Workers", chosen="Barracks"),
+               SC.make_row(turn=6, city="121", switched=True, lost=5,
+                           stock_before=22, stock_after=17, current="Barracks", chosen="Workers"),
+               SC.make_row(turn=7, city="121", switched=True, lost=0,
+                           stock_before=17, stock_after=17, current="Workers", chosen="Barracks"),
+               SC.make_row(turn=8, city="121", switched=False, lost=7,
+                           stock_before=24, stock_after=17)]
+    sw_med, sw_n, sw_why = SC.measured_loss(sw_rows)
+    sw_none, sw_n0, sw_why0 = SC.measured_loss([])
+    drop, why_drop = SC.loss_from_stock(20, 17)
+    grow, why_grow = SC.loss_from_stock(17, 20)
+    blind, why_blind = SC.loss_from_stock(None, 17)
+    r_ok, why_r_ok = SC.observe(turn=9, city="121", stock_before=20, stock_after=17,
+                                current="Workers", chosen="Barracks")
+    r_same, why_r_same = SC.observe(turn=9, city="121", stock_before=20, stock_after=17,
+                                    current="Workers", chosen="Workers")
+    r_anon, why_r_anon = SC.observe(turn=9, city="121", stock_before=20, stock_after=17,
+                                    current=None, chosen="Barracks")
+    check("I40 канал смены производства (§10.102, порт `produce_switch` из v2): потеря — падение "
+          "запаса щитов; медиана только по ОБЪЯВЛЕННЫМ сменам и только положительная; нули, рост "
+          "запаса и ненаблюдённый запас её не двигают; нечего усреднять — None С ПРИЧИНОЙ",
+          sw_med == 4.0 and sw_n == 2 and "объявленным сменам" in sw_why
+          and sw_none is None and sw_n0 == 0 and "ещё не измерена" in sw_why0
+          and drop == 3.0 and "упал" in why_drop
+          and grow == 0.0 and "не упал" in why_grow
+          and blind is None and "не наблюдён" in why_blind
+          and r_ok is not None and r_ok["lost"] == 3.0
+          and r_same is None and "тот же" in why_r_same
+          and r_anon is None and "не назван" in why_r_anon,
+          f"медиана {sw_med:g} по {sw_n} сменам (нули и необъявленные не считаны); падение 20→17 "
+          f"{drop:g}; рост {grow:g}; вслепую {blind}; строка смены {(r_ok or {}).get('lost')}")
+    # Проводка (I41): заявка раннера закрывается ФАКТОМ мира; цена идёт в опции; корпус — во временный файл.
+    import pathlib as _pl
+    import tempfile as _tf
+    ex = GameStateExtractor(my_player_id=MY_PLAYER)
+    _tmp_dir = _tf.TemporaryDirectory()
+    _tmp = _pl.Path(_tmp_dir.name) / "switch.jsonl"
+    _saved_path = SC.DEFAULT_PATH
+    SC.DEFAULT_PATH = _tmp
+    try:
+        ex._last_shield_stock = {"121": 20.0}
+        ex.note_switch("Barracks", city="121", current="Workers")
+        ex._close_pending_switches({"city": {"121": {"shield_stock": 17}}}, 7)
+        ex._last_shield_stock = {"121": 24.0}
+        ex.note_switch("Workers", city="121", current="Workers")     # заявки нет: вариант тот же
+        ex._close_pending_switches({"city": {"121": {"shield_stock": 17}}}, 8)
+        ex._last_shield_stock = {"121": 24.0}
+        ex._close_pending_switches({"city": {"121": {"shield_stock": 17}}}, 9)   # падение без заявки
+        sw_shields, sw_seen, sw_why2 = ex.switch_loss_shields()
+        sw_on_disk = SC.load(path=_tmp)
+    finally:
+        SC.DEFAULT_PATH = _saved_path
+        _tmp_dir.cleanup()
+    price_hold, why_hold = O.switch_loss_for("Barracks", "Workers", sw_shields)
+    check("I41 канал связан с ценой (§10.102): строка канала появляется только по ЗАЯВЛЕННОЙ смене, "
+          "величину даёт мир (падение запаса), падение щитов без заявки и «тот же вариант» строки не "
+          "дают; измеренная медиана идёт входом в `switch_loss_for` для опций постройки",
+          sw_shields == 3.0 and sw_seen == 1 and len(sw_on_disk) == 1
+          and sw_on_disk[0]["lost"] == 3.0 and sw_on_disk[0]["chosen"] == "Barracks"
+          and price_hold == 3.0 and "разово" in why_hold,
+          f"строк канала {len(ex.switch_rows)}, на диске {len(sw_on_disk)}, медиана {sw_shields} по "
+          f"{sw_seen}; цена смены в опции {price_hold:g} щитов")
+    check("I42 пустой канал даёт цену нулём С ПРИЧИНОЙ, а не выдуманной величиной: пока смена не "
+          "измерена, `switch_loss_for` не начисляет потерь и говорит, почему",
+          SC.measured_loss([])[0] is None and SC.measured_loss([])[2]  # причина названа
+          and O.switch_loss_for("Barracks", "Workers", None)[0] == 0.0
+          and "не измерена" in O.switch_loss_for("Barracks", "Workers", None)[1],
+          f"пустой канал → {SC.measured_loss([])[0]}; цена без замера "
+          f"{O.switch_loss_for('Barracks', 'Workers', None)[0]:g}")
     values: list[float] = []
     for h in (0.0, 1.0, 2.0, 3.0):
         means = L.means_with_income(stocks, incomes, horizon=h)

@@ -62,6 +62,7 @@ from .site_eval import (
 )
 from . import site_outcomes
 from . import spec_attack as _spec_attack
+from . import switch_channel as _switch_channel
 from .terrain_work import WORK_ACTION_EXTRA, tile_effect, tile_terrain_extras
 
 
@@ -575,6 +576,14 @@ class GameStateExtractor:
                                                   "attackers": [], "marked": [],
                                                   "reason": "наблюдений ещё не было"}
         self.marked_collapse_sources: list[str] = []
+        #: Канал смены производства (`produce_switch` из `v2`, §10.102). Смену ЗАЯВЛЯЕТ
+        #: раннер (`note_switch`), величину потери даёт мир (падение `shield_stock`
+        #: между срезами). Незакрытые заявки ждут следующего среза — как `_pending_sites`.
+        self._pending_switches: list[dict[str, Any]] = []
+        self._last_shield_stock: dict[str, Any] = {}
+        self.switch_rows: list[dict[str, Any]] = []
+        #: Ход последнего извлечения: `note_switch` может прийти до первого `extract`.
+        self._turn: int = 0
 
     # ── Public API ────────────────────────────────────────────────────────
 
@@ -626,6 +635,11 @@ class GameStateExtractor:
         self.last_attack_event = self.attack_tracker.observe(observations, turn)
         self.marked_collapse_sources = self.attack_tracker.apply(entities, turn)
 
+        # ── Канал смены производства (`produce_switch`, §10.102) ────────────
+        # Заявки раннера закрываются ФАКТОМ мира: запас щитов до и после смены.
+        # Падение щитов без заявки потерей не считается — щиты тратит и сама постройка.
+        self._close_pending_switches(observations, turn)
+
         tau = self._compute_tau(turn)
 
         # Reality keeps its primacy: whatever the world said this turn about
@@ -659,6 +673,55 @@ class GameStateExtractor:
         Вызывает тот, кто действие исполнил (раннер), — извлекатель его не знает.
         """
         self.attack_tracker.note_choice(actor, family)
+
+    def note_switch(self, chosen: Any, city: Any = None,
+                    current: Any = None) -> None:
+        """Заявить смену производства: её знает только тот, кто вариант выбрал.
+
+        Вызывается раннером ПОСЛЕ выбора и до следующего наблюдения: величина потери
+        станет известна на следующем срезе (падение `shield_stock`), поэтому заявка
+        ждёт его закрытия. Имя текущей постройки из наблюдения не восстанавливается
+        (`production_value` — числовой id), поэтому и `current` называет раннер.
+        """
+        if chosen is None:
+            return
+        for key, stock in (self._last_shield_stock.items() if city is None
+                           else [(str(city), self._last_shield_stock.get(str(city)))]):
+            self._pending_switches.append({"city": key, "turn": self._turn,
+                                           "chosen": str(chosen),
+                                           "current": None if current is None else str(current),
+                                           "stock_before": stock})
+
+    def _close_pending_switches(self, obs: dict[str, Any], turn: int) -> None:
+        """Закрыть заявки фактом мира и дописать строки канала."""
+        city_sec = obs.get("city") if isinstance(obs.get("city"), dict) else {}
+        stocks = {str(cid): rec.get("shield_stock") for cid, rec in city_sec.items()
+                  if isinstance(rec, dict)}
+        if self._pending_switches:
+            closed: list[dict[str, Any]] = []
+            for pending in self._pending_switches:
+                after = stocks.get(pending["city"])
+                row, _why = _switch_channel.observe(
+                    turn=pending["turn"], city=pending["city"],
+                    stock_before=pending["stock_before"], stock_after=after,
+                    current=pending["current"], chosen=pending["chosen"])
+                if row is not None:
+                    closed.append(row)
+            if closed:
+                self.switch_rows.extend(closed)
+                _switch_channel.record(closed)
+            self._pending_switches = []
+        self._last_shield_stock = stocks
+
+    def switch_loss_shields(self) -> tuple[Optional[float], int, str]:
+        """Измеренная потеря щитов при смене — вход для `switch_loss_for`.
+
+        **Только строки текущего прогона.** Корпус на диске — для разборов, не для цены:
+        иначе чужие прогоны молча двигали бы цену отказа в новом матче (в `v2` цена
+        бралась ровно из наблюдений своей партии). Пока не измерено — `None` с причиной:
+        цена отказа берётся нулём С ПРИЧИНОЙ, а не по догадке.
+        """
+        return _switch_channel.measured_loss(self.switch_rows)
 
     # ── Unit extraction ───────────────────────────────────────────────────
 
