@@ -230,6 +230,29 @@ def project_option(entity_id: str, action: str,
                    f"достанется городам {len(touched) - 1}")
 
 
+def switch_loss_for(item: str, current_item: Optional[str],
+                    loss_shields: Optional[float]) -> tuple[float, str]:
+    """Потеря щитов при смене варианта постройки: `(щиты, причина)` для протокола.
+
+    Разово, а не за горизонт: теряются щиты, УЖЕ вложенные в текущую постройку, — это
+    не платёж за окно, поэтому горизонтом не умножается. Асимметрия названа, а не
+    спрятана (у платежа и средств база времени одна — §13.6).
+    Текущий вариант знает тот, кто его запустил: имя постройки выбирается агентом, и
+    в чужой съёмке оно может быть не восстановимо (`production_value` — числовой id,
+    которого нет среди опубликованных спек). Не восстановили — нулевая потеря **с
+    причиной**, а не догадка.
+    """
+    if loss_shields is None:
+        return 0.0, "потеря щитов при смене не измерена — цена нулевая с причиной"
+    if current_item is None:
+        return 0.0, ("текущий вариант постройки не назван — смена не определяется, "
+                     "потеря не начисляется")
+    if str(item) == str(current_item):
+        return 0.0, "вариант тот же — терять нечего"
+    return float(loss_shields), (f"смена варианта: {float(loss_shields):g} вложенных щитов "
+                                 f"теряется (разово)")
+
+
 def resource_draw(entity_id: str, action: str,
                   costs: Optional[Mapping[str, float]],
                   production: Optional[float] = None,
@@ -237,7 +260,9 @@ def resource_draw(entity_id: str, action: str,
                   tech_price: Optional[float] = None,
                   tech_progress: Optional[float] = None,
                   tech_rate: Optional[float] = None,
-                  tech_target: Optional[str] = None
+                  tech_target: Optional[str] = None,
+                  switch_loss_shields: Optional[float] = None,
+                  current_item: Optional[str] = None
                   ) -> dict[str, dict[str, float]]:
     """Наблюдённый расход действия по ресурсам — для §4.8.
 
@@ -252,6 +277,9 @@ def resource_draw(entity_id: str, action: str,
     (`env.spec_lenses.measured_science_rate`), а не `player["science"]` и не колбы
     города (замер 2026-10-06). У технологии, не назначенной целью, цены нет, и
     платёж объявляется тем же темпом: незнание не читается как «бесплатно».
+
+    Для постройки (§10.102, `switch_loss_for`) к платежу добавляется **разовая**
+    потеря вложенных щитов, если вариант меняется. Терять нечего — сумма не растёт.
     """
     name = str(action)
     if name.startswith(SPEC_RESEARCH_ACTION_PREFIX):
@@ -270,9 +298,13 @@ def resource_draw(entity_id: str, action: str,
         return {}
     item = name[len(SPEC_PRODUCTION_ACTION_PREFIX):]
     due = payment_due((costs or {}).get(item), production, horizon_turns)
-    if due is None:
+    lost, _reason = switch_loss_for(item, current_item, switch_loss_shields)
+    if due is None and lost <= 0.0:
         return {}
-    return {str(entity_id): {"energy": -float(due)}}
+    total = float(due or 0.0) + float(lost)
+    if total <= 0.0:
+        return {}
+    return {str(entity_id): {"energy": -total}}
 
 
 def build_options(vectors: Mapping[str, Sequence[str]],
@@ -290,7 +322,9 @@ def build_options(vectors: Mapping[str, Sequence[str]],
                   tech_price: Optional[float] = None,
                   tech_progress: Optional[float] = None,
                   tech_rate: Optional[float] = None,
-                  tech_target: Optional[str] = None) -> list[ActionOption]:
+                  tech_target: Optional[str] = None,
+                  switch_loss_shields: Optional[float] = None,
+                  current_item: Optional[str] = None) -> list[ActionOption]:
     """Кандидаты §3.3 для объявленных сущностей — по одной опции на вектор.
 
     Кандидат не выбирает и ничего не взвешивает: он объявляет прирост (§4.3),
@@ -332,7 +366,9 @@ def build_options(vectors: Mapping[str, Sequence[str]],
                     entity_id, action, costs, (production or {}).get(entity_id),
                     horizon_turns, tech_price=tech_price,
                     tech_progress=tech_progress, tech_rate=tech_rate,
-                    tech_target=tech_target),
+                    tech_target=tech_target,
+                    switch_loss_shields=switch_loss_shields,
+                    current_item=current_item),
                 requires=requires_for(action),
                 act_id=act_id,
             ))

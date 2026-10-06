@@ -982,6 +982,29 @@ def run_horizon() -> None:
     check("I31 пустое окно меню — не измерение, а помеха (§10.88: 187 из 2514 записей, 7.4 %)",
           E.menu_is_measured(city_menu) and not E.menu_is_measured([]),
           f"меню города: переходов {len(city_menu)}; пустое окно измерением не считается")
+    # ── §10.102, правка (1): потеря при смене варианта — в расход §4.8 ────────
+    ref_loss = 3.0                                   # ссылка v2: медиана 3 (80 наблюдений)
+    lost_same = O.switch_loss_for("Workers", "Workers", ref_loss)
+    lost_off = O.switch_loss_for("Workers", "Barracks", ref_loss)
+    lost_unknown = O.switch_loss_for("Workers", None, ref_loss)
+    lost_unmeasured = O.switch_loss_for("Workers", "Barracks", None)
+    draw_base = O.resource_draw("city_121", "produce_Workers", costs, 7.0, 1.0)
+    draw_switch = O.resource_draw("city_121", "produce_Workers", costs, 7.0, 1.0,
+                                  switch_loss_shields=ref_loss, current_item="Barracks")
+    draw_same = O.resource_draw("city_121", "produce_Workers", costs, 7.0, 1.0,
+                                switch_loss_shields=ref_loss, current_item="Workers")
+    check("I32 смена варианта постройки (§10.102, правка (1) владельца модели): разовая потеря "
+          "вложенных щитов входит в расход §4.8 ТОЛЬКО при смене; тот же вариант и неназванный "
+          "текущий — нулевая потеря С ПРИЧИНОЙ, а не молча",
+          lost_same == (0.0, "вариант тот же — терять нечего")
+          and lost_off[0] == 3.0 and "разово" in lost_off[1]
+          and lost_unknown[0] == 0.0 and "не назван" in lost_unknown[1]
+          and lost_unmeasured[0] == 0.0 and "не измерена" in lost_unmeasured[1]
+          and draw_switch["city_121"]["energy"] == draw_base["city_121"]["energy"] - 3.0
+          and draw_same["city_121"]["energy"] == draw_base["city_121"]["energy"],
+          f"платёж {draw_base['city_121']['energy']:g} щитов → при смене "
+          f"{draw_switch['city_121']['energy']:g}, при удержании {draw_same['city_121']['energy']:g}; "
+          f"текущий не назван → {lost_unknown[1][:44]}…")
     values: list[float] = []
     for h in (0.0, 1.0, 2.0, 3.0):
         means = L.means_with_income(stocks, incomes, horizon=h)
