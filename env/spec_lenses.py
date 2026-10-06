@@ -42,6 +42,7 @@ from .config import (
     SPEC_LENS_ORDER,
     SPEC_MANDATE_CAP,
     SPEC_MEANS_HORIZON_TURNS,
+    SPEC_V_ENV_COUNTS_FOREIGN_POWERS,
     SPEC_VARIABLE_BY_CATEGORY,
     SPEC_OBSERVED_RATES,
     SPEC_PSI_ID,
@@ -160,16 +161,36 @@ def response_vector_count(names: Iterable[str],
     raise ValueError(f"неизвестное правило счёта векторов реакции: {rule!r}")
 
 
+def foreign_powers(obs: Mapping[str, Any],
+                   my_player_id: Optional[int] = None) -> list[str]:
+    """Чужие державы, о существовании которых мир сообщает (§4.6).
+
+    Существование державы — **наблюдаемое** свойство мира (`obs["player"]`), а
+    нейтралитет — состояние, а не способность: пока держава есть, она может
+    действовать против нас, и это внешнее возмущение. Считается по числу держав,
+    потому что числа добывает мир; весов здесь нет.
+    """
+    me_id = CONFIG.my_player_id if my_player_id is None else my_player_id
+    return [f"player_{p}" for p in sorted((obs.get("player") or {}), key=str)
+            if str(p) != str(me_id)]
+
+
 def disturbance_count(active_sources: Iterable[str],
-                      declared: Sequence[str] = SPEC_V_ENV_SOURCES) -> int:
+                      declared: Sequence[str] = SPEC_V_ENV_SOURCES,
+                      foreign_powers: Iterable[str] = ()) -> int:
     """`V_env` — внешние возмущения, СНИМАЮЩИЕ вектор реакции (§4.6).
 
     Считаются только объявленные источники: счёт за разные списки — разные
     линейки. Источник, которого нет в объявлении, игнорируется молча НЕ здесь —
     он просто не входит в объявленный набор, а набор и есть объявление.
+
+    Наблюдённые виды возмущений считаются по видам, чужие державы — по числу
+    держав (`SPEC_V_ENV_COUNTS_FOREIGN_POWERS`): одна держава — одно возмущение.
     """
     declared_set = set(declared)
-    return len({str(s) for s in active_sources} & declared_set)
+    kinds = len({str(s) for s in active_sources} & declared_set)
+    powers = len({str(p) for p in foreign_powers}) if SPEC_V_ENV_COUNTS_FOREIGN_POWERS else 0
+    return kinds + powers
 
 
 def active_disturbances(obs: Mapping[str, Any], entity_id: str, entity_type: str,
@@ -217,11 +238,12 @@ def active_disturbances(obs: Mapping[str, Any], entity_id: str, entity_type: str
 
 
 def variety_counters(menu_names: Iterable[str],
-                     active_disturbances: Iterable[str] = ()) -> dict[str, float]:
+                     active_disturbances: Iterable[str] = (),
+                     foreign_powers: Iterable[str] = ()) -> dict[str, float]:
     """Пара счётчиков линзы разнообразия (§4.6). Целые счётчики, не доли."""
     return {
         "V": float(response_vector_count(menu_names)),
-        "V_env": float(disturbance_count(active_disturbances)),
+        "V_env": float(disturbance_count(active_disturbances, foreign_powers=foreign_powers)),
     }
 
 
@@ -618,6 +640,7 @@ def spec_layer() -> dict[str, Any]:
             "options_blocks": f"{SPEC_PSI_ID}:derive_blocks",
             "constraint": f"{SPEC_PSI_ID}:count_variables",
             "counting_horizon_turns": f"{SPEC_PSI_ID}:{SPEC_COUNTING_HORIZON_TURNS}",
+            "v_env_counts_foreign_powers": f"{SPEC_PSI_ID}:{int(SPEC_V_ENV_COUNTS_FOREIGN_POWERS)}",
             "requirement_reduction": SPEC_REQUIREMENT_REDUCTION,
             "response_vector_rule": SPEC_RESPONSE_VECTOR_RULE,
         },
@@ -650,6 +673,7 @@ __all__ = [
     "menu_by_entity",
     "response_vector_count",
     "disturbance_count",
+    "foreign_powers",
     "active_disturbances",
     "variety_counters",
     "reduce_requirements",

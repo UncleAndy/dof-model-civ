@@ -182,6 +182,11 @@ def disturbances(obs: dict, entity_id: str, kind: str) -> list[str]:
     return L.active_disturbances(obs, entity_id, kind, my_player_id=MY_PLAYER)
 
 
+def powers_of(obs: dict) -> list[str]:
+    """Чужие державы, о которых сообщает мир — возмущение по объявлению владельца."""
+    return L.foreign_powers(obs, my_player_id=MY_PLAYER)
+
+
 # ── прогон на реальном наблюдении ───────────────────────────────────────────
 
 def run_real(steps: int) -> None:
@@ -233,7 +238,7 @@ def run_real(steps: int) -> None:
                 gates += 1                   # живых векторов не осталось
             vectors[eid] = names
             fields_of[eid] = fields
-            variety = L.variety_counters(names, disturbances(obs, eid, kind))
+            variety = L.variety_counters(names, disturbances(obs, eid, kind), powers_of(obs))
             if kind == "city":
                 requirements = city_requirements(fields, costs, names,
                                                  fields.get("prod_shield"))
@@ -352,7 +357,8 @@ def run_real(steps: int) -> None:
                 kind = L.entity_type_of(eid)
                 names = list(names)
                 fresh[eid] = L.lens_observation(
-                    variety=L.variety_counters(names, disturbances(obs_last, eid, kind)),
+                    variety=L.variety_counters(names, disturbances(obs_last, eid, kind),
+                                               powers_of(obs_last)),
                     requirements=(city_requirements(fields_last[eid], cost_index, names,
                                                     fields_last[eid].get("prod_shield"))
                                   if kind == "city" else {}),
@@ -421,9 +427,11 @@ def run_real(steps: int) -> None:
     expect_shift = {k for k, v in due_of.items()
                     if v is not None and abs(float(v) - stand_due) > 1e-9}
     check("I2б прирост построек есть ровно там, где платёж отличается от платежа стоящего обязательства",
-          bool(builds) and {o.option_id for o in paid} == expect_shift,
+          {o.option_id for o in paid if ":produce_" in str(o.option_id)} == expect_shift and bool(builds),
           f"построек {len(builds)}, платежей, отличных от стоящего ({stand_due:.0f}): "
-          f"{len(expect_shift)}, опций с приростом {len(paid)}")
+          f"{len(expect_shift)}, построек с приростом "
+          f"{len([o for o in paid if ':produce_' in str(o.option_id)])}, "
+          f"прочих с приростом {len([o for o in paid if ':produce_' not in str(o.option_id)])} (двери)")
     c_energy, C_energy = last["measured"][city_id].blocks[0]
     cheap_prices = [float(costs_last[str(a)[len("produce_"):]])
                     for a in last["vectors"][city_id]
@@ -515,16 +523,18 @@ def run_real(steps: int) -> None:
           f"еда {best_f[0]:.0f}{best_f[1]}/щиты {best_s[0]:.0f}{best_s[1]}/торг {best_t[0]:.0f} "
           f"против факта {fact[0]:.0f}/{fact[1]:.0f}/{fact[2]:.0f}; "
           f"клеток в области {len(tiles['cells'])}, раскрыто во всём мире {revealed_all}")
-    # I17: число векторов реакции в число свободы не входит — и это семантика стандарта, а не поломка.
+    # I17–I19: линза разнообразия получает масштаб от числа чужих держав (§4.6, объявление
+    # владельца модели), поэтому открытая дверь ВХОДИТ в число, а не остаётся невидимой.
     city_names = list(last["vectors"][city_id])
     req_city = city_requirements(fields_last[city_id], costs_last, city_names,
                                  fields_last[city_id].get("prod_shield"))
     v_now = float(last["measured"][city_id].variety_counters["V"])
     v_env_now = float(last["measured"][city_id].variety_counters["V_env"])
+    powers = powers_of(obs_last)
 
     def dof_at_v(v_names):
         binding = L.lens_observation(
-            variety=L.variety_counters(v_names, disturbances(obs_last, city_id, "city")),
+            variety=L.variety_counters(v_names, disturbances(obs_last, city_id, "city"), powers),
             requirements=req_city,
             constraint=L.constraint_observation("city", fields_last[city_id]))
         return L.measure({city_id: binding}, means_last)[city_id]
@@ -532,21 +542,52 @@ def run_real(steps: int) -> None:
     arms = {"V=1": dof_at_v(city_names[:1]),
             f"V={v_now:.0f}": dof_at_v(city_names),
             f"V={v_now + 100:.0f}": dof_at_v(city_names + [f"city_work_9_9_{i}" for i in range(100)])}
-    check("I17 число векторов реакции в число свободы не входит: при V_env = 0 (§4.6, Ashby-literal) "
-          "линза разнообразия равна 1 при любом V, поэтому открытая дверь прироста не даёт",
-          v_env_now == 0.0
-          and len({round(d.current_dof, 12) for d in arms.values()}) == 1
-          and all(abs(float(d.psi["variety"]) - 1.0) < 1e-12 for d in arms.values()),
-          f"V_env={v_env_now:.0f}; " + ", ".join(
-              f"{k} → ψ_var {float(d.psi['variety']):.4f}, DoF {d.current_dof:.6f}"
+    check("I17 число векторов реакции ВХОДИТ в число: V_env = число чужих держав даёт линзе масштаб, "
+          "ψ_var растёт с V",
+          v_env_now > 0.0 and v_env_now == float(len(powers))
+          and abs(float(arms[f"V={v_now:.0f}"].psi["variety"]) - v_now / (v_now + v_env_now)) < 1e-12
+          and (float(arms["V=1"].current_dof) < float(arms[f"V={v_now:.0f}"].current_dof)
+               < float(arms[f"V={v_now + 100:.0f}"].current_dof)),
+          f"V_env={v_env_now:.0f} (чужих держав {len(powers)}); " + ", ".join(
+              f"{k} → ψ_var {float(d.psi['variety']):.6f}, DoF {d.current_dof:.6f}"
               for k, d in arms.items()))
-    v_env_zero = all(float(m.variety_counters.get("V_env", 0.0)) == 0.0
-                     for m in last["measured"].values())
+    check("I18 V_env берётся из мира, а не из константы: чужих держав |obs['player']| − 1",
+          len(powers) == len(obs_last.get("player") or {}) - 1,
+          f"держав в наблюдении {len(obs_last.get('player') or {})}, не мы: {powers} → "
+          f"V_env = {v_env_now:.0f}")
     research_opts = [o for o in options if ":research_tech_" in o.option_id]
-    check("I2в у исследования прироста нет, и это объяснено: V_env = 0 делает ψ_var слепой к V",
-          bool(research_opts) and not [o for o in research_opts if o.flat_delta()] and v_env_zero,
-          f"исследований {len(research_opts)}, с приростом "
-          f"{len([o for o in research_opts if o.flat_delta()])}, V_env = 0 у всех: {v_env_zero}")
+    research_paid = [o for o in research_opts if o.flat_delta()]
+    check("I2в у исследования прирост есть, и он из линзы разнообразия (дверь), а не из средств",
+          bool(research_opts) and bool(research_paid),
+          f"исследований {len(research_opts)}, с приростом {len(research_paid)}, "
+          f"пример {research_paid[0].option_id if research_paid else '—'}")
+    # I19: цена двери — сверка проекции опции с формулой линзы разнообразия.
+    v_city = float(len(set(city_names)))
+    opened = []
+    for tid in (obs_last.get("tech") or {}):
+        if tid in last["known_techs"]:
+            continue
+        more = L.available_vectors("city", fields_last[city_id], last["raw_menus"][city_id],
+                                   last["known_techs"], catalogue=last["catalogue"],
+                                   known_techs=last["known_techs"] | {tid})
+        k = len(set(more) - set(city_names))
+        if k:
+            opened.append((k, tid))
+    k_best, t_best = max(opened, default=(0, None))
+    opt_best = next((o for o in research_opts if str(o.option_id).endswith(f"_{t_best}")), None)
+    city_gain = float(opt_best.flat_delta().get(city_id, 0.0)) if opt_best else 0.0
+    dof_before = float(last["measured"][city_id].current_dof)
+    ratio = (((v_city + k_best) * (v_city + v_env_now))
+             / (v_city * (v_city + k_best + v_env_now))) if k_best else 1.0
+    expect = dof_before * (ratio - 1.0)
+    ln_gain = (math.log1p(k_best / v_city) - math.log1p(k_best / (v_city + v_env_now))) if k_best else 0.0
+    check("I19 цена открытой двери равна изменению DoF города — проекция совпадает с формулой линзы",
+          k_best > 0 and opt_best is not None and abs(city_gain - expect) < 1e-12,
+          (f"технология {t_best} открывает {k_best} дверей → город {city_gain:+.6f} против "
+           f"формулы {expect:+.6f}; в логарифмах (это и читает ядро) {ln_gain:+.6f}; "
+           f"прирост опции целиком {min(opt_best.flat_delta().values()):+.6f}"
+           if opt_best is not None and opt_best.flat_delta()
+           else f"опции с технологией {t_best} нет"))
     check("I3 §4.8b: τ' >= 0 у каждого кандидата (τ — самый срочный срок сущности)",
           all(bool(r["viable"]) for r in rows),
           f"неприменимых {sum(1 for r in rows if not r['viable'])}, τ={tau / 1e6:.0f} с")
