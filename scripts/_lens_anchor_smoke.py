@@ -26,7 +26,11 @@ sys.path.insert(0, str(ROOT))
 
 from brain.spec.measurement import measure_entity  # noqa: E402
 from brain.spec.world_graph import ActEdge, EntityNode, WorldGraph  # noqa: E402
-from env.config import SPEC_MEANS_CLASS, TURN_DURATION_MKS  # noqa: E402
+from env.config import (  # noqa: E402
+    SPEC_MEANS_CLASS,
+    SPEC_MEANS_HORIZON_TURNS,
+    TURN_DURATION_MKS,
+)
 from env.entity_extractor import GameStateExtractor  # noqa: E402
 from env import spec_graph as G  # noqa: E402
 from env import spec_lenses as L  # noqa: E402
@@ -78,16 +82,22 @@ def build_cost_index(obs: dict) -> dict[str, float]:
 
 
 def city_requirements(city_obs: dict, costs: dict[str, float],
-                      menu: list[str]) -> dict[str, float]:
-    """Требования города: стоимости того, что мир предлагает ему построить."""
+                      menu: list[str], production: float | None = None,
+                      horizon: float = SPEC_MEANS_HORIZON_TURNS) -> dict[str, float]:
+    """Требования города: **платёж за горизонт** по тому, что мир предлагает строить.
+
+    База времени одна и та же у требования и у средств: средства — запас плюс доход
+    за горизонт, требование — то, что придётся оплатить за горизонт. Полная цена
+    против однодневного дохода — не свойство города, а разные базы времени: `20/7`
+    вместо `7/7`.
+    """
     per_transition: list[dict[str, float]] = []
     for name in menu:
         if not name.startswith("produce_"):
             continue
-        item = name[len("produce_"):]
-        cost = costs.get(item)
-        if cost is not None:
-            per_transition.append({"energy": float(cost)})
+        due = O.payment_due(costs.get(name[len("produce_"):]), production, horizon)
+        if due is not None:
+            per_transition.append({"energy": float(due)})
     return L.reduce_requirements(per_transition)
 
 
@@ -184,7 +194,8 @@ def run_real(steps: int) -> None:
             fields_of[eid] = fields
             variety = L.variety_counters(names, disturbances(obs, eid, kind))
             if kind == "city":
-                requirements = city_requirements(fields, costs, names)
+                requirements = city_requirements(fields, costs, names,
+                                                 fields.get("prod_shield"))
             else:
                 requirements = {}            # мир не публикует цену переходов — не выдумываем
             bindings[eid] = L.lens_observation(
@@ -301,7 +312,8 @@ def run_real(steps: int) -> None:
                 names = list(names)
                 fresh[eid] = L.lens_observation(
                     variety=L.variety_counters(names, disturbances(obs_last, eid, kind)),
-                    requirements=(city_requirements(fields_last[eid], cost_index, names)
+                    requirements=(city_requirements(fields_last[eid], cost_index, names,
+                                                    fields_last[eid].get("prod_shield"))
                                   if kind == "city" else {}),
                     constraint=L.constraint_observation(kind, fields_last[eid]),
                 )
@@ -316,10 +328,14 @@ def run_real(steps: int) -> None:
     city_id = next(e for e in deciders if e.startswith("city_"))
     production = {e: float(fields_last[e].get("prod_shield") or 0.0)
                   for e in deciders if e.startswith("city_")}
+    standing = {e: float(fields_last[e]["turns_to_prod_complete"])
+                for e in deciders if e.startswith("city_")
+                and fields_last[e].get("turns_to_prod_complete") is not None}
     options = O.build_options(last["vectors"], last["raw_menus"], last["catalogue"],
                               last["known_techs"], graph, remeasure,
                               only=deciders, costs=costs_last,
-                              means=means_last, production=production)
+                              means=means_last, production=production,
+                              standing=standing)
     with_delta = [o for o in options if o.flat_delta()]
     priced = [o for o in options if o.projected_resource_delta]
     unpriced = [o for o in options if o.requires and not o.projected_resource_delta]
@@ -345,50 +361,102 @@ def run_real(steps: int) -> None:
     check("I1 кандидатов ровно столько, сколько векторов у решающих сущностей",
           len(options) == sum(len(last["vectors"].get(e, [])) for e in deciders),
           f"{len(options)} опций на {len(deciders)} сущностях")
-    cheap = dict(costs_last)
-    cheap["__probe__"] = 1.0                     # предмет дешевле любого в каталоге
-    probe_remeasure = make_remeasure(cheap)
+    cheap_index = dict(costs_last)
+    cheap_index["__probe__"] = 1.0               # предмет дешевле любого в каталоге
+    probe_remeasure = make_remeasure(cheap_index)
     base_dof = remeasure({city_id: list(last["vectors"][city_id])})[city_id]
     probe_dof = probe_remeasure(
         {city_id: list(last["vectors"][city_id]) + ["produce___probe__"]})[city_id]
     check("I2 прирост добыт пересчётом линз, а не объявлен: дешёвый предмет его даёт",
           probe_dof > base_dof + 1e-9,
           f"без него DoF города {base_dof:.6f}, с ним {probe_dof:.6f}")
+    builds = [o for o in options if ":produce_" in str(o.option_id)]
     paid = [o for o in options if o.flat_delta()]
-    check("I2б платёж ушёл из средств: прирост есть ровно у построек, и он отрицателен",
-          bool(paid) and all(str(o.option_id.split(":", 1)[1]).startswith("produce_")
-                             and min(o.flat_delta().values()) < 0.0 for o in paid),
-          f"опций с приростом {len(paid)} из {len(options)}, "
-          f"например {paid[0].option_id if paid else '—'}")
-    pays = {o.option_id: O.payment_in_horizon(
-                costs_last.get(o.option_id.split("produce_", 1)[1]),
-                production.get(city_id))
-            for o in options if ":produce_" in o.option_id}
+    prod_city = production.get(city_id, 0.0)
+    stand_due = prod_city * SPEC_MEANS_HORIZON_TURNS
+    due_of = {o.option_id: O.payment_due(
+                  costs_last.get(str(o.option_id).split("produce_", 1)[1]), prod_city)
+              for o in builds}
+    expect_shift = {k for k, v in due_of.items()
+                    if v is not None and abs(float(v) - stand_due) > 1e-9}
+    check("I2б прирост построек есть ровно там, где платёж отличается от платежа стоящего обязательства",
+          bool(builds) and {o.option_id for o in paid} == expect_shift,
+          f"построек {len(builds)}, платежей, отличных от стоящего ({stand_due:.0f}): "
+          f"{len(expect_shift)}, опций с приростом {len(paid)}")
+    c_energy, C_energy = last["measured"][city_id].blocks[0]
     cheap_prices = [float(costs_last[str(a)[len("produce_"):]])
                     for a in last["vectors"][city_id]
                     if str(a).startswith("produce_")
                     and str(a)[len("produce_"):] in costs_last]
     cheap = min(cheap_prices) if cheap_prices else 0.0
-    check("I10 платёж за горизонт — производительность города, а не цена предмета",
-          {o.option_id for o in paid} == {k for k, v in pays.items() if v > 0.0}
-          and all(abs(v - production.get(city_id, 0.0)) < 1e-9
-                  for v in pays.values() if v > 0.0)
-          and cheap > production.get(city_id, 0.0),
-          f"дешевле {cheap:.0f} щитов, производительность {production.get(city_id, 0.0):.0f}, "
-          f"платежей {len([v for v in pays.values() if v > 0.0])}")
-    pays3 = {o.option_id: O.payment_in_horizon(
-                 costs_last.get(o.option_id.split("produce_", 1)[1]),
-                 production.get(city_id), 3.0)
-             for o in options if ":produce_" in o.option_id}
-    check("I11 предмет, завершающийся в горизонт, за горизонт средств не убывает (§4.3)",
-          any(v == 0.0 for v in pays3.values()) and any(v > 0.0 for v in pays.values()),
-          f"при горизонте 3 хода платежей {len([v for v in pays3.values() if v > 0])}, "
-          f"при 1 ходе {len([v for v in pays.values() if v > 0])}")
+    check("I10 требование города — платёж за горизонт, а не полная цена предмета",
+          abs(c_energy - min(cheap, prod_city)) < 1e-9
+          and abs(C_energy - means_last.get("energy", 0.0)) < 1e-9
+          and cheap > prod_city,
+          f"c={c_energy:.0f} = min(дешёвый предмет {cheap:.0f}, производительность {prod_city:.0f}); "
+          f"C={C_energy:.0f}, ψ_opt={last['measured'][city_id].psi['options']:.4f}")
+    check("I11 предмет, завершающийся в горизонт, стоит свою цену; не завершающийся — только поток",
+          abs(float(O.payment_due(5.0, prod_city)) - 5.0) < 1e-9
+          and abs(float(O.payment_due(cheap, prod_city)) - prod_city) < 1e-9
+          and float(O.payment_due(None, prod_city)) == prod_city
+          and float(O.payment_due(cheap, None)) == cheap,
+          f"цена 5 при производительности {prod_city:.0f} → "
+          f"{float(O.payment_due(5.0, prod_city)):.0f}; цена {cheap:.0f} → "
+          f"{float(O.payment_due(cheap, prod_city)):.0f}; цена неизвестна → "
+          f"{float(O.payment_due(None, prod_city)):.0f}")
+    # Контроль платежа: платёж ниже стоящего обязан дать плюс, равный — не дать прироста.
+    probe_standing = {city_id: 3.0}      # проба: обязательство, не завершающееся в горизонт
+    cheap_costs = {name: 1.0 for name in costs_last}
+    cheap_opts = O.build_options(last["vectors"], last["raw_menus"], last["catalogue"],
+                                 last["known_techs"], graph, make_remeasure(cheap_costs),
+                                 only=[city_id], costs=cheap_costs, means=means_last,
+                                 production=production, standing=probe_standing)
+    due_now_probe = prod_city * SPEC_MEANS_HORIZON_TURNS
+    exp_sign: dict[str, int] = {}
+    for o in cheap_opts:
+        if ":produce_" not in str(o.option_id):
+            continue
+        due_new = O.payment_due(cheap_costs.get(str(o.option_id).split("produce_", 1)[1]),
+                                prod_city)
+        if due_new is None or prod_city <= 0.0:
+            continue
+        exp_sign[o.option_id] = (1 if float(due_new) < due_now_probe
+                                 else (-1 if float(due_new) > due_now_probe else 0))
+    got = {o.option_id: (min(o.flat_delta().values()) if o.flat_delta() else 0.0)
+           for o in cheap_opts if ":produce_" in str(o.option_id)}
+    gain = {k for k, v in exp_sign.items() if v > 0}
+    same = {k for k, v in exp_sign.items() if v == 0}
+    loss = {k for k, v in exp_sign.items() if v < 0}
+    check("I14 контроль платежа: платёж ниже стоящего даёт плюс, выше — минус, равный — ничего",
+          bool(gain) and all(got.get(k, 0.0) > 1e-12 for k in gain)
+          and all(abs(got.get(k, 0.0)) < 1e-12 for k in same)
+          and all(got.get(k, 0.0) < -1e-12 for k in loss),
+          f"построек с платежом ниже стоящего {len(gain)}, равным {len(same)}, выше {len(loss)}; "
+          f"пример Δ={min([got[k] for k in gain], default=0.0):+.4f}")
+    # База времени одна — и проверяется с обеих сторон: запас двигает линзу,
+    # один доход нет, потому что требование следует за производительностью.
+    base_city = remeasure({city_id: list(last["vectors"][city_id])})[city_id]
+    dof_more_stock = remeasure({city_id: list(last["vectors"][city_id])},
+                               {**means_last,
+                                "energy": float(means_last.get("energy", 0.0)) + prod_city})[city_id]
+    kept_prod = fields_last[city_id].get("prod_shield")
+    try:
+        fields_last[city_id]["prod_shield"] = 2.0 * prod_city
+        dof_more_income = remeasure(
+            {city_id: list(last["vectors"][city_id])},
+            {**means_last, "energy": 2.0 * float(means_last.get("energy", 0.0))})[city_id]
+    finally:
+        fields_last[city_id]["prod_shield"] = kept_prod
+    check("I15 проверено: линза средств отзывчива к запасу, но не к одному доходу — требование идёт за производительностью",
+          (dof_more_stock > base_city + 1e-9 or base_city >= 1.0 - 1e-9)
+          and abs(dof_more_income - base_city) < 1e-9,
+          f"DoF {base_city:.4f} → при запасе +{prod_city:.0f}: {dof_more_stock:.4f}, "
+          f"при удвоенном доходе с удвоенной производительностью: {dof_more_income:.4f}")
     v_env_zero = all(float(m.variety_counters.get("V_env", 0.0)) == 0.0
                      for m in last["measured"].values())
     research_opts = [o for o in options if ":research_tech_" in o.option_id]
     check("I2в у исследования прироста нет, и это объяснено: V_env = 0 делает ψ_var слепой к V",
-          bool(paid) and not [o for o in research_opts if o.flat_delta()] and v_env_zero,
+          bool(research_opts) and not [o for o in research_opts if o.flat_delta()] and v_env_zero,
           f"исследований {len(research_opts)}, с приростом "
           f"{len([o for o in research_opts if o.flat_delta()])}, V_env = 0 у всех: {v_env_zero}")
     check("I3 §4.8b: τ' >= 0 у каждого кандидата (τ — самый срочный срок сущности)",
@@ -456,10 +524,22 @@ def run_real(steps: int) -> None:
           i_lo < index and abs(i_hi - index) < 1e-9,
           f"без неё {index:.6f}; с ней при DoF 0.9 → {i_lo:.6f} (Δ {i_lo - index:+.6f}), "
           f"при DoF 1.0 → {i_hi:.6f} (Δ {i_hi - index:+.6f})")
-    check("I8 горизонт средств решает, что город может: при 3 ходах оплата проходит",
-          len(payable3) >= len(priced) and len(priced) < len(options),
-          f"при 1 ходе платят {len(options) - len(barred_rs) - len(unpriced)}, "
-          f"при 3 — {len(payable3)}")
+    over_draw = ActionOption(
+        option_id=f"{city_id}:produce___overdraw__",
+        description="проба: объявленный расход больше средств агента",
+        projected_resource_delta={city_id: {
+            "energy": -(float(means_last.get("energy", 0.0)) + 1.0)}},
+        requires=["energy"],
+        act_id=f"{city_id}:produce___overdraw__",
+        estimated_duration_mks=TURN_DURATION_MKS,
+    )
+    _, over_rows, _ = O.decide(core, st, [over_draw], ctx)
+    barred_over = over_rows[0]["barred_by"] if over_rows else None
+    check("I8 при объявленном горизонте §4.8 не отсекает ни одной постройки (платёж не больше "
+          "средств), но пробу с расходом больше средств отсекает",
+          not barred_rs and barred_over == "resources_ok",
+          f"отсечено построек {len(barred_rs)} из {len(builds)}; барьер пробы: {barred_over}; "
+          f"сверка на 3 ходах: платёжеспособных {len(payable3)}")
 
 
 # ── якоря и вырожденные случаи (§4.6) ───────────────────────────────────────

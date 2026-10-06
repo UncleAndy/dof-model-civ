@@ -30,7 +30,6 @@
 """
 from __future__ import annotations
 
-import math
 from typing import Any, Callable, Iterable, Mapping, Optional, Sequence
 
 from brain.spec.calculus_core import ActionOption, ResourceObservation
@@ -59,7 +58,8 @@ __all__ = [
     "closures_for",
     "decide",
     "is_reversible_action",
-    "payment_in_horizon",
+    "means_after_payment",
+    "payment_due",
     "project_option",
     "resource_draw",
     "resource_observations",
@@ -67,8 +67,8 @@ __all__ = [
 ]
 
 
-def _pay(means: Optional[Mapping[str, float]], resource: str,
-         amount: float) -> dict[str, float]:
+def means_after_payment(means: Optional[Mapping[str, float]], resource: str,
+                        amount: float) -> dict[str, float]:
     """Средства после платежа: не больше, чем есть.
 
     Долга модель не объявляет: потратить больше, чем есть, нельзя, и урезать
@@ -81,26 +81,30 @@ def _pay(means: Optional[Mapping[str, float]], resource: str,
     return out
 
 
-def payment_in_horizon(cost: Optional[float], production: Optional[float],
-                       horizon_turns: float = SPEC_MEANS_HORIZON_TURNS) -> float:
-    """Сколько уходит из средств **за горизонт**: платёж, а не цена.
+def payment_due(price: Optional[float], production: Optional[float],
+                horizon_turns: float = SPEC_MEANS_HORIZON_TURNS) -> Optional[float]:
+    """Сколько обязательство стоит **за горизонт**: платёж, а не вся цена.
 
-    Цена (§4.8) и платёж (§4.3) отвечают на разные вопросы: цена — «подъёмно ли
-    вообще», платёж — «сколько убывает сейчас». Предмет, который город успевает
-    построить за горизонт, платится и в тот же срок приходит приобретением
-    города, поэтому за горизонт средства не убывают. Предмет, который не
-    успевает, забирает за горизонт **производительность** города (наблюдаемое
-    поле) — и только её: остаток цены ещё не уплачен.
+    Требование сущности мерится на той же базе времени, что и её средства: средства —
+    это запас плюс доход за горизонт, значит и требование — то, что придётся оплатить
+    за горизонт. Предмет, который город завершает за горизонт, стоит свою цену;
+    предмет, который не завершает, — только производительность города за горизонт,
+    потому что остаток цены ещё не наступил.
 
-    Число ходов — не догадка, а деление наблюдённых величин: `ceil(цена /
-    производительность)`.
+    Сравнивать полную цену с однодневным доходом нельзя: тогда любой город выглядит
+    несостоятельным (`c/C = 20/7` вместо `7/7`) — это разные базы времени, а не
+    свойство города.
+
+    Цена неизвестна — требование всё равно объявляется по производительности:
+    незнание не должно читаться как «бесплатно», а `min` по доступным переходам от
+    такого объявления ниже истинного не станет.
     """
-    if cost is None or production is None or float(production) <= 0.0:
-        return 0.0                     # нечем платить или нечего платить — платежа не объявляем
-    turns = math.ceil(float(cost) / float(production))
-    if turns <= float(horizon_turns):
-        return 0.0                     # успевает: за горизонт средства не убывают
-    return float(min(float(production), float(cost)))
+    if production is None or float(production) <= 0.0:
+        return None if price is None else float(price)
+    due = float(production) * float(horizon_turns)
+    if price is not None and float(price) <= due:
+        return float(price)
+    return due
 
 
 def is_reversible_action(action: str) -> bool:
@@ -178,18 +182,21 @@ def project_option(entity_id: str, action: str,
     """
     name = str(action)
     if name.startswith(SPEC_PRODUCTION_ACTION_PREFIX):
-        resource, amount = (pay or ("", 0.0))
-        if not resource or float(amount) <= 0.0:
-            return {}, "платежа в горизонте нет — средства не убывают"
+        resource, due_new, due_now = (pay or ("", None, None))
+        if not resource or due_new is None or due_now is None:
+            return {}, "платёж в горизонте не объявлен"
         current = list(vectors.get(entity_id, []))
-        before = remeasure({entity_id: current}, means)
-        after = remeasure({entity_id: current}, _pay(means, resource, amount))
+        # Опция платит не весь поток, а его **приращение** к уже стоящему
+        # обязательству: город и так отдаёт производство каждый ход.
+        before = remeasure({entity_id: current}, means_after_payment(means, resource, due_now))
+        after = remeasure({entity_id: current}, means_after_payment(means, resource, due_new))
         delta = float(after[entity_id]) - float(before[entity_id])
         if abs(delta) < 1e-12:
-            return {}, "платёж линзу средств не сдвинул"
+            return {}, (f"платит столько же, сколько стоящее обязательство "
+                        f"({float(due_new):.0f} {resource})")
         return ({entity_id: delta},
-                f"платёж {float(amount):.0f} {resource} за горизонт "
-                f"из {float((means or {}).get(resource, 0.0)):.0f}")
+                f"платёж за горизонт {float(due_new):.0f} {resource} "
+                f"против {float(due_now):.0f} у стоящего обязательства")
     if not name.startswith(SPEC_RESEARCH_ACTION_PREFIX):
         return {}, "прирост не объявлен"
     tech_id = str(action).rsplit("_", 1)[-1]
@@ -224,19 +231,25 @@ def project_option(entity_id: str, action: str,
 
 
 def resource_draw(entity_id: str, action: str,
-                  costs: Optional[Mapping[str, float]]) -> dict[str, dict[str, float]]:
+                  costs: Optional[Mapping[str, float]],
+                  production: Optional[float] = None,
+                  horizon_turns: float = SPEC_MEANS_HORIZON_TURNS
+                  ) -> dict[str, dict[str, float]]:
     """Наблюдённый расход действия по ресурсам — для §4.8.
 
-    Постройка платит щитами по своей цене (`build_cost`). Чего цена неизвестна —
-    того и расхода: незнание не превращается ни в ноль, ни в запрет.
+    Расход — **платёж за горизонт**, а не полная цена: та же база времени, что у
+    средств, иначе любая постройка выглядит неоплатной. Чего цена неизвестна —
+    требование всё равно объявляется по производительности: незнание не
+    превращается ни в ноль, ни в запрет.
     """
     name = str(action)
-    if not name.startswith(SPEC_PRODUCTION_ACTION_PREFIX) or not costs:
+    if not name.startswith(SPEC_PRODUCTION_ACTION_PREFIX):
         return {}
-    cost = costs.get(name[len(SPEC_PRODUCTION_ACTION_PREFIX):])
-    if cost is None:
+    item = name[len(SPEC_PRODUCTION_ACTION_PREFIX):]
+    due = payment_due((costs or {}).get(item), production, horizon_turns)
+    if due is None:
         return {}
-    return {str(entity_id): {"energy": -float(cost)}}
+    return {str(entity_id): {"energy": -float(due)}}
 
 
 def build_options(vectors: Mapping[str, Sequence[str]],
@@ -249,6 +262,7 @@ def build_options(vectors: Mapping[str, Sequence[str]],
                   costs: Optional[Mapping[str, float]] = None,
                   means: Optional[Mapping[str, float]] = None,
                   production: Optional[Mapping[str, float]] = None,
+                  standing: Optional[Mapping[str, float]] = None,
                   horizon_turns: float = SPEC_MEANS_HORIZON_TURNS) -> list[ActionOption]:
     """Кандидаты §3.3 для объявленных сущностей — по одной опции на вектор.
 
@@ -259,12 +273,21 @@ def build_options(vectors: Mapping[str, Sequence[str]],
     options: list[ActionOption] = []
     for entity_id in targets:
         for action in vectors.get(entity_id, []):
-            pay: Optional[tuple[str, float]] = None
+            pay: Optional[tuple[str, Optional[float], Optional[float]]] = None
             if str(action).startswith(SPEC_PRODUCTION_ACTION_PREFIX):
                 item = str(action)[len(SPEC_PRODUCTION_ACTION_PREFIX):]
-                pay = ("energy", payment_in_horizon((costs or {}).get(item),
-                                                    (production or {}).get(entity_id),
-                                                    horizon_turns))
+                prod = (production or {}).get(entity_id)
+                due_new = payment_due((costs or {}).get(item), prod, horizon_turns)
+                turns = (standing or {}).get(entity_id)
+                if turns is None or float(turns) < 0.0:
+                    due_now: Optional[float] = 0.0     # ничего не строится — платить нечего
+                elif float(turns) > float(horizon_turns):
+                    # Стоящее обязательство не завершается в горизонт: его платёж за
+                    # горизонт — производительность, цена для этого не нужна.
+                    due_now = None if prod is None else float(prod) * float(horizon_turns)
+                else:
+                    due_now = None      # завершается в горизонт: цена его не публикуется
+                pay = ("energy", due_new, due_now)
             delta, why = project_option(entity_id, action, vectors, raw_menus,
                                         catalogue, known_techs, remeasure,
                                         means=means, pay=pay)
@@ -278,7 +301,9 @@ def build_options(vectors: Mapping[str, Sequence[str]],
                 # §4.4: обратимость выводится из списка закрытий, а не назначается.
                 is_reversible=not closed,
                 estimated_duration_mks=TURN_DURATION_MKS,
-                projected_resource_delta=resource_draw(entity_id, action, costs),
+                projected_resource_delta=resource_draw(
+                    entity_id, action, costs, (production or {}).get(entity_id),
+                    horizon_turns),
                 requires=requires_for(action),
                 act_id=act_id,
             ))
