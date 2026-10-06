@@ -38,6 +38,7 @@ from .config import (
     SPEC_VARIABLE_BY_CATEGORY,
     TURN_DURATION_MKS,
 )
+from .entity_extractor import EntityState
 from .spec_lenses import (
     action_category,
     entity_type_of,
@@ -64,15 +65,12 @@ _TECH_TAIL = re.compile(r"_(\d+)$")
 def act_target(name: str, actor_id: str) -> str:
     """Сущность, чья DoF меняется от акта.
 
-    Не всякий акт меняет того, кто его делает: исследование меняет технологию,
-    производство — город, а перемещение меняет положение самого идущего. Цель
-    берётся из имени действия, а не из догадки: если имени не хватает, акт
-    остаётся за актором.
+    Акт меняет своего актора. Исследование ведёт игрок (`tech/cur_player`), и оно
+    не поднимает его DoF — оно **сужает** его меню: выбранная дверь закрывается.
+    Подъём приходится на тех, кому технология открывает дверь, и этот мост
+    («технология → сущности, чьё меню она расширяет») ещё не построен. Пока его
+    нет, акт не имеет права объявлять чужое восстановление — и не объявляет.
     """
-    if name.startswith("research_tech") or name.startswith("set_tech_goal"):
-        tail = _TECH_TAIL.search(name)
-        if tail:
-            return f"tech_{tail.group(1)}"
     return actor_id
 
 
@@ -151,6 +149,10 @@ def state_with_measured_dof(state: Any, dof: Mapping[str, float]):
     """
     clone = copy.deepcopy(state)
     clone.entities = {eid: ent for eid, ent in clone.entities.items() if eid in dof}
+    for entity_id in sorted(set(dof) - set(clone.entities)):
+        # Сущность, которую наблюдение поддерживает через своё меню, но которой
+        # нет в матрице предыдущей модели (игрок): заводим её здесь.
+        clone.entities[entity_id] = EntityState(entity_id=entity_id)
     for entity_id, entity in clone.entities.items():
         entity.current_dof = max(0.0, min(1.0, float(dof[entity_id])))
         entity.dof_known = True

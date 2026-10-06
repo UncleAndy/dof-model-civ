@@ -65,23 +65,28 @@ ENTITY_CTRLS = ("unit", "city", "tech", "dipl")
 #: `diplomacy_<id>`, а её контроллер — `dipl`, отсюда таблица, а не склейка строк.
 _CTRL_PREFIX = {"unit": "unit", "city": "city", "dipl": "diplomacy"}
 
-#: Технологический контроллер системный (`tech/cur_player`), но имя действия
-#: называет саму технологию в хвосте: `research_tech_Alphabet_2` → технология 2
-#: (проверено на живом наблюдении: `tech['2'].name == 'Alphabet'`). Поэтому
-#: сущность берётся из имени действия, а не из актора.
+#: Контроллеры, действия которых мир адресует **игроку**, а не тому, кого действие
+#: называет: `tech/cur_player` (исследование) и `gov/0` (форма правления). Технология
+#: здесь — не сущность, а предмет действия: исследуемая — цель акта, известная —
+#: открытая дверь. Поэтому и акт, и вектор реакции принадлежат игроку.
+_PLAYER_CONTROLLERS = ("tech", "gov")
+
+#: Действия над технологией: имя несёт её номер в хвосте (`research_tech_Alphabet_2`).
 _TECH_ACTION_PREFIXES = ("research_tech_", "set_tech_goal_")
 
 
 def action_entity(ctrl_type: Any, actor_id: Any, action_name: Any) -> Optional[str]:
-    """Сущность, которой адресовано действие, или None (действие системное)."""
+    """Сущность, которой адресовано действие, или None (действие системное).
+
+    Исследование и смена правления адресованы игроку, хотя записаны под
+    контроллерами `tech` и `gov`: мир хранит их как `tech/cur_player` и `gov/0`.
+    """
     ctrl = str(ctrl_type)
     name = str(action_name)
     if ctrl in _CTRL_PREFIX:
         return f"{_CTRL_PREFIX[ctrl]}_{actor_id}"
-    if ctrl == "tech" and name.startswith(_TECH_ACTION_PREFIXES):
-        tail = name.rsplit("_", 1)[-1]
-        if tail.isdigit():
-            return f"tech_{tail}"
+    if ctrl in _PLAYER_CONTROLLERS:
+        return f"player_{CONFIG.my_player_id}"
     return None
 
 
@@ -381,19 +386,35 @@ def action_category(name: str) -> str:
     return category
 
 
-def available_vectors(entity_type: str, fields: Mapping[str, Any],
-                      names: Iterable[str]) -> list[str]:
-    """Векторы реакции сущности: меню минус то, что заморожено (§4.6).
+def action_targets_open_gate(name: str, known_gates: Iterable[str] = ()) -> bool:
+    """Ведёт ли действие к уже открытой двери (`research_tech_Alphabet_2`).
 
-    Меню — предложение мира, а не список возможного. Запись, переменная которой
-    у сущности заморожена, вектором реакции не является: у известной технологии
-    «исследовать её» стоит в меню, а действия такого нет. Одно правило на всё —
-    и для счёта `V`, и для блоков `c/C`, и для актов графа (§3.5): иначе `V`
-    считал бы то, чего сущность не может, а граф — пути, которых нет.
+    Мир перечисляет в меню исследование и известных технологий — как список для
+    выбора, а не как возможность. Исследовать известное нельзя, и считать такое
+    действие вектором реакции значило бы объявить свободой то, чего нет.
+    """
+    if not name.startswith(_TECH_ACTION_PREFIXES):
+        return False
+    tail = name.rsplit("_", 1)[-1]
+    return tail in {str(g) for g in known_gates}
+
+
+def available_vectors(entity_type: str, fields: Mapping[str, Any],
+                      names: Iterable[str],
+                      known_gates: Iterable[str] = ()) -> list[str]:
+    """Векторы реакции сущности: меню минус то, что мертво (§4.6).
+
+    Меню — предложение мира, а не список возможного. Вектором реакции не является
+    ни запись, переменная которой у сущности заморожена, ни действие над уже
+    открытой дверью. Одно правило на всё — и для счёта `V`, и для блоков `c/C`, и
+    для актов графа (§3.5): иначе `V` считал бы то, чего сущность не может, а граф
+    строил бы пути, которых нет.
     """
     frozen = set(frozen_variables(entity_type, fields))
     out: list[str] = []
     for name in names:
+        if action_targets_open_gate(name, known_gates):
+            continue
         variable = SPEC_VARIABLE_BY_CATEGORY.get(action_category(name))
         if variable is not None and variable in frozen:
             continue
@@ -548,6 +569,7 @@ __all__ = [
     "constraint_observation",
     "gate_is_open",
     "action_category",
+    "action_targets_open_gate",
     "available_vectors",
     "lens_observation",
     "measure",
