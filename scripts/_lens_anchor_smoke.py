@@ -35,6 +35,7 @@ from env.entity_extractor import GameStateExtractor  # noqa: E402
 from env import spec_graph as G  # noqa: E402
 from env import spec_lenses as L  # noqa: E402
 from env import spec_options as O  # noqa: E402
+from env import spec_unknowns as U  # noqa: E402
 from brain.spec.calculus_core import ActionOption, DOFCalculusCore  # noqa: E402
 
 OBS_FILE = ROOT / "tests" / "fixtures" / "real_obs_01.json"
@@ -391,6 +392,7 @@ def run_real(steps: int) -> None:
     tau = min(st.deadlines.values()) if st.deadlines else None
     core = DOFCalculusCore()
     winner, rows, barred = O.decide(core, st, options, ctx)
+    completeness_now = U.completeness(options)
     by_bar = collections.Counter(str(r["barred_by"]) for r in rows)
     print(f"  кандидатов {len(options)} — решающие: {', '.join(deciders)}")
     print(f"  с приростом от пересчёта: {len(with_delta)}; "
@@ -400,6 +402,8 @@ def run_real(steps: int) -> None:
           f"{incomes_last.get('energy', 0.0):.0f}×1 ход), τ={tau / 1e6:.0f} с")
     print(f"  гейты: {dict(by_bar)} (нет ключа None — барьеров не было)")
     print(f"  решение: {winner.option_id if winner else 'стоять'}")
+    print(f"  неполнота решения (§4.7/§6.2): incomplete={completeness_now['incomplete']}; "
+          + "; ".join(str(r) for r in completeness_now["reasons"]))
     if winner is not None:
         print(f"    {winner.description}")
     for r in sorted(rows, key=lambda x: -float(x["net_delta"]))[:3]:
@@ -588,6 +592,18 @@ def run_real(steps: int) -> None:
            f"прирост опции целиком {min(opt_best.flat_delta().values()):+.6f}"
            if opt_best is not None and opt_best.flat_delta()
            else f"опции с технологией {t_best} нет"))
+    # I20 (§4.7/§6.2): решение объявлено неполным, и это поле отчёта, а не вход в счёт.
+    check("I20 решение объявлено неполным, и это не двигает числа: неизвестный вход "
+          "`tech_price` не разрешён ни одним кандидатом (§6.2), `t_m` не объявлен (§4.7)",
+          bool(completeness_now["incomplete"])
+          and completeness_now["binding"] == ["tech_price"]
+          and not any(bool(r["used_estimated"]) for r in completeness_now["unknown_resources"])
+          and not any("tech_price" in str(row) for row in rows),
+          f"incomplete={completeness_now['incomplete']}, не разрешено: "
+          f"{completeness_now['binding']}, причин {len(completeness_now['reasons'])}; "
+          f"опций, называющих вход в `discovers`: "
+          f"{sum(1 for o in options if 'tech_price' in (o.discovers or []))}; "
+          f"в строках кандидатов флаг не встречается")
     check("I3 §4.8b: τ' >= 0 у каждого кандидата (τ — самый срочный срок сущности)",
           all(bool(r["viable"]) for r in rows),
           f"неприменимых {sum(1 for r in rows if not r['viable'])}, τ={tau / 1e6:.0f} с")
