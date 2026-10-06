@@ -39,6 +39,7 @@ from env import spec_unknowns as U  # noqa: E402
 from env import spec_eta as E  # noqa: E402
 from env import spec_threat as T  # noqa: E402
 from env import spec_work as W  # noqa: E402
+from env import spec_attack as A  # noqa: E402
 from brain.spec.calculus_core import ActionOption, DOFCalculusCore  # noqa: E402
 
 OBS_FILE = ROOT / "tests" / "fixtures" / "real_obs_01.json"
@@ -1018,22 +1019,28 @@ def run_horizon() -> None:
           and not i_ok[0] and i_moved[0] and "по делу" in i_moved[1],
           f"скрыто+extras {w_hidden[0]}, скрыто без изменений {w_absent[0]}, "
           f"в меню {w_visible[0]}; актор на месте {i_ok[0]}, сдвинулся {i_moved[0]}")
-    # Дисконт и правило 1а: сверка с ЗАПИСАННЫМИ числами v2 (валюта та — ln DoF, и это
-    # названо: считаем их числа, чтобы проверить перенесённое ПРАВИЛО, а не свою валюту).
+    # Ценность города-творца: сверка с ЗАПИСАННЫМИ числами v2 (валюта та — ln DoF, и это
+    # названо: считаем их числа, чтобы проверить перенесённую ФОРМУ, а не свою валюту).
+    # §10.116: принята форма `ln(DoF создаваемого города) × frac`; вариант БЕЗ frac был
+    # ИСПЫТАН И ОТВЕРГНУТ (поднял поселенца над воином и вытеснил военную постройку
+    # целиком: A 0 военных, выжил 5/10 против B 8/10, медиана −8).
     frac_old, _ = W.horizon_discount(38.0, 5.2)
-    frac_perm, why_perm = W.horizon_discount(38.0, 5.2, permanent_asset=True)
-    settler_old = math.log(13.0) * frac_old
+    settler_old = math.log(13.0) * frac_old                      # старая форма v2 (по типу юнита)
     warrior_old = math.log(9.0) * W.horizon_discount(5.0, 5.2)[0]
-    # Без дисконта ценность считается по СОЗДАВАЕМОМУ городу, а не по типу:
-    # замер v2 — DoF города 22 → ln(22) = 3.091 (ровно их записанное число).
-    settler_perm = math.log(22.0) * frac_perm
-    check("I34 ценность создающего город типа не дисконтируется окном (§10.116, решение 1а): "
-          "правило воспроизводит записанные числа v2 — поселенец было 0.352, стало 3.091 против "
-          "воина 2.197",
+    city_dof_v2 = 22.0                                          # DoF создаваемого города (замер v2)
+    rejected_val, why_rejected = W.city_maker_value_without_discount(city_dof_v2)
+    accepted_val, why_accepted = W.city_maker_value(city_dof_v2, 38.0, 5.2)
+    at7, _ = W.city_maker_value(city_dof_v2, 7.0, 5.2)
+    at8, _ = W.city_maker_value(city_dof_v2, 8.0, 5.2)
+    check("I34 ценность города-творца — ПРИНЯТАЯ форма v2 `ln(DoF города) × frac`, а не «без дисконта» "
+          "(абляция §10.116 отвергнута); форма воспроизводит записанные числа v2, включая порог eta ≈ 7",
           abs(settler_old - 0.352) < 0.002 and abs(warrior_old - 2.197) < 0.002
-          and abs(settler_perm - 3.091) < 0.002 and "постоянн" in why_perm,
-          f"поселенец с дисконтом {settler_old:.3f} (v2: 0.352), без дисконта по городу 22 — "
-          f"{settler_perm:.3f} (v2: 3.091), воин {warrior_old:.3f} (v2: 2.197)")
+          and abs(rejected_val - 3.091) < 0.002 and "отвергнута" in why_rejected
+          and abs(accepted_val - 0.423) < 0.002 and "×" in why_accepted
+          and at7 > warrior_old > at8,
+          f"принятая форма при eta 38: {accepted_val:.3f}; отвергнутая абляция: {rejected_val:.3f} "
+          f"(её число в v2 — 3.091, и оно НЕ принято); у крупного города eta 7 → {at7:.3f} > воина "
+          f"{warrior_old:.3f} > eta 8 → {at8:.3f} (порог «eta ≤ 7» из записей v2 воспроизведён)")
     spec_workers = None
     for tech in (obs.get("tech") or {}).values():
         for sp in (tech.get("sup_units") or []):
@@ -1050,6 +1057,98 @@ def run_horizon() -> None:
           and cc_named is True and cc_text is True,
           f"на реальном паспорте `Workers`: {cc_real} ({why_cc[:46]}…); именованная {cc_named}, "
           f"строковая {cc_text}")
+    # ── §10.67/§10.105: рост набора возможностей, коридор путей, отсечка фронтира ──
+    real_size = city.get("size")
+    grow_ref = W.growth_raises_capability(real_size)
+    grow_missing = W.growth_raises_capability(7)
+    grows = [W.growth_raises_capability(s)[0] for s in (1, 2, 3)]
+    check("I36 набор возможностей города растёт с размером (§10.67): измеренные медианы 4 → 5 → 9; "
+          "размер вне замера — None С ПРИЧИНОЙ, а не нулём и не средним; закрытое окно съёмки "
+          "отсекается тем же правилом, что пустое меню",
+          grows == [4.0, 5.0, 9.0] and None not in grows
+          and grow_missing[0] is None and "не измерен" in grow_missing[1]
+          and not E.menu_is_measured([]),
+          f"город на съёмке размера {real_size}: {grow_ref[0]} переходов по ссылке v2 — но у нас "
+          f"ДРУГОЙ счётчик (векторов {len(city_menu)}); размер 7 → {grow_missing[0]} "
+          f"({grow_missing[1][:34]}…)")
+    corr_hit = W.paths_limited_by_corridor(10, 2, 2)
+    corr_free = W.paths_limited_by_corridor(10, 2, 200)
+    front_hit = W.frontier_cutoff_denies_goal(20.0, 12.0)
+    front_free = W.frontier_cutoff_denies_goal(20.0, None)
+    check("I37 два артефакта «эпохи одного действия» (§10.105): предел коридора не даёт ходить всем, "
+          "у кого есть цель (замер: 10 целей, 2 пути при пределе 2); порог фронтира лишает цели "
+          "движения, хотя движение к нераскрытой клетке — единственный источник нового DoF",
+          corr_hit[0] and not corr_free[0] and front_hit[0] and not front_free[0],
+          f"коридор при пределе 2 {corr_hit[0]} / при 200 {corr_free[0]}; фронтир при пороге 12 "
+          f"{front_hit[0]} / без порога {front_free[0]}")
+    # ── Порт из v2: наблюдение нападения (brain/v2/attack.py) ────────────────
+    # (1) ЖИВЫЕ данные: обходим съёмку по шагам и смотрим, что видит правило.
+    steps = json.load(open("tests/fixtures/real_obs_01.json"))
+    real_tracker = A.AttackTracker(my_player_id=int(city.get("owner", 0) or 0))
+    real_events = []
+    for i, rec in enumerate(steps):
+        ob = rec.get("observation") if isinstance(rec, dict) else None
+        if not isinstance(ob, dict):
+            continue
+        real_events.append(real_tracker.observe(ob, rec.get("turn", i + 1)))
+    real_attacked = [e for e in real_events if e.get("attacked")]
+    # (2) ПОЛОЖИТЕЛЬНЫЕ КОНТРОЛИ на синтетике: правило должно СРАБАТЫВАТЬ, иначе
+    # «нападений нет» на живых данных ничего не доказывает.
+    def _mk_map(own_cells):
+        grid = [[255] * 4 for _ in range(4)]
+        for (ax, ay), aown in own_cells.items():
+            grid[ay][ax] = aown
+        return grid
+
+    base_unit = {"5": {"owner": 0, "x": 1, "y": 1, "health": 10}}
+    our_city = {"121": {"owner": 0, "x": 2, "y": 2}}
+    prev_s = {"unit": base_unit, "city": our_city, "map": {"unit_owner": _mk_map({})}}
+    cur_hit = {"unit": {}, "city": our_city, "map": {"unit_owner": _mk_map({(1, 2): 3})}}
+    cur_fog = {"unit": {}, "city": our_city, "map": {"unit_owner": _mk_map({})}}
+    cur_wound = {"unit": {"5": {"owner": 0, "x": 1, "y": 1, "health": 6}}, "city": our_city,
+                 "map": {"unit_owner": _mk_map({(1, 2): 3})}}
+    hit_tr = A.AttackTracker(my_player_id=0)
+    hit_tr.observe(prev_s, 5)
+    hit_ev = hit_tr.observe(cur_hit, 6)
+    fog_tr = A.AttackTracker(my_player_id=0)
+    fog_tr.observe(prev_s, 5)
+    fog_ev = fog_tr.observe(cur_fog, 6)
+    own_tr = A.AttackTracker(my_player_id=0)
+    own_tr.observe(prev_s, 5)
+    own_tr.note_choice("5", "build_city")
+    own_ev = own_tr.observe(cur_hit, 6)
+    wnd_tr = A.AttackTracker(my_player_id=0)
+    wnd_tr.observe(prev_s, 5)
+    wnd_ev = wnd_tr.observe(cur_wound, 6)
+    first_tr = A.AttackTracker(my_player_id=0)
+    first_tr.prev = {}
+    first_ev = first_tr.observe(cur_hit, 1)
+    class _E:                      # сущность-заглушка: ядро принимает присваивание поля
+        def __init__(self): self.is_collapse_source = False
+    ents = {"player_3": _E(), "player_0": _E()}
+    applied = hit_tr.apply(ents, 6)
+    held, released = hit_tr.marks.is_source("player_3", 25), hit_tr.marks.is_source("player_3", 26)
+    check("I38 наблюдение нападения — порт `v2` на ЖИВЫХ данных: правило обходит съёмку по шагам и "
+          "не выдумывает нападений там, где мир их не показывал",
+          len(real_events) >= 9 and not real_attacked
+          and all(e.get("attacked") is False for e in real_events[1:]),
+          f"шагов пройдено {len(real_events)}, нападений {len(real_attacked)}; последнее: "
+          f"{real_events[-1].get('reason') if real_events else '—'}")
+    check("I39 правило нападения СРАБАТЫВАЕТ, когда нападение наблюдено: видимый чужой на смежной "
+          "клетке → метка на владельца; нет видимого — виновный не назначается; исчезновение по "
+          "нашему действию нападением не считается; ход 1 не сравнивается; признак держится 20 ходов",
+          hit_ev.get("attacked") and hit_ev.get("marked") == ["player_3"]
+          and fog_ev.get("attacked") and not fog_ev.get("marked")
+          and not own_ev.get("attacked")
+          and wnd_ev.get("attacked") and wnd_ev.get("marked") == ["player_3"]
+          and not first_ev.get("attacked") and "начало партии" in str(first_ev.get("reason"))
+          and applied == ["player_3"] and ents["player_3"].is_collapse_source
+          and not ents["player_0"].is_collapse_source
+          and held and not released,
+          f"нападение {hit_ev.get('attacked')} метка {hit_ev.get('marked')}; вслепую "
+          f"{fog_ev.get('attacked')}/{fog_ev.get('marked')}; своё действие {own_ev.get('attacked')}; "
+          f"ранение {wnd_ev.get('marked')}; ход 1 {first_ev.get('attacked')}; "
+          f"держится до 25 {held}, на 26 {released}")
     values: list[float] = []
     for h in (0.0, 1.0, 2.0, 3.0):
         means = L.means_with_income(stocks, incomes, horizon=h)

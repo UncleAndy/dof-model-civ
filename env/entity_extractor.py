@@ -61,6 +61,7 @@ from .site_eval import (
     tile_output,
 )
 from . import site_outcomes
+from . import spec_attack as _spec_attack
 from .terrain_work import WORK_ACTION_EXTRA, tile_effect, tile_terrain_extras
 
 
@@ -566,6 +567,14 @@ class GameStateExtractor:
         self._sites_initialized: bool = False
         self._tracked_city_count: int = 0
         self._own_city_count: int = 0
+        #: Наблюдение нападения (порт `v2:brain/v2/attack.py`): ведёт срезы между
+        #: ходами и ставит метку «источник коллапса» — только по наблюдённому.
+        self.attack_tracker = _spec_attack.AttackTracker(my_player_id=my_player_id)
+        #: Последнее событие наблюдения нападения и то, что помечено в этом ходу.
+        self.last_attack_event: dict[str, Any] = {"attacked": False, "victims": [],
+                                                  "attackers": [], "marked": [],
+                                                  "reason": "наблюдений ещё не было"}
+        self.marked_collapse_sources: list[str] = []
 
     # ── Public API ────────────────────────────────────────────────────────
 
@@ -609,6 +618,14 @@ class GameStateExtractor:
         self._extract_techs(observations, entities)
         self._extract_diplomacy(observations, entities)
 
+        # ── Наблюдение нападения (порт `v2:brain/v2/attack.py`) ─────────────
+        # Сравниваются два ПОЛНЫХ среза; метка «источник коллапса» ставится только
+        # по наблюдённому нападению (видимый чужой на смежной клетке) и держится
+        # весь срок прогноза. Нет видимого соседа — виновный не назначается.
+        # Метка — ВХОД для ядра, а не параметр модели: гипотеза не может её менять.
+        self.last_attack_event = self.attack_tracker.observe(observations, turn)
+        self.marked_collapse_sources = self.attack_tracker.apply(entities, turn)
+
         tau = self._compute_tau(turn)
 
         # Reality keeps its primacy: whatever the world said this turn about
@@ -631,6 +648,17 @@ class GameStateExtractor:
         )
 
         return ExtractionResult(state=state, turn=turn, info=info)
+
+    def note_choice(self, actor: Any, family: Any) -> None:
+        """Сообщить извлекателю НАШЕ последнее исполненное действие.
+
+        Нужно ровно для одного: если юнит исчез потому, что мы сами его потратили
+        (`build_city` / `join_city` — мир публикует их как потребляющие юнита), это
+        не нападение. Без вызова исчезновение читается как потеря от нападения —
+        дефект, который в `v2` лечился тем же механизмом (`consumed` в `attack.py`).
+        Вызывает тот, кто действие исполнил (раннер), — извлекатель его не знает.
+        """
+        self.attack_tracker.note_choice(actor, family)
 
     # ── Unit extraction ───────────────────────────────────────────────────
 
