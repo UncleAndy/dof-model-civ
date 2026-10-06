@@ -37,6 +37,7 @@ from env import spec_lenses as L  # noqa: E402
 from env import spec_options as O  # noqa: E402
 from env import spec_unknowns as U  # noqa: E402
 from env import spec_eta as E  # noqa: E402
+from env import spec_threat as T  # noqa: E402
 from brain.spec.calculus_core import ActionOption, DOFCalculusCore  # noqa: E402
 
 OBS_FILE = ROOT / "tests" / "fixtures" / "real_obs_01.json"
@@ -901,6 +902,67 @@ def run_horizon() -> None:
           live_eta == (3.0, "derived_price_shields") and pub_eta == (2.0, "published_current")
           and mean_eta == (3.0, "estimated_mean") and none_eta == (None, "unknown"),
           f"выведенный {live_eta}, публикация {pub_eta}, среднее {mean_eta}, нечем {none_eta}")
+    # ── угроза и источник коллапса (§10.70–10.75 из v2) ──────────────────────
+    vendor_dx = [-1, 0, 1, -1, 1, -1, 0, 1]
+    vendor_dy = [-1, -1, -1, 0, 0, 1, 1, 1]
+    check("I25 геометрия шага: `goto_N`/`attack_N` — ОДИН шаг dir8, таблица совпадает с "
+          "вендорскими DIR_DX/DIR_DY (map_const.py:60-61) и с замером v2",
+          [d[0] for d in T.DIR8_OFFSETS] == vendor_dx
+          and [d[1] for d in T.DIR8_OFFSETS] == vendor_dy
+          and T.step(25, 43, 0) == (24, 42) and T.step(25, 43, 7) == (26, 44)
+          and T.adjacent((25, 43), (26, 44)) and not T.adjacent((25, 43), (27, 45)),
+          f"dir0 {T.step(25, 43, 0)}, dir7 {T.step(25, 43, 7)}")
+    foes_real = T.foreign_units_from_map(obs, MY_PLAYER)
+    fake_map = {"map": {"unit_owner": [[255] * 4, [255, 1, 255, 255], [255, 255, 0, 255]]}}
+    foes_fake = T.foreign_units_from_map(fake_map, MY_PLAYER)
+    check("I26 канал видимости: на реальном срезе чужих на карте нет; положительный контроль "
+          "на синтетической карте ловит чужого с координатами",
+          foes_real == [] and foes_fake == [(1, 1, 1)],
+          f"реальных чужих {len(foes_real)}, на синтетической карте {foes_fake}")
+    mean_atk, n_atk = T.mean_attack(obs, MY_PLAYER)
+    check("I27 чужой без паспорта: сила — средним по ПУБЛИКУЕМОМУ каталогу типов, а не по одним "
+          "своим юнитам и не нулём; усреднять нечего — None, а не ноль",
+          mean_atk is not None and mean_atk > 5.0 and n_atk >= 48
+          and T.mean_attack({"unit": {}}, MY_PLAYER) == (None, 0)
+          and T.mean_attack({"unit": {"1": {"type_attack_strength": 0}}}, MY_PLAYER) == (0.0, 1),
+          f"средняя атака {mean_atk:.2f} по {n_atk} известным типам (каталог спек: 48 записей, "
+          f"средняя 7.02, боевых 38; по одним своим юнитам было бы 0.0 на 4)")
+
+    def _grid(size: int = 50) -> list:
+        return [[255] * size for _ in range(size)]
+
+    prev_slice = {"unit": {"1": {"owner": 0, "health": 20, "x": 25, "y": 43}},
+                  "city": {"121": {"owner": 0, "x": 25, "y": 43}}}
+    lost_map = _grid(); lost_map[43][26] = 1          # чужой вплотную, юнит исчез
+    blind_map = _grid()                                # юнит исчез, соседа не видно
+    wound_map = _grid(); wound_map[43][24] = 2         # чужой с другой стороны, ранение
+    cur_lost = {"unit": {}, "city": {"121": {"owner": 0, "x": 25, "y": 43}},
+                "map": {"unit_owner": lost_map}}
+    cur_blind = {"unit": {}, "city": {"121": {"owner": 0, "x": 25, "y": 43}},
+                 "map": {"unit_owner": blind_map}}
+    cur_wound = {"unit": {"1": {"owner": 0, "health": 4, "x": 25, "y": 43}},
+                 "city": {"121": {"owner": 0, "x": 25, "y": 43}},
+                 "map": {"unit_owner": wound_map}}
+    atk_vis = T.observed_attack(prev_slice, cur_lost, MY_PLAYER)
+    atk_blind = T.observed_attack(prev_slice, cur_blind, MY_PLAYER)
+    atk_self = T.observed_attack(prev_slice, cur_lost, MY_PLAYER, consumed_by_us=["1"])
+    atk_wound = T.observed_attack(prev_slice, cur_wound, MY_PLAYER)
+    kept, dropped = T.counted(["player_0", "unit_1", "player_1"], ["unit_1"])
+    check("I28 нападение — только по наблюдённому (синтетика, названа так и есть): потеря рядом "
+          "с видимым чужим = нападение с нападавшим; без видимого соседа = «не наблюдён»; "
+          "наша постройка города = не нападение; падение здоровья = нападение",
+          atk_vis["attacked"] and atk_vis["attackers"] == [(1, 26, 43)]
+          and atk_blind["attacked"] and atk_blind["attackers"] == []
+          and not atk_self["attacked"]
+          and atk_wound["attacked"] and atk_wound["attackers"] == [(2, 24, 43)]
+          and kept == ["player_0", "player_1"]
+          and dropped == [("unit_1", "его возможности не наши")],
+          f"видимый {atk_vis['attackers']}, слепой {atk_blind['attackers']}, "
+          f"своё действие {atk_self['attacked']}, ранение {atk_wound['attackers']}, "
+          f"счёт {len(kept)} оставлено / {len(dropped)} исключено")
+    check("I29 признак источника держится весь срок прогноза (20 ходов), а не один ход",
+          T.COLLAPSE_HORIZON == 20 and atk_vis["hold_turns"] == 20,
+          f"COLLAPSE_HORIZON={T.COLLAPSE_HORIZON}, в событии {atk_vis['hold_turns']}")
     values: list[float] = []
     for h in (0.0, 1.0, 2.0, 3.0):
         means = L.means_with_income(stocks, incomes, horizon=h)
