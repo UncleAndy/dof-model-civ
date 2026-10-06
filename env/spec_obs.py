@@ -145,7 +145,15 @@ def measure_step(obs: Mapping[str, Any], info: Optional[Mapping[str, Any]], turn
             continue                        # сущности без меню не о чем мерить
         raw_menus[eid] = raw_names
         raw = obs.get("dipl" if kind == "diplomacy" else kind, {}) or {}
-        fields = raw.get(eid.split("_", 1)[1], {}) or {}
+        fields = dict(raw.get(eid.split("_", 1)[1], {}) or {})
+        if kind == "unit":
+            # Число оставшихся ходов мир называет по-разному в разных сборках, и от этой величины
+            # зависит заморозка `position` (§4.6). Переносим её в поля под одним именем, если она
+            # наблюдена; отсутствие остаётся отсутствием и заморозки не создаёт (см. `frozen_variables`).
+            for key in ("moves_left", "moves", "move_left", "moves_remaining"):
+                if key in fields:
+                    fields["moves_left"] = fields[key]
+                    break
         names = L.available_vectors(kind, fields, raw_names, known_gates,
                                     catalogue=catalogue, known_techs=known_gates)
         vectors[eid] = names
