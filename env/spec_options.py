@@ -30,6 +30,7 @@
 """
 from __future__ import annotations
 
+import math
 from typing import Any, Callable, Iterable, Mapping, Optional, Sequence
 
 from brain.spec.calculus_core import ActionOption, ResourceObservation
@@ -39,6 +40,7 @@ from .config import (
     SPEC_ENTITY_CONSUMING_ACTIONS,
     SPEC_IRREVERSIBLE_ACTIONS,
     SPEC_MEAN_CONSUMING_ACTIONS,
+    SPEC_MEANS_HORIZON_TURNS,
     SPEC_PRODUCTION_ACTION_PREFIX,
     SPEC_RECOVERY_HORIZON_TURNS,
     SPEC_RESEARCH_ACTION_PREFIX,
@@ -47,8 +49,8 @@ from .config import (
 )
 from .spec_lenses import entity_type_of, gate_opens
 
-#: Пересчёт DoF по спроецированному меню: `{сущность: DoF}`.
-Remeasure = Callable[[Mapping[str, Sequence[str]]], Mapping[str, float]]
+#: Пересчёт DoF по спроецированному меню и спроецированным средствам: `remeasure(меню, средства)`.
+Remeasure = Callable[..., Mapping[str, float]]
 
 __all__ = [
     "act_id_for",
@@ -57,11 +59,48 @@ __all__ = [
     "closures_for",
     "decide",
     "is_reversible_action",
+    "payment_in_horizon",
     "project_option",
     "resource_draw",
     "resource_observations",
     "requires_for",
 ]
+
+
+def _pay(means: Optional[Mapping[str, float]], resource: str,
+         amount: float) -> dict[str, float]:
+    """Средства после платежа: не больше, чем есть.
+
+    Долга модель не объявляет: потратить больше, чем есть, нельзя, и урезать
+    средства в минус значило бы выдумать возможность, которой у агента нет.
+    Опция, которой не хватает средств, — не «в минусе», а неплатёжеспособна, и
+    это вердикт §4.8, а не число.
+    """
+    out = {str(k): float(v) for k, v in (means or {}).items()}
+    out[str(resource)] = max(0.0, out.get(str(resource), 0.0) - float(amount))
+    return out
+
+
+def payment_in_horizon(cost: Optional[float], production: Optional[float],
+                       horizon_turns: float = SPEC_MEANS_HORIZON_TURNS) -> float:
+    """Сколько уходит из средств **за горизонт**: платёж, а не цена.
+
+    Цена (§4.8) и платёж (§4.3) отвечают на разные вопросы: цена — «подъёмно ли
+    вообще», платёж — «сколько убывает сейчас». Предмет, который город успевает
+    построить за горизонт, платится и в тот же срок приходит приобретением
+    города, поэтому за горизонт средства не убывают. Предмет, который не
+    успевает, забирает за горизонт **производительность** города (наблюдаемое
+    поле) — и только её: остаток цены ещё не уплачен.
+
+    Число ходов — не догадка, а деление наблюдённых величин: `ceil(цена /
+    производительность)`.
+    """
+    if cost is None or production is None or float(production) <= 0.0:
+        return 0.0                     # нечем платить или нечего платить — платежа не объявляем
+    turns = math.ceil(float(cost) / float(production))
+    if turns <= float(horizon_turns):
+        return 0.0                     # успевает: за горизонт средства не убывают
+    return float(min(float(production), float(cost)))
 
 
 def is_reversible_action(action: str) -> bool:
@@ -129,13 +168,29 @@ def project_option(entity_id: str, action: str,
                    raw_menus: Mapping[str, Sequence[str]],
                    catalogue: Optional[Mapping[str, Any]],
                    known_techs: Iterable[str],
-                   remeasure: Remeasure) -> tuple[dict[str, float], str]:
+                   remeasure: Remeasure,
+                   means: Optional[Mapping[str, float]] = None,
+                   pay: Optional[tuple[str, float]] = None) -> tuple[dict[str, float], str]:
     """Что изменится в DoF мира, если действие исполнить, и откуда это известно.
 
     Возвращается **только то, что модель умеет спроецировать**, и только
     изменения: пустая карта означает «проекции нет», а не «изменения нет».
     """
-    if not str(action).startswith(SPEC_RESEARCH_ACTION_PREFIX):
+    name = str(action)
+    if name.startswith(SPEC_PRODUCTION_ACTION_PREFIX):
+        resource, amount = (pay or ("", 0.0))
+        if not resource or float(amount) <= 0.0:
+            return {}, "платежа в горизонте нет — средства не убывают"
+        current = list(vectors.get(entity_id, []))
+        before = remeasure({entity_id: current}, means)
+        after = remeasure({entity_id: current}, _pay(means, resource, amount))
+        delta = float(after[entity_id]) - float(before[entity_id])
+        if abs(delta) < 1e-12:
+            return {}, "платёж линзу средств не сдвинул"
+        return ({entity_id: delta},
+                f"платёж {float(amount):.0f} {resource} за горизонт "
+                f"из {float((means or {}).get(resource, 0.0)):.0f}")
+    if not name.startswith(SPEC_RESEARCH_ACTION_PREFIX):
         return {}, "прирост не объявлен"
     tech_id = str(action).rsplit("_", 1)[-1]
     opened = gate_opens(tech_id, catalogue, known_techs)
@@ -160,8 +215,8 @@ def project_option(entity_id: str, action: str,
             continue                         # открывать нечего: город этого не строит
         projected[city_id] = sorted(set(projected.get(city_id, [])) | set(gained))
         touched.append(str(city_id))
-    before = remeasure({k: vectors[k] for k in touched})
-    after = remeasure({k: projected[k] for k in touched})
+    before = remeasure({k: vectors[k] for k in touched}, means)
+    after = remeasure({k: projected[k] for k in touched}, means)
     delta = {k: float(after[k]) - float(before[k]) for k in touched
              if abs(float(after[k]) - float(before[k])) > 1e-12}
     return delta, (f"открывает предметов {len(opened)}, "
@@ -191,7 +246,10 @@ def build_options(vectors: Mapping[str, Sequence[str]],
                   graph: Any,
                   remeasure: Remeasure,
                   only: Optional[Sequence[str]] = None,
-                  costs: Optional[Mapping[str, float]] = None) -> list[ActionOption]:
+                  costs: Optional[Mapping[str, float]] = None,
+                  means: Optional[Mapping[str, float]] = None,
+                  production: Optional[Mapping[str, float]] = None,
+                  horizon_turns: float = SPEC_MEANS_HORIZON_TURNS) -> list[ActionOption]:
     """Кандидаты §3.3 для объявленных сущностей — по одной опции на вектор.
 
     Кандидат не выбирает и ничего не взвешивает: он объявляет прирост (§4.3),
@@ -201,8 +259,15 @@ def build_options(vectors: Mapping[str, Sequence[str]],
     options: list[ActionOption] = []
     for entity_id in targets:
         for action in vectors.get(entity_id, []):
+            pay: Optional[tuple[str, float]] = None
+            if str(action).startswith(SPEC_PRODUCTION_ACTION_PREFIX):
+                item = str(action)[len(SPEC_PRODUCTION_ACTION_PREFIX):]
+                pay = ("energy", payment_in_horizon((costs or {}).get(item),
+                                                    (production or {}).get(entity_id),
+                                                    horizon_turns))
             delta, why = project_option(entity_id, action, vectors, raw_menus,
-                                        catalogue, known_techs, remeasure)
+                                        catalogue, known_techs, remeasure,
+                                        means=means, pay=pay)
             act_id = act_id_for(entity_id, action, graph)
             closed = closures_for(entity_id, action, vectors, act_id)
             options.append(ActionOption(

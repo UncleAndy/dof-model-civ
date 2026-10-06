@@ -31,7 +31,7 @@ from env.entity_extractor import GameStateExtractor  # noqa: E402
 from env import spec_graph as G  # noqa: E402
 from env import spec_lenses as L  # noqa: E402
 from env import spec_options as O  # noqa: E402
-from brain.spec.calculus_core import DOFCalculusCore  # noqa: E402
+from brain.spec.calculus_core import ActionOption, DOFCalculusCore  # noqa: E402
 
 OBS_FILE = ROOT / "tests" / "fixtures" / "real_obs_01.json"
 MY_PLAYER = 0
@@ -293,8 +293,8 @@ def run_real(steps: int) -> None:
     means_last = L.means_with_income(stocks_last, incomes_last)
 
     def make_remeasure(cost_index):
-        """Пересчёт линз на спроецированном меню: прирост считается, а не объявляется."""
-        def remeasure(vecs):
+        """Пересчёт линз на спроецированном меню **и** спроецированных средствах."""
+        def remeasure(vecs, means=None):
             fresh = {}
             for eid, names in vecs.items():
                 kind = L.entity_type_of(eid)
@@ -305,16 +305,21 @@ def run_real(steps: int) -> None:
                                   if kind == "city" else {}),
                     constraint=L.constraint_observation(kind, fields_last[eid]),
                 )
-            return {eid: m.current_dof for eid, m in L.measure(fresh, means_last).items()}
+            return {eid: m.current_dof
+                    for eid, m in L.measure(fresh, means_last if means is None
+                                            else means).items()}
         return remeasure
 
     remeasure = make_remeasure(costs_last)
 
     deciders = [player_id] + sorted(e for e in last["vectors"] if e.startswith("city_"))
     city_id = next(e for e in deciders if e.startswith("city_"))
+    production = {e: float(fields_last[e].get("prod_shield") or 0.0)
+                  for e in deciders if e.startswith("city_")}
     options = O.build_options(last["vectors"], last["raw_menus"], last["catalogue"],
                               last["known_techs"], graph, remeasure,
-                              only=deciders, costs=costs_last)
+                              only=deciders, costs=costs_last,
+                              means=means_last, production=production)
     with_delta = [o for o in options if o.flat_delta()]
     priced = [o for o in options if o.projected_resource_delta]
     unpriced = [o for o in options if o.requires and not o.projected_resource_delta]
@@ -349,11 +354,43 @@ def run_real(steps: int) -> None:
     check("I2 прирост добыт пересчётом линз, а не объявлен: дешёвый предмет его даёт",
           probe_dof > base_dof + 1e-9,
           f"без него DoF города {base_dof:.6f}, с ним {probe_dof:.6f}")
+    paid = [o for o in options if o.flat_delta()]
+    check("I2б платёж ушёл из средств: прирост есть ровно у построек, и он отрицателен",
+          bool(paid) and all(str(o.option_id.split(":", 1)[1]).startswith("produce_")
+                             and min(o.flat_delta().values()) < 0.0 for o in paid),
+          f"опций с приростом {len(paid)} из {len(options)}, "
+          f"например {paid[0].option_id if paid else '—'}")
+    pays = {o.option_id: O.payment_in_horizon(
+                costs_last.get(o.option_id.split("produce_", 1)[1]),
+                production.get(city_id))
+            for o in options if ":produce_" in o.option_id}
+    cheap_prices = [float(costs_last[str(a)[len("produce_"):]])
+                    for a in last["vectors"][city_id]
+                    if str(a).startswith("produce_")
+                    and str(a)[len("produce_"):] in costs_last]
+    cheap = min(cheap_prices) if cheap_prices else 0.0
+    check("I10 платёж за горизонт — производительность города, а не цена предмета",
+          {o.option_id for o in paid} == {k for k, v in pays.items() if v > 0.0}
+          and all(abs(v - production.get(city_id, 0.0)) < 1e-9
+                  for v in pays.values() if v > 0.0)
+          and cheap > production.get(city_id, 0.0),
+          f"дешевле {cheap:.0f} щитов, производительность {production.get(city_id, 0.0):.0f}, "
+          f"платежей {len([v for v in pays.values() if v > 0.0])}")
+    pays3 = {o.option_id: O.payment_in_horizon(
+                 costs_last.get(o.option_id.split("produce_", 1)[1]),
+                 production.get(city_id), 3.0)
+             for o in options if ":produce_" in o.option_id}
+    check("I11 предмет, завершающийся в горизонт, за горизонт средств не убывает (§4.3)",
+          any(v == 0.0 for v in pays3.values()) and any(v > 0.0 for v in pays.values()),
+          f"при горизонте 3 хода платежей {len([v for v in pays3.values() if v > 0])}, "
+          f"при 1 ходе {len([v for v in pays.values() if v > 0])}")
     v_env_zero = all(float(m.variety_counters.get("V_env", 0.0)) == 0.0
                      for m in last["measured"].values())
-    check("I2б ноль прироста на живых данных объяснён: он возможен лишь при V_env = 0",
-          bool(with_delta) or v_env_zero,
-          f"опций с приростом {len(with_delta)}, V_env = 0 у всех: {v_env_zero}")
+    research_opts = [o for o in options if ":research_tech_" in o.option_id]
+    check("I2в у исследования прироста нет, и это объяснено: V_env = 0 делает ψ_var слепой к V",
+          bool(paid) and not [o for o in research_opts if o.flat_delta()] and v_env_zero,
+          f"исследований {len(research_opts)}, с приростом "
+          f"{len([o for o in research_opts if o.flat_delta()])}, V_env = 0 у всех: {v_env_zero}")
     check("I3 §4.8b: τ' >= 0 у каждого кандидата (τ — самый срочный срок сущности)",
           all(bool(r["viable"]) for r in rows),
           f"неприменимых {sum(1 for r in rows if not r['viable'])}, τ={tau / 1e6:.0f} с")
@@ -394,6 +431,31 @@ def run_real(steps: int) -> None:
               for o in declared),
           f"объявлено необратимыми {len(declared)}, названо потерь всего "
           f"{sum(len(o.closed) for o in declared)}")
+    # Приобретение: почему вклад «нового юнита» невыразим — проверяем, а не утверждаем.
+    probe_id = "unit_probe"
+    probe_option = ActionOption(
+        option_id=f"{city_id}:produce_probe",
+        description="проба: прирост приписан сущности, которой в состоянии нет",
+        projected_dof_delta={probe_id: 0.9},
+        act_id=f"{city_id}:produce_probe",
+        estimated_duration_mks=TURN_DURATION_MKS,
+    )
+    sim, sim_members = core.simulate(st, probe_option, ctx)
+    check("I12 опция не может завести сущность: прирост несуществующей не применяется ни к кому",
+          probe_id not in sim.entities and probe_id not in sim_members
+          and set(sim.entities) == set(st.entities),
+          f"сущностей в S' {len(sim.entities)} против {len(st.entities)} в S; "
+          f"прирост к {probe_id} пропал")
+    probe_lo = G.state_with_measured_dof(last["state"], {**last["dof"], probe_id: 0.9},
+                                         measurements=last["measured"])
+    probe_hi = G.state_with_measured_dof(last["state"], {**last["dof"], probe_id: 1.0},
+                                         measurements=last["measured"])
+    i_lo = core.calculate_system_dof(probe_lo, set(members) | {probe_id}, ctx)
+    i_hi = core.calculate_system_dof(probe_hi, set(members) | {probe_id}, ctx)
+    check("I13 прибавленная сущность индекс не поднимает: ln DoF ≤ 0, потолок — ровно ноль",
+          i_lo < index and abs(i_hi - index) < 1e-9,
+          f"без неё {index:.6f}; с ней при DoF 0.9 → {i_lo:.6f} (Δ {i_lo - index:+.6f}), "
+          f"при DoF 1.0 → {i_hi:.6f} (Δ {i_hi - index:+.6f})")
     check("I8 горизонт средств решает, что город может: при 3 ходах оплата проходит",
           len(payable3) >= len(priced) and len(priced) < len(options),
           f"при 1 ходе платят {len(options) - len(barred_rs) - len(unpriced)}, "
