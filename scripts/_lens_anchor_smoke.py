@@ -36,6 +36,7 @@ from env import spec_graph as G  # noqa: E402
 from env import spec_lenses as L  # noqa: E402
 from env import spec_options as O  # noqa: E402
 from env import spec_unknowns as U  # noqa: E402
+from env import spec_eta as E  # noqa: E402
 from brain.spec.calculus_core import ActionOption, DOFCalculusCore  # noqa: E402
 
 OBS_FILE = ROOT / "tests" / "fixtures" / "real_obs_01.json"
@@ -866,6 +867,40 @@ def run_horizon() -> None:
     print(f"  город: запас {stocks['energy']:.0f} щитов, доход {incomes['energy']:.0f}/ход, "
           f"требование (min по постройкам) {reqs.get('energy', 0):.0f} щитов; "
           f"стройка {city.get('production_value')} за {city.get('turns_to_prod_complete')} ход(а)")
+    # Срок постройки — из измеренного, в объявленном порядке источников
+    # (§10.76–10.78 ветки v2). Текущее производство мир публикует; для НОВОГО
+    # варианта публикации нет, и срок выводится из измеренных цены и щитов.
+    eta_here, eta_src = E.build_eta(
+        stock=city.get("shield_stock"),
+        shields_per_turn=city.get("prod_shield"),
+        published=city.get("turns_to_prod_complete"))
+    new_variant = next((name[len("produce_"):] for name in city_menu
+                        if name.startswith("produce_")
+                        and costs.get(name[len("produce_"):]) is not None), None)
+    if new_variant is not None:
+        eta_new, src_new = E.build_eta(price=costs.get(new_variant),
+                                       stock=city.get("shield_stock"),
+                                       shields_per_turn=city.get("prod_shield"))
+    else:
+        eta_new, src_new = None, "unknown"
+    print(f"  срок постройки: текущая {eta_here} ({eta_src}); новый вариант "
+          f"{new_variant}: цена {costs.get(new_variant)} при "
+          f"{city.get('prod_shield')} щитов/ход → {eta_new} ({src_new})")
+    live_eta = E.build_eta(price=20.0, stock=0.0, shields_per_turn=7.0)
+    pub_eta = E.build_eta(price=20.0, stock=0.0, shields_per_turn=7.0, published=2.0)
+    mean_eta = E.build_eta(price=None, shields_per_turn=7.0, known_etas=[2.0, 4.0])
+    none_eta = E.build_eta(price=None, shields_per_turn=0.0)
+    check("I23 срок постройки: текущее производство — по публикации мира, новый вариант — "
+          "выводом из цены и щитов (§10.76–10.78 из v2)",
+          (eta_here is None or eta_src in E.ETA_SOURCES)
+          and (new_variant is None or (eta_new is not None
+                                       and src_new == "derived_price_shields")),
+          f"текущая {eta_here} ({eta_src}), новый {new_variant}: {eta_new} ({src_new})")
+    check("I24 положительный контроль (живые числа: цена 20, 7 щитов/ход): выведенный срок 3 хода; "
+          "публикация 2 берёт верх; без цены — среднее 3; измерять нечем — None, а не ноль",
+          live_eta == (3.0, "derived_price_shields") and pub_eta == (2.0, "published_current")
+          and mean_eta == (3.0, "estimated_mean") and none_eta == (None, "unknown"),
+          f"выведенный {live_eta}, публикация {pub_eta}, среднее {mean_eta}, нечем {none_eta}")
     values: list[float] = []
     for h in (0.0, 1.0, 2.0, 3.0):
         means = L.means_with_income(stocks, incomes, horizon=h)
