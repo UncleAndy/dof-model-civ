@@ -41,6 +41,7 @@ from env import spec_threat as T  # noqa: E402
 from env import spec_work as W  # noqa: E402
 from env import spec_attack as A  # noqa: E402
 from env import switch_channel as SC  # noqa: E402
+from env import spec_settler as ST  # noqa: E402
 from brain.spec.calculus_core import ActionOption, DOFCalculusCore  # noqa: E402
 
 OBS_FILE = ROOT / "tests" / "fixtures" / "real_obs_01.json"
@@ -1221,6 +1222,49 @@ def run_horizon() -> None:
           and "не измерена" in O.switch_loss_for("Barracks", "Workers", None)[1],
           f"пустой канал → {SC.measured_loss([])[0]}; цена без замера "
           f"{O.switch_loss_for('Barracks', 'Workers', None)[0]:g}")
+    # ── §10.116/§10.108: семейство ценности города-творца (порт из v2) ──────
+    fam_val, fam_why = ST.city_maker_value(22.0, 38.0, 5.2)
+    fam7, _ = ST.city_maker_value(22.0, 7.0, 5.2)
+    fam_switch, fam_sw_why = ST.city_maker_value(22.0, 38.0, 5.2, switch_loss=3.0)
+    norm_val, why_norm = ST.city_maker_value(0.42, 38.0, 5.2)
+    rejected, why_rej = ST.city_maker_value_rejected(22.0)
+    check("I43 ценность города-творца (§10.116) — принятая форма `ln(счёт) × frac × cover − C_pop "
+          "− цена_смены`, НЕ «без frac»; нормированный DoF отвергается С ПРИЧИНОЙ (ln ≤ 0 дал бы "
+          "премию за отказ от постройки); числа сходятся с записями v2",
+          abs(fam_val - 0.423) < 0.002 and "frac 0.137" in fam_why
+          and abs(fam7 - 2.296) < 0.002
+          and abs(fam_switch - (fam_val - 3.0)) < 1e-9 and "цена смены −3" in fam_sw_why
+          and norm_val is None and "нормированный" in why_norm
+          and abs(rejected - 3.091) < 0.002 and "отвергнута" in why_rej,
+          f"при eta 38: {fam_val:.3f} (v2: 0.423), при eta 7: {fam7:.3f} (> воина 2.197); со сменой "
+          f"{fam_switch:.3f}; нормированный DoF → {norm_val}; отвергнутая форма {rejected:.3f}")
+    pop_exact, why_pop = ST.population_cost(3, {1: 4.0, 3: 9.0})
+    pop_mean, why_mean = ST.population_cost(3, {1: 4.0, 5: 9.0})
+    pop_none, why_pop_none = ST.population_cost(3, None)
+    pop_edge, why_edge = ST.population_cost(1, {1: 4.0, 3: 9.0})
+    cover_risk, why_cover = ST.cover_factor(2.0, 10.0)
+    cover_blind, why_blind = ST.cover_factor(None, 10.0)
+    cover_floor, _ = ST.cover_factor(20.0, 10.0)
+    sp_near, _ = ST.spacing_factor(1.0)
+    sp_far, _ = ST.spacing_factor(6.0)
+    sp_mid, _ = ST.spacing_factor(3.5)
+    unc, why_unc = ST.uncrowding_gain(2.0, 5.0)
+    dist_wrap = ST.torus_distance(0, 0, 79, 0, xsize=80)
+    check("I44 множители семейства (§10.108, §10.116): цена жителя по размеру города (неизмеренный "
+          "размер — СРЕДНЕЕ по известным, а не ноль); город нулевого размера не даёт цены жителя; "
+          "прикрытие ×1, пока риск не измерен; близость к городу структурна (1 → 0, 6 → 1); уход "
+          "даёт ln отношения; дистанция по X тороидальная",
+          abs(pop_exact - 0.8109) < 0.002 and "измерен" in why_pop
+          and abs(pop_mean - 0.4855) < 0.002 and "среднее по известным" in why_mean
+          and pop_none == 0.0 and "не измерен" in why_pop_none
+          and pop_edge == 0.0 and "не видно" in why_edge
+          and abs(cover_risk - 0.8) < 1e-9 and "1 − риск 2/индекс 10" in why_cover
+          and cover_blind == 1.0 and "не измерен" in why_blind and cover_floor == 0.0
+          and sp_near == 0.0 and sp_far == 1.0 and abs(sp_mid - 0.5) < 1e-9
+          and abs(unc - 1.3863) < 0.002 and dist_wrap == 1.0,
+          f"цена жителя {pop_exact:.4f} / по среднему {pop_mean:.4f} / нет данных {pop_none:g}; "
+          f"прикрытие {cover_risk:.2f} / вслепую {cover_blind:.2f} / в полу {cover_floor:.2f}; "
+          f"близость {sp_near:.2f}/{sp_mid:.2f}/{sp_far:.2f}; уход +{unc:.4f}; тороид {dist_wrap}")
     values: list[float] = []
     for h in (0.0, 1.0, 2.0, 3.0):
         means = L.means_with_income(stocks, incomes, horizon=h)
