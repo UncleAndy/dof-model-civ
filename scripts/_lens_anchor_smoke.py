@@ -38,6 +38,7 @@ from env import spec_options as O  # noqa: E402
 from env import spec_unknowns as U  # noqa: E402
 from env import spec_eta as E  # noqa: E402
 from env import spec_threat as T  # noqa: E402
+from env import spec_work as W  # noqa: E402
 from brain.spec.calculus_core import ActionOption, DOFCalculusCore  # noqa: E402
 
 OBS_FILE = ROOT / "tests" / "fixtures" / "real_obs_01.json"
@@ -1005,6 +1006,50 @@ def run_horizon() -> None:
           f"платёж {draw_base['city_121']['energy']:g} щитов → при смене "
           f"{draw_switch['city_121']['energy']:g}, при удержании {draw_same['city_121']['energy']:g}; "
           f"текущий не назван → {lost_unknown[1][:44]}…")
+    # ── §10.116/§10.117: работа, прерывание, дисконт постоянного актива ───────
+    w_hidden = W.work_continues_without_menu(False, True)
+    w_absent = W.work_continues_without_menu(False, False)
+    w_visible = W.work_continues_without_menu(True, False)
+    i_ok = W.interrupted_by_real_departure(True, False, False)
+    i_moved = W.interrupted_by_real_departure(True, True, False)
+    check("I33 «действия нет в меню» ≠ «работа отпала» (§10.117): работа идёт, если действие "
+          "скрыто, а extras изменились; прерывание — только реальный уход актора",
+          w_hidden[0] and not w_absent[0] and not w_visible[0]
+          and not i_ok[0] and i_moved[0] and "по делу" in i_moved[1],
+          f"скрыто+extras {w_hidden[0]}, скрыто без изменений {w_absent[0]}, "
+          f"в меню {w_visible[0]}; актор на месте {i_ok[0]}, сдвинулся {i_moved[0]}")
+    # Дисконт и правило 1а: сверка с ЗАПИСАННЫМИ числами v2 (валюта та — ln DoF, и это
+    # названо: считаем их числа, чтобы проверить перенесённое ПРАВИЛО, а не свою валюту).
+    frac_old, _ = W.horizon_discount(38.0, 5.2)
+    frac_perm, why_perm = W.horizon_discount(38.0, 5.2, permanent_asset=True)
+    settler_old = math.log(13.0) * frac_old
+    warrior_old = math.log(9.0) * W.horizon_discount(5.0, 5.2)[0]
+    # Без дисконта ценность считается по СОЗДАВАЕМОМУ городу, а не по типу:
+    # замер v2 — DoF города 22 → ln(22) = 3.091 (ровно их записанное число).
+    settler_perm = math.log(22.0) * frac_perm
+    check("I34 ценность создающего город типа не дисконтируется окном (§10.116, решение 1а): "
+          "правило воспроизводит записанные числа v2 — поселенец было 0.352, стало 3.091 против "
+          "воина 2.197",
+          abs(settler_old - 0.352) < 0.002 and abs(warrior_old - 2.197) < 0.002
+          and abs(settler_perm - 3.091) < 0.002 and "постоянн" in why_perm,
+          f"поселенец с дисконтом {settler_old:.3f} (v2: 0.352), без дисконта по городу 22 — "
+          f"{settler_perm:.3f} (v2: 3.091), воин {warrior_old:.3f} (v2: 2.197)")
+    spec_workers = None
+    for tech in (obs.get("tech") or {}).values():
+        for sp in (tech.get("sup_units") or []):
+            if isinstance(sp, dict) and sp.get("name") == "Workers":
+                spec_workers = sp
+                break
+    cc_real, why_cc = W.creates_city(spec_workers or {})
+    cc_named, _ = W.creates_city({"build_city": True})
+    cc_text, _ = W.creates_city({"flags": "CityFound"})
+    check("I35 тип определяется СПОСОБНОСТЬЮ, а не именем (§10.116): названная способность и "
+          "строковые flags читаются; позиционный массив flags — НЕ читается (None с причиной), "
+          "а не «способности нет»",
+          cc_real is None and "позиционный" in why_cc
+          and cc_named is True and cc_text is True,
+          f"на реальном паспорте `Workers`: {cc_real} ({why_cc[:46]}…); именованная {cc_named}, "
+          f"строковая {cc_text}")
     values: list[float] = []
     for h in (0.0, 1.0, 2.0, 3.0):
         means = L.means_with_income(stocks, incomes, horizon=h)
