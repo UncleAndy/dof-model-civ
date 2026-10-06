@@ -43,6 +43,7 @@ from env import spec_attack as A  # noqa: E402
 from env import switch_channel as SC  # noqa: E402
 from env import spec_settler as ST  # noqa: E402
 from env import spec_risk as SK  # noqa: E402
+from env import video as V  # noqa: E402
 from brain.spec.calculus_core import ActionOption, DOFCalculusCore  # noqa: E402
 
 OBS_FILE = ROOT / "tests" / "fixtures" / "real_obs_01.json"
@@ -62,51 +63,17 @@ def check(name: str, ok: bool, detail: str = "") -> None:
         print(f"  ФЕЙЛ {name}  [{detail}]")
 
 
-# ── настоящие данные: стоимости построек из правил ───────────────────────────
-
-def build_cost_index(obs: dict) -> dict[str, float]:
-    """Имя → стоимость в щитах, из спек, которые мир публикует у технологий.
-
-    Единственный наблюдённый источник цен: у технологий лежат `sup_units` и
-    `sup_improvements` — полные спецификации того, что они открывают, вместе с
-    `build_cost`. Ничего не выдумываем: чего нет в спеках — того нет и в ценах.
-    """
-    index: dict[str, float] = {}
-    for tech in (obs.get("tech") or {}).values():
-        if not isinstance(tech, dict):
-            continue
-        for key in ("sup_units", "sup_improvements"):
-            specs = tech.get(key)
-            if not isinstance(specs, list):
-                continue
-            for spec in specs:
-                if not isinstance(spec, dict):
-                    continue
-                name = spec.get("name") or spec.get("rule_name")
-                cost = spec.get("build_cost")
-                if name and cost is not None:
-                    index[str(name)] = float(cost)
-    return index
-
-
-def city_requirements(city_obs: dict, costs: dict[str, float],
-                      menu: list[str], production: float | None = None,
-                      horizon: float = SPEC_MEANS_HORIZON_TURNS) -> dict[str, float]:
-    """Требования города: **платёж за горизонт** по тому, что мир предлагает строить.
-
-    База времени одна и та же у требования и у средств: средства — запас плюс доход
-    за горизонт, требование — то, что придётся оплатить за горизонт. Полная цена
-    против однодневного дохода — не свойство города, а разные базы времени: `20/7`
-    вместо `7/7`.
-    """
-    per_transition: list[dict[str, float]] = []
-    for name in menu:
-        if not name.startswith("produce_"):
-            continue
-        due = O.payment_due(costs.get(name[len("produce_"):]), production, horizon)
-        if due is not None:
-            per_transition.append({"energy": float(due)})
-    return L.reduce_requirements(per_transition)
+# ── настоящие данные: замер идёт ОДНИМ кодом для фикстуры и живого прогона ───
+# Помощники замера переехали в `env/spec_obs.py`: живой прогон обязан мерить тем же кодом,
+# что и прогон на записанных наблюдениях, иначе числа расходятся не по существу, а по копии.
+from env.spec_obs import (  # noqa: E402
+    build_cost_index,
+    city_requirements,
+    disturbances,
+    empire_incomes,
+    empire_stocks,
+    powers_of,
+)
 
 
 def city_tiles(city_obs: dict, layers: dict) -> dict:
@@ -148,51 +115,6 @@ def best_cell_set(cells: list[dict], channel: str, need: int,
     pool.sort(key=lambda p: (-p[0], p[1]))
     chosen = pool[:need]
     return sum(v for v, _ in chosen), [at for _, at in chosen]
-
-
-def empire_stocks(obs: dict) -> dict[str, float]:
-    """Запасы агента — наблюдаемые остатки по объявленным ресурсам."""
-    shield = food = tech = 0.0
-    for city in (obs.get("city") or {}).values():
-        if not isinstance(city, dict):
-            continue
-        shield += float(city.get("shield_stock") or 0.0)
-        food += float(city.get("food_stock") or 0.0)
-        tech += float(city.get("bulbs") or 0.0)
-    gold = 0.0
-    for rec in (obs.get("player") or {}).values():
-        if isinstance(rec, dict) and "gold" in rec:
-            gold = float(rec.get("gold") or 0.0)
-            break
-    return {"energy": shield, "food": food, "tech": tech, "gold": gold}
-
-
-def empire_incomes(obs: dict) -> dict[str, float]:
-    """Доход агента за ход — сумма по городам, по объявленным полям дохода."""
-    from env.config import SPEC_INCOME_FIELDS
-
-    incomes: dict[str, float] = {}
-    for res, fields in SPEC_INCOME_FIELDS.items():
-        total = 0.0
-        for city in (obs.get("city") or {}).values():
-            if not isinstance(city, dict):
-                continue
-            for field in fields:
-                if field in city:
-                    total += float(city.get(field) or 0.0)
-                    break
-        incomes[res] = total
-    return incomes
-
-
-def disturbances(obs: dict, entity_id: str, kind: str) -> list[str]:
-    """Способ подсчёта возмущений объявлен в модуле (там же и объявление линейки)."""
-    return L.active_disturbances(obs, entity_id, kind, my_player_id=MY_PLAYER)
-
-
-def powers_of(obs: dict) -> list[str]:
-    """Чужие державы, о которых сообщает мир — возмущение по объявлению владельца."""
-    return L.foreign_powers(obs, my_player_id=MY_PLAYER)
 
 
 # ── прогон на реальном наблюдении ───────────────────────────────────────────
@@ -1317,6 +1239,61 @@ def run_horizon() -> None:
           f"нарушителей {len(intr)}, прикрытие {cov:.3f} (0.8×ln9 = {0.8 * math.log(9.0):.3f}); без "
           f"нарушителей {cov_none:g}; нормированный счёт {cov_nodof:g}; тот же чужой как угроза → "
           f"{r_peaceful:g} ({why_peaceful[:40]}…); защита сохраняет {dv:.3f}; cover_factor(риск) {cov_chain:.2f}")
+    # ── §10.79/§10.83/§10.84: запись видео и текст состояния на кадре ──
+    import tempfile as _tmp
+    from PIL import Image as _Img
+    _vd = Path(_tmp.mkdtemp(prefix="dof_video_"))
+    _vfr = []
+    for _i in range(3):
+        _p = _vd / f"turn_00{_i}_step_000{_i}.png"
+        _Img.new("RGB", (64, 40), (30 * _i, 60, 90)).save(_p)
+        _vfr.append(_p)
+    _vvid = _vd / "out.mp4"
+    _vok = V.to_video(_vfr, _vvid, fps=4)
+    _vlst = V.frame_list_text(_vfr, 4)
+    check("I47 сборка видео (§10.79, §10.84): кадры → mp4 настоящим ffmpeg (путь ищется и по "
+          "nix-хранилищу); в списке кадров АБСОЛЮТНЫЕ пути — относительные ffmpeg разрешает от "
+          "каталога списка, а не от cwd; имя файла несёт метку прогона, иначе попытки затирают друг друга",
+          _vok and _vvid.exists() and _vvid.stat().st_size > 0
+          and _vlst.count("file '/") == 3 and V.ffmpeg_path() is not None
+          and V.video_name(9100, 6001, tag="rec1") == "game_9100_port6001_rec1.mp4"
+          and V.video_name(9100, 6001, tag="") == "game_9100_port6001.mp4",
+          f"ffmpeg {V.ffmpeg_path()}; mp4 {_vvid.stat().st_size if _vvid.exists() else 0} Б; "
+          f"список: {_vlst.splitlines()[0][:44]}…")
+    _sobs = {"city": {"121": {"id": 121, "owner": 0, "name": "Киев", "size": 3, "x": 2, "y": 2,
+                              "production_kind": 4, "turns_to_prod_complete": 32767,
+                              "prod_shield": 3, "surplus_shield": 0, "city_waste": 0,
+                              "surplus_food": 1, "science": 2,
+                              "improvements_present": ["Barracks", "Barracks", "Granary"]},
+                     "77": {"id": 77, "owner": 0, "name": "Одесса", "size": 1, "x": 5, "y": 5,
+                            "production_kind": 1, "turns_to_prod_complete": 4, "prod_shield": 5,
+                            "surplus_shield": 2, "surplus_food": 2, "science": 1}},
+             "unit": {"10": {"owner": 0, "type_rule_name": "Workers", "health": 10,
+                             "moves_left": 3, "x": 2, "y": 2},
+                      "11": {"owner": 0, "type_rule_name": "Workers", "health": 10,
+                             "moves_left": 3, "x": 2, "y": 2},
+                      "12": {"owner": 0, "type_rule_name": "Warriors", "health": 7,
+                             "moves_left": 0, "x": 5, "y": 5},
+                      "13": {"owner": 3, "type_rule_name": "Legion", "health": 10,
+                             "moves_left": 1, "x": 7, "y": 7}}}
+    _dl = lambda eid: {"city:121": 9.0, "city:77": 4.0, "unit:10": 3.0}.get(eid)  # noqa: E731
+    _L, _R = V.state_lines(_sobs, 34, 0, dof_lookup=_dl, index=-1.3863,
+                           build_names={"121": "Coining"})
+    _ls, _rs = "\n".join(_L), "\n".join(_R)
+    check("I48 текст состояния на кадре (§10.83, §10.84): только своё (чужой юнит не попадает); "
+          "«никогда» (32767) показывается ПРИЧИНОЙ — щиты и содержание, а не числом; стройка "
+          "называется записанным именем, а не кодом мира; повторы сворачиваются как «x N»; счёт "
+          "действий печатается там, где посчитан, и прочерком там, где нет",
+          "ХОД 34" in _ls and "индекс -1.39" in _ls and "ГОРОДА: 2" in _ls
+          and "НЕ ИДЁТ: щиты 3→0 (содержание юнитов)" in _ls
+          and "стройка Coining" in _ls and "за 4х" in _ls
+          and "Barracks x 2" in _ls and "Киев р3" in _ls
+          and "действий 9" in _ls and "действий 4" in _ls
+          and "Workers HP10 ход3 (2,2) д3" in _rs and "Workers HP10 ход3 (2,2) д—" in _rs
+          and "Legion" not in _rs and "ЮНИТЫ: 3" in _rs
+          and V.counts(["a", "a", "b"]) == [("a", 2), ("b", 1)],
+          f"слева: {_ls.splitlines()[0]} | {_ls.splitlines()[4][:60]} | {_ls.splitlines()[3][:60]}; "
+          f"справа: {_rs.splitlines()[0]} | {_rs.splitlines()[1][:44] if len(_rs.splitlines()) > 1 else ''}")
     values: list[float] = []
     for h in (0.0, 1.0, 2.0, 3.0):
         means = L.means_with_income(stocks, incomes, horizon=h)
