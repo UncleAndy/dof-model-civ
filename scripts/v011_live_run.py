@@ -39,6 +39,38 @@ from env import video as V  # noqa: E402
 from env.entity_extractor import GameStateExtractor  # noqa: E402
 
 
+_DEMO = {"n": 0, "dirs": ["goto_4", "goto_6", "goto_3", "goto_1"]}
+
+
+def decide(obs, info, own_id):  # noqa: ANN001, ANN201
+    """Точка проводки живого агента `v0.11`. По умолчанию — закрыть ход (`None`).
+
+    `V011_DEMO_MOVE=k` включает **САМОПРОВЕРКУ ЗАПИСИ**: раз в `k` решений берётся шаг нашего юнита в
+    одном из четырёх направлений по кругу. Это **не поведение модели** и не должно так читаться: так
+    проверяется ровно одно — видно ли движение в кадре. Повод прямой: в пассивном прогоне соседние
+    кадры различаются на **0.01 %** (медиана по 60 кадрам) — владелец модели верно заметил, что на видео
+    ничего не происходит, и причина не в записи, а в отсутствии решений.
+
+    Живого агента вставит сюда порт решающего слоя: форма действия — `(тип, актор, имя)`.
+    """
+    k = int(os.environ.get("V011_DEMO_MOVE", "0") or 0)
+    if k <= 0:
+        return None
+    units = ((info or {}).get("available_actions") or {}).get("unit") or {}
+    if not units:
+        return None
+    _DEMO["n"] += 1
+    if _DEMO["n"] % k:
+        return None
+    actor_id = sorted(units)[0]
+    names = units.get(actor_id) or {}
+    want = _DEMO["dirs"][(_DEMO["n"] // k) % len(_DEMO["dirs"])]
+    for cand in (want, *sorted(names)):
+        if cand in names and names[cand]:
+            return ("unit", actor_id, cand)
+    return None
+
+
 def _args() -> argparse.Namespace:
     ap = argparse.ArgumentParser(description="Живой прогон v0.11 + запись видео")
     ap.add_argument("--port", type=int, default=int(os.environ.get("V011_PORT", "6001")))
@@ -79,7 +111,7 @@ def live(port: int, seed: int, turns: int, fps: int, fog: bool) -> dict[str, Any
     states: dict[str, tuple[list[str], list[str]]] = {}
     rows: list[dict[str, Any]] = []
     prev_obs = obs
-    played = 0
+    played = decisions = 0
     outcome = "партия_окончена"
 
     def capture(o: dict, turn: Any, index: float, counts: dict) -> None:
@@ -97,8 +129,22 @@ def live(port: int, seed: int, turns: int, fps: int, fog: bool) -> dict[str, Any
 
     try:
         for _ in range(turns):
+            # Ход может содержать несколько решений: спрашиваем `decide`, затем закрываем ход.
+            # Без решающего слоя `decide` сразу отдаёт `None`, и прогон остаётся пассивным.
+            for _ in range(V.MAX_DECISIONS_PER_TURN):
+                action = decide(obs, info, own_id)
+                if action is None:
+                    break
+                if decisions == 0:
+                    print(f"  [решение] {action} (самопроверка записи, не поведение модели)",
+                          flush=True)
+                decisions += 1
+                with guard():
+                    obs, _r, terminated, truncated, info = env.step(action)
+                if not obs or terminated or truncated:
+                    break
             with guard():
-                obs, _r, terminated, truncated, info = env.step(None)   # пассивный ход: решаем не мы
+                obs, _r, terminated, truncated, info = env.step(None)
             played += 1
             if not obs:
                 outcome = "обрыв"                     # мир отдал {} при серверной проблеме
@@ -154,7 +200,7 @@ def live(port: int, seed: int, turns: int, fps: int, fog: bool) -> dict[str, Any
     attacks = [r for r in rows if isinstance(r["нападение"], dict) and r["нападение"].get("attacked")]
     risks = [r["риск"] for r in rows]
     summary = {
-        "сид": seed, "порт": port, "итог": outcome, "ходов": played,
+        "сид": seed, "порт": port, "итог": outcome, "ходов": played, "решений": decisions,
         "кадров": len(frames), "кадров_с_состоянием": len(states),
         "видео": str(out) if ok else None,
         "трасса": str(trace_path),

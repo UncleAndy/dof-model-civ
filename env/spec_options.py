@@ -24,6 +24,15 @@
   объявленной таблицей: у исследования дверь закрывается у игрока и открывается
   у городов. Где спроецировать нечего (перемещение, смена правления), прирост
   пуст — пустой прирост не выдумывается.
+* **Прирост из замера (когда он есть).** Если в `build_options` передан источник
+  `measured`, он имеет приоритет над пересчётом линз: величина берётся из
+  **измеренной на живых играх** таблицы `env/dof_deltas.py` (у большинства
+  действий там честный `0.0`), а основание города — из **выведенной из текущего
+  состояния** цены (`env/action_mapper.founding_delta`), не из константы.
+  Причина: объявленный прогноз (§3.3) обязан опираться на измерение, а не на
+  правдоподобную догадку — в шапке таблицы записано, чем кончились догадки
+  (основание города было измерено со знаком, обратным прогнозу). Прироста нет в
+  таблице и не выводится из состояния — тогда работает пересчёт линз.
 
 Закрытий (§4.4) пока не объявлено ни у одной опции: списки пусты, и это тоже
 названный пробел, а не утверждение, что действие ничего не разрушает.
@@ -51,7 +60,12 @@ from .spec_lenses import entity_type_of, gate_opens
 #: Пересчёт DoF по спроецированному меню и спроецированным средствам: `remeasure(меню, средства)`.
 Remeasure = Callable[..., Mapping[str, float]]
 
+#: Источник **измеренного** прироста: (сущность, действие) -> ΔDoF системы,
+#: отнесённая на действующую сущность, либо `None`, если действие не измерено.
+MeasuredDelta = Callable[[str, str], Optional[float]]
+
 __all__ = [
+    "MeasuredDelta",
     "act_id_for",
     "build_options",
     "budget_deadlines",
@@ -324,7 +338,8 @@ def build_options(vectors: Mapping[str, Sequence[str]],
                   tech_rate: Optional[float] = None,
                   tech_target: Optional[str] = None,
                   switch_loss_shields: Optional[float] = None,
-                  current_item: Optional[str] = None) -> list[ActionOption]:
+                  current_item: Optional[str] = None,
+                  measured: Optional[MeasuredDelta] = None) -> list[ActionOption]:
     """Кандидаты §3.3 для объявленных сущностей — по одной опции на вектор.
 
     Кандидат не выбирает и ничего не взвешивает: он объявляет прирост (§4.3),
@@ -352,6 +367,17 @@ def build_options(vectors: Mapping[str, Sequence[str]],
             delta, why = project_option(entity_id, action, vectors, raw_menus,
                                         catalogue, known_techs, remeasure,
                                         means=means, pay=pay)
+            if measured is not None:
+                # §3.3: объявленный прогноз. Измеренная величина имеет приоритет —
+                # догадка о приросте уже один раз обошлась дорого (см. шапку
+                # `env/dof_deltas.py`), и замер честнее пересчёта, если он есть.
+                value = measured(entity_id, action)
+                if value is not None:
+                    delta = {entity_id: float(value)}
+                    why = ("измеренный прирост системы "
+                           f"({float(value):+.4f}), отнесённый на {entity_id}"
+                           if float(value) != 0.0 else
+                           f"измеренный прирост системы 0.0 — действие не меняет счёт ({entity_id})")
             act_id = act_id_for(entity_id, action, graph)
             closed = closures_for(entity_id, action, vectors, act_id)
             options.append(ActionOption(
