@@ -42,6 +42,7 @@ from env import spec_work as W  # noqa: E402
 from env import spec_attack as A  # noqa: E402
 from env import switch_channel as SC  # noqa: E402
 from env import spec_settler as ST  # noqa: E402
+from env import spec_risk as SK  # noqa: E402
 from brain.spec.calculus_core import ActionOption, DOFCalculusCore  # noqa: E402
 
 OBS_FILE = ROOT / "tests" / "fixtures" / "real_obs_01.json"
@@ -1265,6 +1266,57 @@ def run_horizon() -> None:
           f"цена жителя {pop_exact:.4f} / по среднему {pop_mean:.4f} / нет данных {pop_none:g}; "
           f"прикрытие {cover_risk:.2f} / вслепую {cover_blind:.2f} / в полу {cover_floor:.2f}; "
           f"близость {sp_near:.2f}/{sp_mid:.2f}/{sp_far:.2f}; уход +{unc:.4f}; тороид {dist_wrap}")
+    # ── §10.111–10.115: цена угрозы и прикрытие города ──
+    _mk = A.CollapseMarks(horizon=20)
+    _mk.mark_owner(3, 5, "нападение наблюдено")
+
+    def _grid(cells, size=8):
+        g = [[255] * size for _ in range(size)]
+        for (x, y), own in cells.items():
+            g[y][x] = own
+        return g
+
+    _city = {"121": {"owner": 0, "x": 2, "y": 2, "city_radius_sq": 9}}
+    _unit = {"5": {"owner": 0, "x": 2, "y": 3, "health": 10}}
+    _dof = {"city_121": 9.0, "unit_5": 3.0}
+    _obs_near = {"city": _city, "unit": _unit, "tech": {},
+                 "map": {"unit_owner": _grid({(3, 3): 3}), "xsize": 8}}
+    _obs_far = {"city": _city, "unit": _unit, "tech": {},
+                "map": {"unit_owner": _grid({(2, 6): 3}), "xsize": 8}}
+    r_near, det_near, why_near = SK.risk_with_reason(_obs_near, _mk, 6, 0, _dof)
+    r_far, _, why_far = SK.risk_with_reason(_obs_far, _mk, 6, 0, _dof)
+    r_none, _, why_none = SK.risk_with_reason(_obs_near, A.CollapseMarks(), 6, 0, _dof)
+    _expect_near = math.log(9.0) + math.log(3.0)
+    check("I45 цена риска (§10.111–10.115): угроза — только НАБЛЮДЁННОЕ нападение; под ударом = "
+          "достаёт за τ=1 ход (дальняя угроза не достаёт); цена = Σ ln(счёт) наших сущностей под "
+          "ударом (миникас, без вероятностей); «угроз нет» и «не достают» названы по-разному",
+          abs(r_near - _expect_near) < 0.002 and len(det_near) == 2
+          and r_far == 0.0 and "не достаёт" in why_far
+          and r_none == 0.0 and "нападения ещё не наблюдалось" in why_none,
+          f"рядом: {r_near:.3f} (ln9+ln3 = {_expect_near:.3f}, под ударом {len(det_near)}); "
+          f"далеко: {r_far:g}; без меток: {r_none:g}")
+    _obs_intr = {"city": _city, "unit": {}, "tech": {},
+                 "map": {"unit_owner": _grid({(3, 3): 4}), "xsize": 8}}
+    intr = SK.city_intruders(_obs_intr, "121", 0)
+    cov, why_cov = SK.cover_price(9.0, intr)
+    cov_none, why_cov_none = SK.cover_price(9.0, [])
+    cov_nodof, why_cov_nodof = SK.cover_price(0.42, intr)
+    r_peaceful, _, why_peaceful = SK.risk_with_reason(_obs_intr, _mk, 6, 0, _dof)
+    dv, why_dv = SK.defensive_value(r_near, 0.0)
+    cov_chain, _ = ST.cover_factor(r_near, 10.0)
+    check("I46 прикрытие города и связь с семейством (§10.111, §10.113): чужой у города даёт мотив "
+          "прикрыть (0.8 × ln счёта), но НЕ цену риска — чужой без наблюдённого нападения не угроза "
+          "T1; без нарушителей и при нормированном счёте — нуль С ПРИЧИНОЙ; цена риска входит входом "
+          "в `cover_factor` семейства (§13.19); ценность защиты = падение цены риска",
+          len(intr) == 1 and abs(cov - 0.8 * math.log(9.0)) < 0.002
+          and cov_none == 0.0 and "не от кого" in why_cov_none
+          and cov_nodof == 0.0 and "не выводится" in why_cov_nodof
+          and r_peaceful == 0.0 and "не виден" in why_peaceful
+          and abs(dv - r_near) < 0.002 and "сохраняется" in why_dv
+          and abs(cov_chain - max(0.0, 1.0 - r_near / 10.0)) < 1e-9,
+          f"нарушителей {len(intr)}, прикрытие {cov:.3f} (0.8×ln9 = {0.8 * math.log(9.0):.3f}); без "
+          f"нарушителей {cov_none:g}; нормированный счёт {cov_nodof:g}; тот же чужой как угроза → "
+          f"{r_peaceful:g} ({why_peaceful[:40]}…); защита сохраняет {dv:.3f}; cover_factor(риск) {cov_chain:.2f}")
     values: list[float] = []
     for h in (0.0, 1.0, 2.0, 3.0):
         means = L.means_with_income(stocks, incomes, horizon=h)
