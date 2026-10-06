@@ -963,6 +963,25 @@ def run_horizon() -> None:
     check("I29 признак источника держится весь срок прогноза (20 ходов), а не один ход",
           T.COLLAPSE_HORIZON == 20 and atk_vis["hold_turns"] == 20,
           f"COLLAPSE_HORIZON={T.COLLAPSE_HORIZON}, в событии {atk_vis['hold_turns']}")
+    # ── §10.88/§10.102: цена отказа от постройки и пустое окно меню ───────────
+    real_gain = float(city.get("prod_shield") or 0.0)
+    real_eta = eta_here if eta_here is not None else 2.0
+    sw_ref = E.switch_cost_shields(net_shield_gain=real_gain, current_eta=real_eta)
+    sw_meas = E.switch_cost_shields(lost_shields=5.0, net_shield_gain=real_gain,
+                                    current_eta=real_eta)
+    sw_same = E.switch_cost_shields(same_variant=True)
+    sw_none = E.switch_cost_shields(lost_shields=None, loss_median=None)
+    check("I30 цена отказа от начатой постройки (§10.102): величина — ИЗМЕРЕННЫЕ щиты (ссылка v2: "
+          "медиана 3); доля срока — из прироста щитов и срока; тот же вариант — 0; мерить нечем — "
+          "None С ПРИЧИНОЙ, а не молча",
+          sw_ref[0] == 3.0 and abs(sw_ref[1] - min(1.0, 3.0 / real_gain / real_eta)) < 1e-9
+          and sw_meas[0] == 5.0 and sw_same == (0.0, 0.0, "вариант тот же — терять нечего")
+          and sw_none[0] is None and "не измерена" in sw_none[2],
+          f"ссылка {sw_ref[0]:g} щитов → доля {sw_ref[1]:.3f}; замер 5 → {sw_meas[1]:.3f}; "
+          f"тот же вариант {sw_same[0]:g}; нечем {sw_none[0]}")
+    check("I31 пустое окно меню — не измерение, а помеха (§10.88: 187 из 2514 записей, 7.4 %)",
+          E.menu_is_measured(city_menu) and not E.menu_is_measured([]),
+          f"меню города: переходов {len(city_menu)}; пустое окно измерением не считается")
     values: list[float] = []
     for h in (0.0, 1.0, 2.0, 3.0):
         means = L.means_with_income(stocks, incomes, horizon=h)
