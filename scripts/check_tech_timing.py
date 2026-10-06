@@ -45,12 +45,24 @@ def main() -> int:
     predicted_done = None
     predicted_at = None
 
+    ctl = getattr(getattr(env.unwrapped, "civ_controller", None), "player_ctrl", None)
+    our_id = getattr(ctl, "my_player_id", None)
+    if our_id is None:
+        our_id = 0
+    print(f"  наш id игрока: {our_id!r} (ключи слоя ищутся как int и как str)",
+          flush=True)
+
     for turn in range(args.turns):
         obs, reward, terminated, truncated, info = env.step(None)
-        player = (obs.get("player") or {}).get("0") or {}
+        layer = obs.get("player") or {}
+        player = {}
+        for key in (our_id, str(our_id), 0, "0"):
+            if isinstance(layer, dict) and key in layer:
+                player = layer[key] or {}
+                break
         cities = obs.get("city") or {}
         bulbs = sum(float((c or {}).get("bulbs") or 0) for c in cities.values()
-                    if isinstance(c, dict) and int((c or {}).get("owner", 0)) == 0)
+                    if isinstance(c, dict) and str((c or {}).get("owner")) == str(our_id))
         row = {
             "turn": turn + 1,
             "researching": player.get("researching"),
