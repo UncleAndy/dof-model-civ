@@ -30,6 +30,8 @@ from env.config import SPEC_MEANS_CLASS, TURN_DURATION_MKS  # noqa: E402
 from env.entity_extractor import GameStateExtractor  # noqa: E402
 from env import spec_graph as G  # noqa: E402
 from env import spec_lenses as L  # noqa: E402
+from env import spec_options as O  # noqa: E402
+from brain.spec.calculus_core import DOFCalculusCore  # noqa: E402
 
 OBS_FILE = ROOT / "tests" / "fixtures" / "real_obs_01.json"
 MY_PLAYER = 0
@@ -198,7 +200,7 @@ def run_real(steps: int) -> None:
             index_negative = False
         last = {"turn": snap["turn"], "state": state, "vectors": vectors,
                 "fields": fields_of, "measured": measured, "raw_menus": raw_menus,
-                "catalogue": catalogue, "known_techs": known_gates,
+                "catalogue": catalogue, "known_techs": known_gates, "obs": obs,
                 "dof": {eid: m.current_dof for eid, m in measured.items()}}
 
     for turn, eid, m in rows:
@@ -280,6 +282,122 @@ def run_real(steps: int) -> None:
                   for a in bridges)
           and all(a.effect and min(a.effect.values()) > 0 for a in bridges),
           f"мостов {len(bridges)}")
+
+    # ── I. §4.3–4.5: кандидаты, гейты применимости/оплаты, выбор ядра ───────
+    print(f"\n=== I. Ход: кандидаты, гейты §4.8b/§4.8 и выбор §4.5 (ход {last['turn']}) ===")
+    obs_last = last["obs"]
+    fields_last = last["fields"]
+    costs_last = build_cost_index(obs_last)
+    stocks_last = empire_stocks(obs_last)
+    incomes_last = empire_incomes(obs_last)
+    means_last = L.means_with_income(stocks_last, incomes_last)
+
+    def make_remeasure(cost_index):
+        """Пересчёт линз на спроецированном меню: прирост считается, а не объявляется."""
+        def remeasure(vecs):
+            fresh = {}
+            for eid, names in vecs.items():
+                kind = L.entity_type_of(eid)
+                names = list(names)
+                fresh[eid] = L.lens_observation(
+                    variety=L.variety_counters(names, disturbances(obs_last, eid, kind)),
+                    requirements=(city_requirements(fields_last[eid], cost_index, names)
+                                  if kind == "city" else {}),
+                    constraint=L.constraint_observation(kind, fields_last[eid]),
+                )
+            return {eid: m.current_dof for eid, m in L.measure(fresh, means_last).items()}
+        return remeasure
+
+    remeasure = make_remeasure(costs_last)
+
+    deciders = [player_id] + sorted(e for e in last["vectors"] if e.startswith("city_"))
+    city_id = next(e for e in deciders if e.startswith("city_"))
+    options = O.build_options(last["vectors"], last["raw_menus"], last["catalogue"],
+                              last["known_techs"], graph, remeasure,
+                              only=deciders, costs=costs_last)
+    with_delta = [o for o in options if o.flat_delta()]
+    priced = [o for o in options if o.projected_resource_delta]
+    unpriced = [o for o in options if o.requires and not o.projected_resource_delta]
+    st.deadlines = O.budget_deadlines(deciders)
+    st.resources = O.resource_observations(means_last)
+    tau = min(st.deadlines.values()) if st.deadlines else None
+    core = DOFCalculusCore()
+    winner, rows, barred = O.decide(core, st, options, ctx)
+    by_bar = collections.Counter(str(r["barred_by"]) for r in rows)
+    print(f"  кандидатов {len(options)} — решающие: {', '.join(deciders)}")
+    print(f"  с приростом от пересчёта: {len(with_delta)}; "
+          f"с наблюдённой ценой: {len(priced)}; цена неизвестна: {len(unpriced)}")
+    print(f"  средства: energy={means_last.get('energy', 0.0):.0f} "
+          f"(запас {stocks_last.get('energy', 0.0):.0f} + доход "
+          f"{incomes_last.get('energy', 0.0):.0f}×1 ход), τ={tau / 1e6:.0f} с")
+    print(f"  гейты: {dict(by_bar)} (нет ключа None — барьеров не было)")
+    print(f"  решение: {winner.option_id if winner else 'стоять'}")
+    if winner is not None:
+        print(f"    {winner.description}")
+    for r in sorted(rows, key=lambda x: -float(x["net_delta"]))[:3]:
+        print(f"    {str(r['option_id'])[:56]:<56} Δ={float(r['net_delta']):+.6f} "
+              f"барьер: {r['barred_by']}")
+    check("I1 кандидатов ровно столько, сколько векторов у решающих сущностей",
+          len(options) == sum(len(last["vectors"].get(e, [])) for e in deciders),
+          f"{len(options)} опций на {len(deciders)} сущностях")
+    cheap = dict(costs_last)
+    cheap["__probe__"] = 1.0                     # предмет дешевле любого в каталоге
+    probe_remeasure = make_remeasure(cheap)
+    base_dof = remeasure({city_id: list(last["vectors"][city_id])})[city_id]
+    probe_dof = probe_remeasure(
+        {city_id: list(last["vectors"][city_id]) + ["produce___probe__"]})[city_id]
+    check("I2 прирост добыт пересчётом линз, а не объявлен: дешёвый предмет его даёт",
+          probe_dof > base_dof + 1e-9,
+          f"без него DoF города {base_dof:.6f}, с ним {probe_dof:.6f}")
+    v_env_zero = all(float(m.variety_counters.get("V_env", 0.0)) == 0.0
+                     for m in last["measured"].values())
+    check("I2б ноль прироста на живых данных объяснён: он возможен лишь при V_env = 0",
+          bool(with_delta) or v_env_zero,
+          f"опций с приростом {len(with_delta)}, V_env = 0 у всех: {v_env_zero}")
+    check("I3 §4.8b: τ' >= 0 у каждого кандидата (τ — самый срочный срок сущности)",
+          all(bool(r["viable"]) for r in rows),
+          f"неприменимых {sum(1 for r in rows if not r['viable'])}, τ={tau / 1e6:.0f} с")
+    req = {o.option_id: core.requirement(o) for o in options}
+    blocked = {o.option_id for o in options
+               if any(req[o.option_id].get(res, 0.0) > means_last.get(res, 0.0)
+                      for res in req[o.option_id])}
+    barred_rs = {str(r["option_id"]) for r in rows if r["barred_by"] == "resources_ok"}
+    check("I4 §4.8 отсёк ровно те опции, чей расход больше средств",
+          barred_rs == blocked,
+          f"отсечено {len(barred_rs)}, дороже средств {len(blocked)}, "
+          f"из них без цены {len([o for o in options if not o.projected_resource_delta])}")
+    check("I5 решение допустимо: у победителя нет барьера",
+          winner is None or all(r["barred_by"] is None for r in rows
+                                if r["option_id"] == winner.option_id))
+    again = O.decide(core, st, options, ctx)[0]
+    check("I6 выбор детерминирован: повтор даёт того же победителя",
+          (again is None) == (winner is None)
+          and (winner is None or again.option_id == winner.option_id),
+          f"{again.option_id if again else 'стоять'}")
+    positive = [r for r in rows
+                if float(r["net_delta"]) > 0.0 and r["barred_by"] is None]
+    check("I7 победитель поднимает индекс строго, иначе решает 'стоять' (§4.5)",
+          (winner is None) == (not positive),
+          f"допустимых кандидатов с ростом: {len(positive)}")
+    h3 = L.means_with_income(stocks_last, incomes_last, horizon=3.0)
+    st3 = G.state_with_measured_dof(last["state"], last["dof"])
+    st3.deadlines = dict(st.deadlines)
+    st3.resources = O.resource_observations(h3)
+    payable3, _ = DOFCalculusCore().apply_resource_gate(st3, options)
+    print(f"  сверка (горизонт средств 3 хода, НЕ объявленный): "
+          f"energy={h3.get('energy', 0.0):.0f}, платёжеспособных {len(payable3)} "
+          f"из {len(options)}")
+    declared = [o for o in options
+                if not O.is_reversible_action(o.option_id.split(":", 1)[1])]
+    check("I9 объявленная необратимой опция назвала потерю и не свой путь (§4.4)",
+          all(bool(o.closed) and all(str(c.get("id")) != o.act_id for c in o.closed)
+              for o in declared),
+          f"объявлено необратимыми {len(declared)}, названо потерь всего "
+          f"{sum(len(o.closed) for o in declared)}")
+    check("I8 горизонт средств решает, что город может: при 3 ходах оплата проходит",
+          len(payable3) >= len(priced) and len(priced) < len(options),
+          f"при 1 ходе платят {len(options) - len(barred_rs) - len(unpriced)}, "
+          f"при 3 — {len(payable3)}")
 
 
 # ── якоря и вырожденные случаи (§4.6) ───────────────────────────────────────

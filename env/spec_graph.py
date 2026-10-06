@@ -26,7 +26,12 @@ import copy
 import re
 from typing import Any, Iterable, Mapping, Optional, Sequence
 
-from brain.spec.calculus_core import DOFCalculusCore, ObservationContext
+from brain.spec.calculus_core import (
+    DOFCalculusCore,
+    EntityState,
+    ObservationContext,
+    SystemStateMatrix,
+)
 from brain.spec.world_graph import ActEdge, EntityNode, WorldGraph
 
 from .config import (
@@ -40,13 +45,13 @@ from .config import (
     SPEC_VARIABLE_BY_CATEGORY,
     TURN_DURATION_MKS,
 )
-from .entity_extractor import EntityState
 from .spec_lenses import (
     action_category,
     entity_type_of,
     frozen_variables,
     gate_opens,
 )
+from .spec_options import budget_deadlines
 
 __all__ = [
     "act_target",
@@ -195,23 +200,46 @@ def observation_context(world: WorldGraph, dof: Mapping[str, float]
     )
 
 
-def state_with_measured_dof(state: Any, dof: Mapping[str, float]):
-    """Состояние, в котором DoF — **измеренная** линзами, а не прежняя модель.
+def state_with_measured_dof(state: Any, dof: Mapping[str, float],
+                            deadlines: Optional[Mapping[str, float]] = None,
+                            resources: Optional[Mapping[str, Any]] = None,
+                            measurements: Optional[Mapping[str, Any]] = None):
+    """Состояние §3.2 в том виде, в каком его читает **ядро**.
 
-    Набор сущностей урезается до измеренных: сущность, которой наблюдение не
-    поддержало ни одного вектора реакции, в множестве счёта не участвует —
-    иначе неполнота наблюдения читалась бы как доказательство (§4.9).
+    DoF берётся из линз; `agency_index` и отметка источника коллапса — из матрицы
+    прежней модели, если она эту сущность знала. Сущность, которой наблюдение не
+    поддержало ни одного вектора реакции, в множество счёта не входит — иначе
+    неполнота наблюдения читалась бы как доказательство (§4.9), — а игрок, которого
+    прежняя модель не знала, заводится здесь: его ведёт собственное меню.
+
+    Сроки сущностей объявлены, а не оставлены пустыми: `τ` — самый срочный из них
+    (§3.2b), и пустой набор сроков означал бы «неизмерено», из-за чего §4.8b барёт
+    каждый кандидат. Ставить `0.0` вместо объявления — выдумывать катастрофу.
     """
-    clone = copy.deepcopy(state)
-    clone.entities = {eid: ent for eid, ent in clone.entities.items() if eid in dof}
-    for entity_id in sorted(set(dof) - set(clone.entities)):
-        # Сущность, которую наблюдение поддерживает через своё меню, но которой
-        # нет в матрице предыдущей модели (игрок): заводим её здесь.
-        clone.entities[entity_id] = EntityState(entity_id=entity_id)
-    for entity_id, entity in clone.entities.items():
-        entity.current_dof = max(0.0, min(1.0, float(dof[entity_id])))
-        entity.dof_known = True
-    return clone
+    deadlines = ({str(k): float(v) for k, v in deadlines.items()} if deadlines
+                 else budget_deadlines(dof))
+    old = getattr(state, "entities", {}) or {}
+    entities: dict[str, EntityState] = {}
+    for entity_id in sorted(dof):
+        src = old.get(entity_id)
+        entities[entity_id] = EntityState(
+            entity_id=entity_id,
+            is_autonomous=True,
+            agency_index=float(getattr(src, "agency_index", 1.0)),
+            current_dof=max(0.0, min(1.0, float(dof[entity_id]))),
+            is_collapse_source=bool(getattr(src, "is_collapse_source", False)),
+            dof_known=True,
+            time_to_collapse_mks=float(deadlines.get(entity_id, 0.0)),
+            measurement=((measurements or {}).get(entity_id)
+                         or getattr(src, "measurement", None)),
+        )
+    return SystemStateMatrix(
+        global_time_to_collapse_mks=min(deadlines.values()) if deadlines else 0.0,
+        context_switch_cost=0.0,
+        entities=entities,
+        resources=dict(resources or {}),
+        deadlines=dict(deadlines),
+    )
 
 
 def calc_and_index(state: Any, ctx: ObservationContext,
