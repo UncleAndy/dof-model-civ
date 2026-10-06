@@ -65,6 +65,9 @@ class Agent:
         self._terr_cache: tuple = (None, None)
         #: Действующий ДЛИТЕЛЬНЫЙ ОПЫТ (прирост знания на дистанции, см. experiment.py).
         self._experiment = None
+        #: (ctrl, actor), ЗАНЯТЫЙ длящейся работой: его пути исключаются из выбора, чтобы работа
+        #: не была перебита другой целью (мир сам ведёт работу; повторно выдавать её нельзя).
+        self._reserved: Optional[tuple] = None
         self._pending = None          # шаг, отправленный в среду
         self._before = None           # снимок состояния до шага
         self._before_foe = None       # снимок ЧУЖОЙ стороны: из него считается исход боя
@@ -162,32 +165,47 @@ class Agent:
                                                                      "ходов": eta}})
                     break
 
-        # 1.5) длящийся опыт: продолжаем или закрываем (E3: прерывается, если действие отпало)
+        # 1.5) длящийся опыт: мир САМ ведёт работу — мы её только не перебиваем.
+        # ИЗМЕРЕНО (живой пробник): пока работа идёт, мир ПЕРЕСТАЁТ предлагать действие в меню
+        # (build_road нет в меню на ходах 1–2), а работа при этом выполняется (extras 1→2);
+        # повторная выдача действия отвергается («not valid»). Поэтому «действия нет в меню» —
+        # НЕ признак того, что работа отпала: прежнее правило гасило опыт на первом же ходу, и
+        # эффект ирригации/шахты/дороги ни разу не был измерен.
+        # ПРЕРЫВАНИЕ = реальный уход: юнит погиб или сдвинулся с клетки начала работы.
         if self._experiment is not None:
             exp = self._experiment
             opts_now = sensors.valid_options(menu, exp.ctrl, exp.actor)
             elapsed = (turn - exp.started_turn) if isinstance(turn, int) else 0
-            gone = exp.action not in opts_now
-            if elapsed >= exp.turns or gone:
+            e = g.entity(f"unit:{exp.actor}") if exp.ctrl == "unit" else None
+            alive = e is not None and e.attrs.get("x") is not None
+            moved = (alive and exp.start_xy is not None
+                     and (e.attrs["x"], e.attrs["y"]) != tuple(exp.start_xy))
+            if exp.ctrl == "unit":
+                gone = (not alive) or moved
+            else:
+                # городской актор: «уход» = город исчез из графа (потерян/захвачен)
+                gone = g.entity(f"{exp.ctrl}:{exp.actor}") is None
+            done = (exp.action in opts_now and elapsed >= 1)   # мир снова предлагает → работа кончилась
+            if elapsed >= exp.turns or gone or done:
                 res = experiment.finish(g, exp, menu, interrupted=gone)
                 self.journal.write({"ход": turn, "опыт_закрыт": exp.to_dict(),
                                     "результат": res})
                 self._experiment = None
+                self._reserved = None
             else:
-                if (exp.ctrl, exp.actor) in used_actors:
-                    return None          # актор уже действовал в этом ходу
-                step = Step(ctrl=exp.ctrl, actor=exp.actor, action=exp.action,
-                            reversible=True, variants=1, alternatives=[exp.action])
-                self._pending = step
-                self._before = effects.snapshot(obs, own_id)
-                self._before_foe = effects.foe_snapshot(obs, own_id)
-                self._turn = turn
-                self.journal.write({"ход": turn, "опыт": exp.to_dict(),
-                                    "продолжение": exp.action})
-                return to_env_action(step)
+                # НЕ перевыдаём действие (мир его отвергает, работа идёт сама). Занятого актора
+                # исключаем из выбора, чтобы его не перебили другой целью; остальные действуют.
+                self._reserved = (exp.ctrl, norm_actor(exp.actor))
 
         # 2) генератор: пути и цели без пути
         paths, open_goals = generator.generate(g, menu, own_id, avoid=self.avoid)
+        # Занятый длящейся работой актор не должен получать ДРУГИХ целей — иначе работа сорвётся
+        # (мир ведёт её сам, повторно выдать нельзя). Его пути исключаем.
+        if self._reserved is not None:
+            _rc, _ra = self._reserved
+            paths = [p for p in paths
+                     if not (p.steps and p.steps[0].ctrl == _rc
+                             and norm_actor(p.steps[0].actor) == _ra)]
 
         # 3) DOF-фильтр: индекс, NetDelta, выбор
         # Исключаем: (а) действия, уже выполненные в этом ходу (и исчерпанные семейства настроек),
@@ -241,17 +259,21 @@ class Agent:
 
         if step is None:
             # Нечего делать по индексу и нет одношаговой пробы → ДЛИТЕЛЬНЫЙ ОПЫТ (E4).
-            started = experiment.start(g, menu, turn, avoid=self.avoid)
-            if started is not None:
-                exp, st = started
-                if (st.ctrl, st.actor) not in used_actors:
-                    self._experiment = exp
-                    self._pending = st
-                    self._before = effects.snapshot(obs, own_id)
-                    self._before_foe = effects.foe_snapshot(obs, own_id)
-                    self._turn = turn
-                    self.journal.write({"ход": turn, "опыт_начат": exp.to_dict()})
-                    return to_env_action(st)
+            # НОВЫЙ опыт НЕ начинаем, пока идёт текущий: иначе он перезаписывался бы каждый ход,
+            # когда по индексу ничего не выбрано (измерено: опыт не доходил до конца —
+            # «закрытых опытов: 0»).
+            if self._experiment is None:
+                started = experiment.start(g, menu, turn, avoid=self.avoid)
+                if started is not None:
+                    exp, st = started
+                    if (st.ctrl, st.actor) not in used_actors:
+                        self._experiment = exp
+                        self._pending = st
+                        self._before = effects.snapshot(obs, own_id)
+                        self._before_foe = effects.foe_snapshot(obs, own_id)
+                        self._turn = turn
+                        self.journal.write({"ход": turn, "опыт_начат": exp.to_dict()})
+                        return to_env_action(st)
             self.journal.empty_turns += 1
             self._last_choice = None
             self._last_index = cur_idx
@@ -490,4 +512,6 @@ class Agent:
 
     # ---------------------------------------------------------------- партия
     def end_game(self, save: bool = True) -> None:
+        self._experiment = None
+        self._reserved = None
         self.store.end_game(save=save)

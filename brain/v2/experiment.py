@@ -51,6 +51,10 @@ class Experiment:
     turns: int
     baseline: dict = field(default_factory=dict)
     hypothesis: str = ""
+    #: клетка юнита на момент начала работы. Нужна, чтобы отличить РЕАЛЬНЫЙ уход (юнит сдвинулся
+    #: или погиб) от нормального хода работы: пока работа идёт, мир ПЕРЕСТАЁТ предлагать действие
+    #: в меню (измерено: build_road нет в меню на ходах 1–2, а extras 1→2), и это НЕ прерывание.
+    start_xy: Optional[tuple] = None
 
     def to_dict(self) -> dict[str, Any]:
         return {"ctrl": self.ctrl, "actor": self.actor, "action": self.action,
@@ -98,7 +102,11 @@ def start(graph: KnowledgeGraph, menu: dict, turn: Optional[int],
             for o in sorted(opts):
                 fam = action_family(o)
                 rec = graph.effect_of(ctrl, fam) or {}
-                if rec.get("horizon"):
+                hz = rec.get("horizon")
+                # «Измерено» = есть горизонт И он НЕ прерван. Прерванный опыт записывает горизонт
+                # с пометкой `прерван` (см. finish), и раньше это блокировало повтор НАВСЕГДА —
+                # поэтому эффект ирригации/шахты так и не был добыт. Теперь прерванное повторяется.
+                if hz and not hz.get("прерван"):
                     continue                       # на дистанции уже измерено
                 if any(k in (rec.get("change_counts") or {}) for k in COMMAND_KEYS):
                     continue                       # это команда, а не процесс
@@ -111,12 +119,17 @@ def start(graph: KnowledgeGraph, menu: dict, turn: Optional[int],
                 step = Step(ctrl=ctrl, actor=str(actor), action=o,
                             reversible=classify_reversibility(o), variants=1,
                             alternatives=[o])
+                _e = graph.entity(f"unit:{actor}") if ctrl == "unit" else None
+                _xy = None
+                if _e is not None and _e.attrs.get("x") is not None:
+                    _xy = (_e.attrs["x"], _e.attrs["y"])
                 exp = Experiment(ctrl=ctrl, actor=str(actor), action=o, family=fam,
                                  started_turn=turn if isinstance(turn, int) else 0,
                                  turns=experiment_turns(graph),
                                  baseline=_baseline(graph, menu),
                                  hypothesis=f"удержание {ctrl}/{fam} вырастит город или сменит "
-                                            f"число его переходов")
+                                            f"число его переходов",
+                                 start_xy=_xy)
                 return exp, step
     return None
 

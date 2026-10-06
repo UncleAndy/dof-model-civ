@@ -23,6 +23,7 @@
 from __future__ import annotations
 
 import math
+import os
 from typing import Optional
 
 from .families import action_family
@@ -251,19 +252,43 @@ def production_gain(graph: KnowledgeGraph, action: str,
 
     te = graph.entity(f"unit_type:{type_name}")
     caps = (te.attrs.get("capabilities") if te is not None else None) or []
-    # §10.116 (вариант 1а, решение Andy): если тип умеет ОСНОВЫВАТЬ город, его ценность — это DoF
-    # города, который он создаст (множитель, аксиома 6), а НЕ собственный набор возможностей юнита.
-    # Горизонтный дисконт `frac` здесь НЕ применяется: поселенец — не расходник, его плод (город) —
-    # постоянный актив, он не исчезает по истечении окна H. Замер (§10.116): ln(DoF города 22)=3.09
-    # против ln(DoF Settlers 13)=2.57; при eta=38 прежняя цена была 0.35 (frac 0.14) — поселенец
-    # проигрывал воину (2.20) и город не основывался.
-    if "build_city" in caps:
-        from .calculus import impute as _impute          # локальный импорт: calculus зависит от horizon
+    # §10.116 (пересмотр после отрицательного A/B): если тип умеет ОСНОВЫВАТЬ город, его ценность — это
+    # DoF города, который он создаст (множитель, аксиома 6), а НЕ собственный набор возможностей юнита.
+    # НО горизонтный дисконт `frac` ПРИМЕНЯЕТСЯ, как и у прочих построек: вариант «без frac» поднял
+    # поселенца НАД воином и вытеснил всю военную постройку (A/B §10.116: A 0 военных, 5/10 выжил против
+    # B 8/10; медиана −8, эффект не установлен). Соразмерная форма `ln(DoF города) × frac` не вытесняет
+    # армию: поселенец обгоняет воина (2.20) только когда город строит его за eta ≤ 7 ходов (крупный город).
+    # АБЛЯЦИЯ (A/B §10.95): V2_NO_SETTLER_CITY=1 возвращает прежнюю формулу (по DoF юнита, с frac).
+    if "build_city" in caps and os.environ.get("V2_NO_SETTLER_CITY") != "1":
+        from .calculus import impute as _impute, dof_of as _dof_of, index as _index  # noqa: PLC0415
+        from . import threat as _threat  # noqa: PLC0415
         c_dof, c_cnt = _impute(graph, "city")
         if c_dof and c_dof > 0:
-            gain = math.log(c_dof)
-            why = (f"{src}: за {eta} ход(ов) появится {type_name}; тип основывает город → ценность = "
-                   f"DoF города (DoF {c_dof:g}, записей {c_cnt}), без горизонта (город — постоянный актив)")
+            frac = min(1.0, H / float(max(1, eta)))
+            # cover — «есть армия прикрыть» (решение Andy): доля выживания поселенца. Точка
+            # основания на шаге производства ещё НЕИЗВЕСТНА, поэтому берём измеренный риск по нашим
+            # сущностям (доля Σ ln DoF под ударом): чем больше империя под ударом, тем меньше шанс
+            # довести поселенца и удержать город. Своя армия рядом этот риск снимает (§10.111–115).
+            risk, _det = _threat.risk_price(graph, _dof_of, _threat.STRIKE_TURNS)
+            idx = (_index(graph) or {}).get("value") or 0.0
+            cover = max(0.0, 1.0 - (risk / idx)) if idx > 0 else 1.0
+            # C_pop — «город подрос» (решение Andy): цена жителя. Settlers стоят 2 населения
+            # (civ2civ3, документировано) → город теряет ln(DoF(s)) − ln(DoF(s−2)). Числа — из
+            # измеренного dof_city по размеру. Малый город платит дорого, крупный почти ничего.
+            c_pop = 0.0
+            city = graph.entity(f"city:{actor}") if actor else None
+            size = int(city.attrs.get("size") or 1) if city is not None else 1
+            after = max(1, size - 2)
+            d_now = (graph.observed_median("dof_city", {"размер": size})
+                     or graph.observed_median("dof_city"))
+            d_after = (graph.observed_median("dof_city", {"размер": after})
+                       or graph.observed_median("dof_city"))
+            if d_now and d_after and d_now > 0 and d_after > 0 and d_now > d_after:
+                c_pop = math.log(d_now) - math.log(d_after)
+            gain = math.log(c_dof) * frac * cover - c_pop
+            why = (f"{src}: за {eta} ход(ов) появится {type_name}; тип основывает город → "
+                   f"ln(DoF города {c_dof:g}) × frac {frac:.2f} × cover {cover:.2f} "
+                   f"− цена жителя {c_pop:.2f} (размер {size}→{after})")
             pen, pwhy = switch_penalty(graph, actor, type_name)
             if pen > 0:
                 gain -= pen
