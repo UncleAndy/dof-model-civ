@@ -101,6 +101,47 @@ def city_requirements(city_obs: dict, costs: dict[str, float],
     return L.reduce_requirements(per_transition)
 
 
+def city_tiles(city_obs: dict, layers: dict) -> dict:
+    """Клетки, которые город может обрабатывать, и их выход по слою карты.
+
+    Область — `dx² + dy² ≤ city_radius_sq` (радиус² 5 → 21 клетка). Слой `output`
+    осмыслен только на раскрытых клетках (§4.2), поэтому «раскрыта» = выход ≠ 0.
+    """
+    out, ter, extras = layers["output"], layers["terrain"], layers["extras"]
+    x, y = int(city_obs["x"]), int(city_obs["y"])
+    r_sq = float(city_obs.get("city_radius_sq") or 0.0)
+    cells: list[dict] = []
+    for dx in range(-3, 4):
+        for dy in range(-3, 4):
+            if dx * dx + dy * dy > r_sq:
+                continue
+            cx, cy = x + dx, y + dy
+            if not (0 <= cx < len(out) and 0 <= cy < len(out[0])):
+                continue
+            f, s, t = (float(out[cx][cy][k] or 0.0) for k in range(3))
+            if f + s + t <= 0.0 and (dx, dy) != (0, 0):
+                continue                      # не раскрыта — слоя нет
+            cells.append({"at": (dx, dy), "terrain": int(ter[cx][cy]),
+                          "extras": [i for i, v in enumerate(extras[cx][cy] or []) if v],
+                          "food": f, "shield": s, "trade": t,
+                          "revealed": (f + s + t) > 0.0})
+    return {"cells": cells, "radius_sq": r_sq}
+
+
+def best_cell_set(cells: list[dict], channel: str, need: int,
+                  centre_min: float = 1.0) -> tuple[float, list[tuple[int, int]]]:
+    """Лучший набор из `need` клеток по каналу; центр — не меньше `centre_min` (§10.7.5)."""
+    pool = []
+    for c in cells:
+        v = float(c[channel])
+        if c["at"] == (0, 0):
+            v = max(v, centre_min)
+        pool.append((v, c["at"]))
+    pool.sort(key=lambda p: (-p[0], p[1]))
+    chosen = pool[:need]
+    return sum(v for v, _ in chosen), [at for _, at in chosen]
+
+
 def empire_stocks(obs: dict) -> dict[str, float]:
     """Запасы агента — наблюдаемые остатки по объявленным ресурсам."""
     shield = food = tech = 0.0
@@ -452,6 +493,53 @@ def run_real(steps: int) -> None:
           and abs(dof_more_income - base_city) < 1e-9,
           f"DoF {base_city:.4f} → при запасе +{prod_city:.0f}: {dof_more_stock:.4f}, "
           f"при удвоенном доходе с удвоенной производительностью: {dof_more_income:.4f}")
+    # I16: вклад клеток не объявлен — и причина измерена, а не заявлена словами.
+    tiles = city_tiles(fields_last[city_id], obs_last["map"])
+    need = int(fields_last[city_id].get("size") or 1) + 1
+    best_f = best_cell_set(tiles["cells"], "food", need)
+    best_s = best_cell_set(tiles["cells"], "shield", need)
+    best_t = best_cell_set(tiles["cells"], "trade", need)
+    fact = (float(fields_last[city_id].get("prod_food") or 0.0),
+            float(fields_last[city_id].get("prod_shield") or 0.0),
+            float(fields_last[city_id].get("prod_trade") or 0.0))
+    tile_opts = [o for o in options
+                 if str(o.option_id).split(":", 1)[-1].startswith(("city_work_", "city_unwork_"))]
+    revealed_all = sum(1 for row in obs_last["map"]["output"] for cell in row
+                       if sum(float(v or 0.0) for v in cell[:3]) > 0.0)
+    check("I16 вклад клеток не объявлен, и причина измерена: слой карты не воспроизводит "
+          "опубликованный выход города, обработанных клеток мир не публикует",
+          bool(tile_opts) and not [o for o in tile_opts if o.flat_delta()]
+          and (best_s[0] < fact[1] or best_t[0] > fact[2]),
+          f"клеточных действий {len(tile_opts)}, с приростом "
+          f"{len([o for o in tile_opts if o.flat_delta()])}; лучшие {need} клетки "
+          f"еда {best_f[0]:.0f}{best_f[1]}/щиты {best_s[0]:.0f}{best_s[1]}/торг {best_t[0]:.0f} "
+          f"против факта {fact[0]:.0f}/{fact[1]:.0f}/{fact[2]:.0f}; "
+          f"клеток в области {len(tiles['cells'])}, раскрыто во всём мире {revealed_all}")
+    # I17: число векторов реакции в число свободы не входит — и это семантика стандарта, а не поломка.
+    city_names = list(last["vectors"][city_id])
+    req_city = city_requirements(fields_last[city_id], costs_last, city_names,
+                                 fields_last[city_id].get("prod_shield"))
+    v_now = float(last["measured"][city_id].variety_counters["V"])
+    v_env_now = float(last["measured"][city_id].variety_counters["V_env"])
+
+    def dof_at_v(v_names):
+        binding = L.lens_observation(
+            variety=L.variety_counters(v_names, disturbances(obs_last, city_id, "city")),
+            requirements=req_city,
+            constraint=L.constraint_observation("city", fields_last[city_id]))
+        return L.measure({city_id: binding}, means_last)[city_id]
+
+    arms = {"V=1": dof_at_v(city_names[:1]),
+            f"V={v_now:.0f}": dof_at_v(city_names),
+            f"V={v_now + 100:.0f}": dof_at_v(city_names + [f"city_work_9_9_{i}" for i in range(100)])}
+    check("I17 число векторов реакции в число свободы не входит: при V_env = 0 (§4.6, Ashby-literal) "
+          "линза разнообразия равна 1 при любом V, поэтому открытая дверь прироста не даёт",
+          v_env_now == 0.0
+          and len({round(d.current_dof, 12) for d in arms.values()}) == 1
+          and all(abs(float(d.psi["variety"]) - 1.0) < 1e-12 for d in arms.values()),
+          f"V_env={v_env_now:.0f}; " + ", ".join(
+              f"{k} → ψ_var {float(d.psi['variety']):.4f}, DoF {d.current_dof:.6f}"
+              for k, d in arms.items()))
     v_env_zero = all(float(m.variety_counters.get("V_env", 0.0)) == 0.0
                      for m in last["measured"].values())
     research_opts = [o for o in options if ":research_tech_" in o.option_id]
