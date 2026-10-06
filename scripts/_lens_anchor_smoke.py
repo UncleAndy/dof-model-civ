@@ -85,8 +85,8 @@ def city_requirements(city_obs: dict, costs: dict[str, float],
     return L.reduce_requirements(per_transition)
 
 
-def empire_means(obs: dict) -> dict[str, float]:
-    """Средства агента — наблюдаемые запасы, по объявленным ресурсам."""
+def empire_stocks(obs: dict) -> dict[str, float]:
+    """Запасы агента — наблюдаемые остатки по объявленным ресурсам."""
     shield = food = tech = 0.0
     for city in (obs.get("city") or {}).values():
         if not isinstance(city, dict):
@@ -102,6 +102,24 @@ def empire_means(obs: dict) -> dict[str, float]:
     return {"energy": shield, "food": food, "tech": tech, "gold": gold}
 
 
+def empire_incomes(obs: dict) -> dict[str, float]:
+    """Доход агента за ход — сумма по городам, по объявленным полям дохода."""
+    from env.config import SPEC_INCOME_FIELDS
+
+    incomes: dict[str, float] = {}
+    for res, fields in SPEC_INCOME_FIELDS.items():
+        total = 0.0
+        for city in (obs.get("city") or {}).values():
+            if not isinstance(city, dict):
+                continue
+            for field in fields:
+                if field in city:
+                    total += float(city.get(field) or 0.0)
+                    break
+        incomes[res] = total
+    return incomes
+
+
 def disturbances(obs: dict, entity_id: str, kind: str) -> list[str]:
     """Способ подсчёта возмущений объявлен в модуле (там же и объявление линейки)."""
     return L.active_disturbances(obs, entity_id, kind, my_player_id=MY_PLAYER)
@@ -115,12 +133,13 @@ def run_real(steps: int) -> None:
     print(f"\n=== A. Реальные счётчики (шагов: {min(steps, len(snaps))}) ===")
     rows = []
     index_negative = True
+    gates = 0
     for snap in snaps[:steps]:
         obs, info = snap["observation"], snap["info"]
         state = extractor.extract(obs, info, snap["turn"]).state
         menu = L.menu_by_entity(info.get("available_actions") or {})
         costs = build_cost_index(obs)
-        means = empire_means(obs)
+        means = L.means_with_income(empire_stocks(obs), empire_incomes(obs))
 
         bindings = {}
         for eid, ent in state.entities.items():
@@ -128,9 +147,12 @@ def run_real(steps: int) -> None:
             names = menu.get(eid, [])
             if not names:
                 continue                     # сущности без меню не о чем мерить
-            variety = L.variety_counters(names, disturbances(obs, eid, kind))
-            raw = obs.get(kind if kind != "diplomacy" else "dipl", {}) or {}
+            raw = obs.get("dipl" if kind == "diplomacy" else kind, {}) or {}
             fields = raw.get(eid.split("_", 1)[1], {}) or {}
+            if not L.is_lens_subject(kind, fields):
+                gates += 1                   # открытая дверь — не сущность
+                continue
+            variety = L.variety_counters(names, disturbances(obs, eid, kind))
             if kind == "city":
                 requirements = city_requirements(fields, costs, names)
             else:
@@ -141,10 +163,10 @@ def run_real(steps: int) -> None:
                 constraint=L.constraint_observation(kind, fields),
             )
 
-        for eid, m in L.measure(bindings, means).items():
+        measured = L.measure(bindings, means)
+        for eid, m in measured.items():
             rows.append((snap["turn"], eid, m))
-        total = L.total_index(L.measure(bindings, means))
-        if total > 0:
+        if L.total_index(measured) > 0:
             index_negative = False
 
     for turn, eid, m in rows:
@@ -168,6 +190,13 @@ def run_real(steps: int) -> None:
           all(m.psi["options"] == 1.0 for m in real_options
               if not any(c > 0 for c, _ in m.blocks)),
           f"с требованием: {sum(1 for m in real_options if any(c > 0 for c, _ in m.blocks))}")
+    tech_rows = [eid for _, eid, _ in rows if eid.startswith("tech_")]
+    tech_obs = json.load(open(OBS_FILE))[0]["observation"]["tech"]
+    check("A4 открытые гейты не считаются сущностями",
+          gates > 0 and all(
+              not L.gate_is_open(tech_obs.get(eid.split("_", 1)[1], {}))
+              for eid in tech_rows),
+          f"гейтов пропущено: {gates}, техов-субъектов: {len(tech_rows)}")
 
 
 # ── якоря и вырожденные случаи (§4.6) ───────────────────────────────────────
@@ -229,6 +258,14 @@ def run_rules() -> None:
         ok = True
     check("заморозка вне объявленного набора — ошибка входа, а не ноль", ok)
 
+    war = {"dipl": {"1": {"diplomatic_state": 3}}, "unit": {}}
+    peace = {"dipl": {"1": {"diplomatic_state": 5}}, "unit": {}}
+    check("война видна без контакта (hostile_diplo из diplomatic_state)",
+          L.active_disturbances(war, "unit_113", "unit") == ["hostile_diplo"],
+          "врага в поле зрения нет, а возмущение есть")
+    check("союз возмущением не считается (diplomatic_state = 5)",
+          L.active_disturbances(peace, "unit_113", "unit") == [])
+
 
 def run_declaration() -> None:
     print("\n=== E. Объявление линейки (§3.4.1) ===")
@@ -256,6 +293,38 @@ def run_declaration() -> None:
     check("E2 дайджест воспроизводим на том же входе", decl2.ruler_digest() == r)
 
 
+def run_horizon() -> None:
+    """Что решает окно платёжеспособности `H` — числа, а не мнение (§4.6, `C_g`)."""
+    print("\n=== F. Окно средств: что даёт город под разными H ===")
+    snap = json.load(open(OBS_FILE))[0]
+    obs = snap["observation"]
+    costs = build_cost_index(obs)
+    city = obs["city"]["121"]
+    stocks = empire_stocks(obs)
+    incomes = empire_incomes(obs)
+    city_menu = L.menu_by_entity(snap["info"]["available_actions"]).get("city_121", [])
+    reqs = city_requirements(city, costs, city_menu)
+    print(f"  город: запас {stocks['energy']:.0f} щитов, доход {incomes['energy']:.0f}/ход, "
+          f"требование (min по постройкам) {reqs.get('energy', 0):.0f} щитов; "
+          f"стройка {city.get('production_value')} за {city.get('turns_to_prod_complete')} ход(а)")
+    values: list[float] = []
+    for h in (0.0, 1.0, 2.0, 3.0):
+        means = L.means_with_income(stocks, incomes, horizon=h)
+        obs_l = L.lens_observation(
+            variety=L.variety_counters(city_menu),
+            requirements=reqs,
+            constraint=L.constraint_observation("city", city),
+        )
+        m = measure_entity("city_121", obs_l, 0.5, means)
+        values.append(m.psi["options"])
+        print(f"  H={h:>3.1f}  средства={means['energy']:>5.1f}  "
+              f"ψ_opt={m.psi['options']:.4f}  DoF={m.current_dof:.4f}  ln={m.contribution:+.3f}")
+    check("F1 ψ_opt не убывает с ростом окна средств и остаётся в [0,1]",
+          all(b >= a - 1e-12 for a, b in zip(values, values[1:]))
+          and all(0.0 <= v <= 1.0 for v in values),
+          " → ".join(f"{v:.4f}" for v in values))
+
+
 def main() -> int:
     steps = 1
     if "--steps" in sys.argv:
@@ -263,6 +332,7 @@ def main() -> int:
     run_real(steps)
     run_anchors()
     run_rules()
+    run_horizon()
     run_declaration()
     print(f"\nпроверок: {PASS + FAIL}, падений: {FAIL}")
     return 0 if FAIL == 0 else 1

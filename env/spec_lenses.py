@@ -35,8 +35,10 @@ from .config import (
     SPEC_COUNTING_HORIZON_TURNS,
     SPEC_ENERGY_UNIT,
     SPEC_GROUP_NUMERAIRE,
+    SPEC_HOSTILE_DIPLOMATIC_STATES,
     SPEC_LENS_ORDER,
     SPEC_MANDATE_CAP,
+    SPEC_MEANS_HORIZON_TURNS,
     SPEC_OBSERVED_RATES,
     SPEC_PSI_ID,
     SPEC_REQUIREMENT_REDUCTION,
@@ -174,23 +176,35 @@ def active_disturbances(obs: Mapping[str, Any], entity_id: str, entity_type: str
     были бы несравнимы.
     """
     me_id = CONFIG.my_player_id if my_player_id is None else my_player_id
+    active: list[str] = []
+
+    # Война снимает векторы реакции и видна БЕЗ контакта: вражеский юнит не обязан
+    # попасть в поле зрения, чтобы состояние войны было известно. Поэтому источник
+    # читается из дипломатических состояний, а не из карты.
+    hostile_states = set(SPEC_HOSTILE_DIPLOMATIC_STATES)
+    for rec in (obs.get("dipl") or {}).values():
+        if isinstance(rec, Mapping) and _num(rec.get("diplomatic_state"), -1.0) in hostile_states:
+            active.append("hostile_diplo")
+            break
+
     hostile = [
         u for u in (obs.get("unit") or {}).values()
         if isinstance(u, Mapping) and u.get("owner") != me_id
     ]
     if not hostile:
-        return []
+        return active
     collection = obs.get("unit") if entity_type == "unit" else obs.get("city")
     rec = (collection or {}).get(str(entity_id).split("_", 1)[-1])
     if not isinstance(rec, Mapping) or "x" not in rec or "y" not in rec:
-        return []
+        return active
     x, y = float(rec.get("x") or 0.0), float(rec.get("y") or 0.0)
     reach = (float(rec.get("moves_left") or 0.0) + 1.0) if entity_type == "unit" else 3.0
     for u in hostile:
         if "x" in u and "y" in u:
             if max(abs(float(u["x"]) - x), abs(float(u["y"]) - y)) <= reach:
-                return ["hostile_in_strike_range"]
-    return []
+                active.append("hostile_in_strike_range")
+                break
+    return active
 
 
 def variety_counters(menu_names: Iterable[str],
@@ -254,6 +268,23 @@ def option_blocks(requirements: Mapping[str, float],
     """
     weights = _weights_to_numeraire(groups, rates)
     return derive_blocks(dict(requirements), dict(means), groups, weights, cap)
+
+
+def means_with_income(stocks: Mapping[str, float],
+                      incomes: Mapping[str, float],
+                      horizon: float = SPEC_MEANS_HORIZON_TURNS) -> dict[str, float]:
+    """Средства группы `C_g`: запас + доход за окно (§4.6).
+
+    Запас без дохода объявлял бы город без накопленных щитов неспособным ни на что,
+    хотя игра платит за постройку **из дохода по ходам**. Окно объявлено
+    (`SPEC_MEANS_HORIZON_TURNS`), а не выбрано на месте: у него та же природа, что у
+    горизонта счёта, — два счёта за разные окна несравнимы.
+    """
+    out = {str(r): float(v) for r, v in stocks.items()}
+    for res, income in incomes.items():
+        key = str(res)
+        out[key] = out.get(key, 0.0) + float(income) * float(horizon)
+    return out
 
 
 def _group_numeraire(group: Sequence[str]) -> Optional[str]:
@@ -328,10 +359,10 @@ def frozen_variables(entity_type: str, fields: Mapping[str, Any]) -> list[str]:
         if _num(fields.get("ppl_unhappy"), 0.0) > _num(fields.get("ppl_happy"), 0.0):
             frozen.append("production")
     elif entity_type == "tech":
-        # Уже известная технология не исследуется: `inv_state` наблюдался как 1 у
-        # известной (Alphabet) и 0 у неизвестной (Advanced Flight).
-        if _num(fields.get("inv_state"), 0.0) >= 1.0:
-            frozen.append("research")
+        # Завершённая технология сюда не доходит: она не сущность, а открытая дверь
+        # (см. `is_lens_subject`). В наборе остаются только исследуемые технологии,
+        # у которых переменная `research` жива.
+        pass
     return [v for v in frozen if v in declared]
 
 
@@ -348,6 +379,37 @@ def _num(value: Any, default: float = 0.0) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 3b. Гейты: что вообще является сущностью-субъектом решения
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def gate_is_open(fields: Mapping[str, Any]) -> bool:
+    """Открыт ли гейт технологии — известна ли она.
+
+    Наблюдено: `inv_state` = 1 у известной (Alphabet), 0 у неизвестной
+    (Advanced Flight).
+    """
+    return _num(fields.get("inv_state"), 0.0) >= 1.0
+
+
+def is_lens_subject(entity_type: str, fields: Mapping[str, Any]) -> bool:
+    """Сущность — субъект решения, или гейт?
+
+    Завершённая технология — **открытая дверь**, а не сущность. Решения у неё не
+    осталось: исследуемой переменной нет, и собственного вклада в индекс она иметь
+    не может. Её ценность видна там, где она работает — в векторах реакции тех,
+    кому она что-то открыла: открытая технология расширяет меню города, и `V`
+    города растёт вместе с ним. Считать её отдельной сущностью значило бы наказывать
+    систему за уже сделанное (в замере это давало 7 × ln ε = −96.7 — весь индекс).
+
+    По спеке это работа §4.9/§4.2 (`proven_unreachable` ⇒ исключение из `calc`),
+    но у гейта она решается **до** счёта: у открытой двери нет ни пути, ни переменной.
+    """
+    if entity_type == "tech":
+        return not gate_is_open(fields)
+    return True
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -458,10 +520,13 @@ __all__ = [
     "variety_counters",
     "reduce_requirements",
     "option_blocks",
+    "means_with_income",
     "constraint_counters",
     "entity_type_of",
     "frozen_variables",
     "constraint_observation",
+    "gate_is_open",
+    "is_lens_subject",
     "lens_observation",
     "measure",
     "total_index",
