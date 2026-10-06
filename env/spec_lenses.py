@@ -37,6 +37,8 @@ from .config import (
     SPEC_ENERGY_UNIT,
     SPEC_GROUP_NUMERAIRE,
     SPEC_HOSTILE_DIPLOMATIC_STATES,
+    SPEC_ITEM_REQ_KIND_ADVANCE,
+    SPEC_PRODUCTION_ACTION_PREFIX,
     SPEC_LENS_ORDER,
     SPEC_MANDATE_CAP,
     SPEC_MEANS_HORIZON_TURNS,
@@ -399,22 +401,112 @@ def action_targets_open_gate(name: str, known_gates: Iterable[str] = ()) -> bool
     return tail in {str(g) for g in known_gates}
 
 
+def catalogue_index(tech_records: Mapping[str, Any]) -> dict[str, Any]:
+    """Каталог мира: чем открывается предмет и какие технологии ему нужны.
+
+    Меню города — **каталог**, а не репертуар: в нём перечислено всё, что в
+    принципе можно построить (на первом ходу там «AEGIS Cruiser» и «Apollo
+    Program»). Доступность решает не меню, а требования самого предмета:
+    `build_reqs` у юнита и `reqs` у улучшения, где `kind == 1` значит «нужна
+    технология». Отсюда две вещи сразу: что доступно сейчас и что откроется, если
+    технологию исследовать.
+
+    Требования прочих видов не оцениваются — их число возвращается в
+    `unevaluated`, а не размазывается молчанием по результату.
+    """
+    items: dict[str, dict[str, Any]] = {}
+    unlocks: dict[str, list[str]] = {}
+    for tech_id, rec in (tech_records or {}).items():
+        if not isinstance(rec, Mapping):
+            continue
+        for key, req_key in (("sup_units", "build_reqs"), ("sup_improvements", "reqs")):
+            for spec in (rec.get(key) or []):
+                if not isinstance(spec, Mapping):
+                    continue
+                name = spec.get("name")
+                if not name:
+                    continue
+                advance: set[str] = set()
+                other = 0
+                for req in (spec.get(req_key) or []):
+                    if not isinstance(req, Mapping) or not req.get("present"):
+                        continue
+                    if req.get("kind") == SPEC_ITEM_REQ_KIND_ADVANCE:
+                        advance.add(str(req.get("value")))
+                    else:
+                        other += 1
+                entry = items.setdefault(str(name), {"advance": set(), "unevaluated": 0})
+                entry["advance"] |= advance
+                entry["unevaluated"] = max(int(entry["unevaluated"]), other)
+                unlocks.setdefault(str(tech_id), []).append(str(name))
+    unevaluated = sum(int(e["unevaluated"]) for e in items.values())
+    return {"items": items, "unlocks": unlocks, "unevaluated": unevaluated}
+
+
+def item_available(name: str, catalogue: Optional[Mapping[str, Any]],
+                   known: Iterable[str] = ()) -> bool:
+    """Доступен ли предмет сейчас: все его технологические требования известны.
+
+    Предмет с неоценёнными требованиями недоступным не объявляется — он просто не
+    судится (`True`), иначе незнание читалось бы как запрет. Предмет, которого нет
+    в каталоге, тоже не судится.
+    """
+    if not catalogue:
+        return True
+    entry = (catalogue.get("items") or {}).get(str(name))
+    if entry is None:
+        return True
+    if entry["unevaluated"]:
+        return True
+    return set(entry["advance"]) <= {str(k) for k in known}
+
+
+def gate_opens(tech_id: Any, catalogue: Optional[Mapping[str, Any]],
+               known: Iterable[str] = ()) -> list[str]:
+    """Что откроет дверь: предметы, которым **этой технологии** и не хватает.
+
+    Это и есть мост «технология → кому она открывает»: возвращаются только те
+    предметы, которые станут доступны ровно из-за неё, а не вообще всё, что она
+    перечисляет.
+    """
+    if not catalogue:
+        return []
+    known_set = {str(k) for k in known}
+    after = known_set | {str(tech_id)}
+    out: list[str] = []
+    for name in (catalogue.get("unlocks") or {}).get(str(tech_id)) or []:
+        entry = (catalogue.get("items") or {}).get(str(name))
+        if entry is None or entry["unevaluated"]:
+            continue
+        advance = set(entry["advance"])
+        if advance <= after and not advance <= known_set:
+            out.append(str(name))
+    return sorted(out)
+
+
 def available_vectors(entity_type: str, fields: Mapping[str, Any],
                       names: Iterable[str],
-                      known_gates: Iterable[str] = ()) -> list[str]:
+                      known_gates: Iterable[str] = (),
+                      catalogue: Optional[Mapping[str, Any]] = None,
+                      known_techs: Iterable[str] = ()) -> list[str]:
     """Векторы реакции сущности: меню минус то, что мертво (§4.6).
 
     Меню — предложение мира, а не список возможного. Вектором реакции не является
     ни запись, переменная которой у сущности заморожена, ни действие над уже
-    открытой дверью. Одно правило на всё — и для счёта `V`, и для блоков `c/C`, и
-    для актов графа (§3.5): иначе `V` считал бы то, чего сущность не может, а граф
-    строил бы пути, которых нет.
+    открытой дверью, ни позиция каталога, требования которой ещё не выполнены.
+    Одно правило на всё — и для счёта `V`, и для блоков `c/C`, и для актов графа
+    (§3.5): иначе `V` считал бы то, чего сущность не может, а граф строил бы пути,
+    которых нет.
     """
     frozen = set(frozen_variables(entity_type, fields))
     out: list[str] = []
     for name in names:
         if action_targets_open_gate(name, known_gates):
             continue
+        if name.startswith(SPEC_PRODUCTION_ACTION_PREFIX) and catalogue:
+            item = name[len(SPEC_PRODUCTION_ACTION_PREFIX):]
+            if not item_available(item, catalogue, known_techs):
+                continue
         variable = SPEC_VARIABLE_BY_CATEGORY.get(action_category(name))
         if variable is not None and variable in frozen:
             continue
@@ -570,6 +662,9 @@ __all__ = [
     "gate_is_open",
     "action_category",
     "action_targets_open_gate",
+    "catalogue_index",
+    "item_available",
+    "gate_opens",
     "available_vectors",
     "lens_observation",
     "measure",

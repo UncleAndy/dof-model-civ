@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import copy
 import re
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any, Iterable, Mapping, Optional, Sequence
 
 from brain.spec.calculus_core import DOFCalculusCore, ObservationContext
 from brain.spec.world_graph import ActEdge, EntityNode, WorldGraph
@@ -33,7 +33,9 @@ from .config import (
     SPEC_ACT_EFFECT,
     SPEC_COUNTING_HORIZON_TURNS,
     SPEC_MEANS_CLASS,
+    SPEC_PRODUCTION_ACTION_PREFIX,
     SPEC_RECOVERY_HORIZON_TURNS,
+    SPEC_RESEARCH_ACTION_PREFIX,
     SPEC_RESOURCE_GROUPS,
     SPEC_VARIABLE_BY_CATEGORY,
     TURN_DURATION_MKS,
@@ -43,6 +45,7 @@ from .spec_lenses import (
     action_category,
     entity_type_of,
     frozen_variables,
+    gate_opens,
 )
 
 __all__ = [
@@ -76,14 +79,27 @@ def act_target(name: str, actor_id: str) -> str:
 
 def world_graph(vectors: Mapping[str, Sequence[str]],
                 fields_of: Mapping[str, Mapping[str, Any]],
-                dof: Mapping[str, float]) -> WorldGraph:
+                dof: Mapping[str, float],
+                catalogue: Optional[Mapping[str, Any]] = None,
+                known_techs: Iterable[str] = (),
+                raw_menus: Optional[Mapping[str, Sequence[str]]] = None) -> WorldGraph:
     """Собрать граф мира: узлы — наблюдаемые сущности, акты — их живые векторы.
 
-    `vectors` — меню по сущностям (векторы реакции, уже очищенные от замороженного),
+    `vectors` — меню по сущностям (векторы реакции, уже очищенные от мертвого),
     `fields_of` — наблюдаемые поля сущности, `dof` — измеренная DoF.
+
+    Мост «технология → кому она открывает дверь» строится здесь: исследование
+    ведёт **игрок**, а поднимает оно DoF **городов**, чей каталог пополняется
+    открытым предметом. Поэтому акт исследования — не петля на себя, а ребро от
+    игрока к городу: ровно такие рёбра и делает возможным вердикт о
+    восстановлении (правило простоты пути запрещает `A → A`).
+
+    `raw_menus` — меню до очистки: каталог города, по которому видно, что он
+    **смог бы** строить, если бы дверь открылась.
     """
     nodes: dict[str, EntityNode] = {}
     acts: list[ActEdge] = []
+    cities = {eid for eid in vectors if entity_type_of(eid) == "city"}
     for entity_id, names in vectors.items():
         kind = entity_type_of(entity_id)
         fields = fields_of.get(entity_id, {})
@@ -98,6 +114,11 @@ def world_graph(vectors: Mapping[str, Sequence[str]],
             variable = SPEC_VARIABLE_BY_CATEGORY.get(category)
             if variable is not None and variable in frozen:
                 continue                      # переменная мертва — акта нет
+            if (catalogue is not None and kind == "player"
+                    and name.startswith(SPEC_RESEARCH_ACTION_PREFIX)):
+                acts.extend(_gate_acts(entity_id, name, catalogue, known_techs,
+                                       cities, raw_menus or {}))
+                continue
             target = act_target(name, entity_id)
             if target not in vectors:
                 continue                      # цель не наблюдается — путь ведёт в пустоту
@@ -114,6 +135,40 @@ def world_graph(vectors: Mapping[str, Sequence[str]],
             ))
     means = sorted({str(r) for group in SPEC_RESOURCE_GROUPS for r in group})
     return WorldGraph(entities=nodes, means=means, acts=acts, exchanges=[])
+
+
+def _gate_acts(player_id: str, action: str, catalogue: Mapping[str, Any],
+               known_techs: Iterable[str], cities: Iterable[str],
+               raw_menus: Mapping[str, Sequence[str]]) -> list[ActEdge]:
+    """Рёбра исследования: по одному на город, которому этот акт открывает дверь.
+
+    Ребро ведёт от игрока к городу и несёт прирост, равный числу предметов,
+    которые город сможет строить **только** после этой технологии. Технология,
+    которая не открывает ничего, что город мог бы построить, рёбер не даёт — и
+    тогда пути восстановления через неё нет, как и должно быть.
+    """
+    tail = action.rsplit("_", 1)[-1]
+    opened = gate_opens(tail, catalogue, known_techs)
+    if not opened:
+        return []
+    out: list[ActEdge] = []
+    for city_id in sorted(cities):
+        buildable = {str(n[len(SPEC_PRODUCTION_ACTION_PREFIX):])
+                     for n in raw_menus.get(city_id, [])
+                     if str(n).startswith(SPEC_PRODUCTION_ACTION_PREFIX)}
+        gain = len(set(opened) & buildable)
+        if gain:
+            out.append(ActEdge(
+                id=f"{player_id}:{action}->{city_id}",
+                source=player_id,
+                target=city_id,
+                category="research",
+                requires=[],
+                effect={city_id: float(gain)},
+                resources={},
+                duration_mks=TURN_DURATION_MKS,
+            ))
+    return out
 
 
 def observation_context(world: WorldGraph, dof: Mapping[str, float]

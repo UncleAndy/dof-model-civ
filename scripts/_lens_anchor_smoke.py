@@ -140,6 +140,8 @@ def run_real(steps: int) -> None:
     gates = 0
     tech_skipped = 0
     open_gate_dropped = 0
+    cat_kept = 0
+    cat_total = 0
     last: dict = {}
     for snap in snaps[:steps]:
         obs, info = snap["observation"], snap["info"]
@@ -152,8 +154,10 @@ def run_real(steps: int) -> None:
         bindings = {}
         vectors: dict[str, list[str]] = {}
         fields_of: dict[str, dict] = {}
+        raw_menus: dict[str, list[str]] = {}
         known_gates = {tid for tid, rec in (obs.get("tech") or {}).items()
                        if isinstance(rec, dict) and L.gate_is_open(rec)}
+        catalogue = L.catalogue_index(obs.get("tech") or {})
         for eid in sorted(menu):
             kind = L.entity_type_of(eid)
             if kind == "tech":
@@ -162,9 +166,14 @@ def run_real(steps: int) -> None:
             raw_names = menu.get(eid, [])
             if not raw_names:
                 continue                     # сущности без меню не о чем мерить
+            raw_menus[eid] = raw_names
+            cat_total += sum(1 for n in raw_names if n.startswith("produce_"))
             raw = obs.get("dipl" if kind == "diplomacy" else kind, {}) or {}
             fields = raw.get(eid.split("_", 1)[1], {}) or {}
-            names = L.available_vectors(kind, fields, raw_names, known_gates)
+            names = L.available_vectors(kind, fields, raw_names, known_gates,
+                                        catalogue=catalogue, known_techs=known_gates)
+            cat_kept += sum(1 for n in raw_names
+                            if n.startswith("produce_") and n in names)
             open_gate_dropped += sum(1 for n in raw_names
                                      if L.action_targets_open_gate(n, known_gates))
             if not names:
@@ -188,7 +197,8 @@ def run_real(steps: int) -> None:
         if L.total_index(measured) > 0:
             index_negative = False
         last = {"turn": snap["turn"], "state": state, "vectors": vectors,
-                "fields": fields_of, "measured": measured,
+                "fields": fields_of, "measured": measured, "raw_menus": raw_menus,
+                "catalogue": catalogue, "known_techs": known_gates,
                 "dof": {eid: m.current_dof for eid, m in measured.items()}}
 
     for turn, eid, m in rows:
@@ -219,10 +229,16 @@ def run_real(steps: int) -> None:
           and tech_skipped > 0 and open_gate_dropped > 0 and bool(player_vectors),
           f"тех-сущностей отброшено {tech_skipped}, действий к открытым дверям снято "
           f"{open_gate_dropped}, векторов у игрока {len(player_vectors)}")
+    check("A5 каталог города отсечён требованиями: доступно меньше, чем перечислено",
+          cat_total > cat_kept > 0,
+          f"перечислено построек {cat_total}, доступно {cat_kept}, "
+          f"неоценённых требований {last['catalogue']['unevaluated']}")
 
     # ── G. §3.5/§4.9/§4.2: граф мира, вердикты, множество счёта ─────────────
     print(f"\n=== G. Граф мира, вердикты и calc(S) (ход {last['turn']}) ===")
-    graph = G.world_graph(last["vectors"], last["fields"], last["dof"])
+    graph = G.world_graph(last["vectors"], last["fields"], last["dof"],
+                          catalogue=last["catalogue"], known_techs=last["known_techs"],
+                          raw_menus=last["raw_menus"])
     ctx = G.observation_context(graph, last["dof"])
     st = G.state_with_measured_dof(last["state"], last["dof"])
     members, index = G.calc_and_index(st, ctx)
@@ -255,6 +271,15 @@ def run_real(steps: int) -> None:
           f"нулей в счёте: {sum(1 for e in members if st.entities[e].current_dof <= 0.0)}")
     check("G5 индекс по calc(S) конечен и отрицателен (§4.1)",
           math.isfinite(index) and index < 0, f"{index:.4f}")
+    bridges = [a for a in graph.acts if "->" in a.id]
+    print(f"  рёбер-мостов «технология → город»: {len(bridges)}"
+          + (f", пример {bridges[0].id}" if bridges else ""))
+    check("G6 мост построен: исследование — ребро от игрока к городу, а не петля на себя",
+          bool(bridges)
+          and all(a.source.startswith("player_") and a.target.startswith("city_")
+                  for a in bridges)
+          and all(a.effect and min(a.effect.values()) > 0 for a in bridges),
+          f"мостов {len(bridges)}")
 
 
 # ── якоря и вырожденные случаи (§4.6) ───────────────────────────────────────
@@ -384,15 +409,17 @@ def run_horizon() -> None:
 
 
 def run_recovery() -> None:
-    """§4.9 в работе: живой ноль восстанавливается, мёртвый — нет.
+    """§4.9 в работе: город поднимается мостом, юнит — нет.
 
-    На реальном наблюдении известных нулей не остаётся (технология — не сущность,
-    а все живые сущности имеют ненулевой lens), поэтому поиск пути сам собой не
-    упражняется. Здесь он упражняется **синтетикой**: та же труба, что на живых
-    данных, но DoF обнулён у двух сущностей. Живой ноль (город, у которого есть
-    производство) обязан получить `reachable` **со свидетелем** и остаться в счёте;
-    мёртвый (юнит, у которого только перемещение) — `proven_unreachable` и выбыть.
-    Перемещение DoF не поднимает: оно меняет положение, а не число возможностей.
+    На реальном наблюдении известных нулей не остаётся, поэтому поиск пути сам
+    собой не упражняется. Здесь он упражняется **синтетикой**: та же труба, что и
+    на живых данных, но DoF обнулён у города и у юнита.
+
+    Город восстановим **чужой** дверью: исследование ведёт игрок, и оно открывает
+    городу постройку, которой у него не было, — ребро идёт от игрока к городу,
+    путь простой, и вердикт обязан назвать свидетеля. Собственные акты города тут
+    не помогают: правило простоты пути запрещает акт на самого себя. Юнит на нуле
+    не восстановим ничем — дверей, ведущих к нему, нет вовсе.
     """
     print("\n=== H. §4.9 в работе: живой ноль против мёртвого (синтетика) ===")
     snap = json.load(open(OBS_FILE))[0]
@@ -401,23 +428,30 @@ def run_recovery() -> None:
     menu = L.menu_by_entity(info["available_actions"])
     known_gates = {tid for tid, rec in (obs.get("tech") or {}).items()
                    if isinstance(rec, dict) and L.gate_is_open(rec)}
+    catalogue = L.catalogue_index(obs.get("tech") or {})
     vectors: dict[str, list[str]] = {}
     fields_of: dict[str, dict] = {}
+    raw_menus: dict[str, list[str]] = {}
     for eid in sorted(menu):
         kind = L.entity_type_of(eid)
-        if kind == "tech" or not menu.get(eid):
+        if not menu.get(eid):
             continue
         raw = obs.get("dipl" if kind == "diplomacy" else kind, {}) or {}
         fields = raw.get(eid.split("_", 1)[1], {}) or {}
-        vectors[eid] = L.available_vectors(kind, fields, menu[eid], known_gates)
+        raw_menus[eid] = menu[eid]
+        vectors[eid] = L.available_vectors(kind, fields, menu[eid], known_gates,
+                                           catalogue=catalogue, known_techs=known_gates)
         fields_of[eid] = fields
 
     city_id = next(e for e in sorted(vectors) if e.startswith("city_"))
     unit_id = next(e for e in sorted(vectors) if e.startswith("unit_"))
-    dof = {city_id: 0.0, unit_id: 0.0}
-    keep = (city_id, unit_id)
+    player_id = f"player_{MY_PLAYER}"
+    keep = (player_id, city_id, unit_id)
+    dof = {player_id: 0.5, city_id: 0.0, unit_id: 0.0}
     graph = G.world_graph({k: vectors[k] for k in keep},
-                          {k: fields_of[k] for k in keep}, dof)
+                          {k: fields_of[k] for k in keep}, dof,
+                          catalogue=catalogue, known_techs=known_gates,
+                          raw_menus={k: raw_menus[k] for k in keep})
     ctx = G.observation_context(graph, dof)
     st = G.state_with_measured_dof(state, dof)
     verdicts = G.recoverability(st, ctx)
@@ -441,18 +475,17 @@ def run_recovery() -> None:
     )
     hv = helper.verdict("a", list(SPEC_MEANS_CLASS), 5 * TURN_DURATION_MKS, 0.0)
     print(f"  граф с чужим актом: a — {hv.verdict}, свидетель {hv.witness}")
-    check("H1 чужой акт восстанавливает ноль и даёт свидетеля (правило простоты пути §3.5)",
+    check("H1 город на известном нуле восстановлен чужой дверью, и свидетель назван",
+          city_v["verdict"] == "reachable" and bool(city_v["witness"])
+          and "->" in city_v["witness"][0],
+          f"{city_v['verdict']}, свидетель {city_v['witness'][:1]}")
+    check("H2 восстановленный город остался в счёте, а юнит без дверей выбыл",
+          city_id in members and unit_id not in members, f"calc = {sorted(members)}")
+    check("H3 к юниту не ведёт ни одна дверь — proven_unreachable без свидетеля",
+          unit_v["verdict"] == "proven_unreachable" and not unit_v["witness"])
+    check("H4 контроль в изоляции: чужой акт восстанавливает ноль (правило простоты пути)",
           hv.verdict == "reachable" and hv.witness == ["b:revive"],
           f"{hv.verdict}, свидетель {hv.witness}")
-    check("H2 свой акт восстановлением не является: город с своими актами на нуле "
-          "— proven_unreachable",
-          city_v["verdict"] == "proven_unreachable" and not city_v["witness"],
-          f"своих актов {len(vectors[city_id])}, вердикт {city_v['verdict']}")
-    check("H3 ноль юнита, у которого только перемещение, — тоже proven_unreachable",
-          unit_v["verdict"] == "proven_unreachable" and not unit_v["witness"])
-    check("H4 оба нуля выбыли из счёта, а пустой счёт даёт ровно 0.0",
-          not members and index == 0.0,
-          "сумма по пустому множеству: ноль не отрицателен — это свойство суммы, не оценка")
 
 
 def main() -> int:
