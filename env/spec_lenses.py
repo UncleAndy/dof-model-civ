@@ -303,19 +303,61 @@ def option_blocks(requirements: Mapping[str, float],
 
 def means_with_income(stocks: Mapping[str, float],
                       incomes: Mapping[str, float],
-                      horizon: float = SPEC_MEANS_HORIZON_TURNS) -> dict[str, float]:
+                      horizon: float = SPEC_MEANS_HORIZON_TURNS,
+                      measured_tech_rate: Optional[float] = None) -> dict[str, float]:
     """Средства группы `C_g`: запас + доход за окно (§4.6).
 
     Запас без дохода объявлял бы город без накопленных щитов неспособным ни на что,
     хотя игра платит за постройку **из дохода по ходам**. Окно объявлено
     (`SPEC_MEANS_HORIZON_TURNS`), а не выбрано на месте: у него та же природа, что у
     горизонта счёта, — два счёта за разные окна несравнимы.
+
+    `measured_tech_rate` — ИЗМЕРЕННАЯ скорость науки (Δ `bulbs_researched` за ход,
+    §13.11). У группы `tech` публикуемого поля дохода нет
+    (`SPEC_INCOME_FIELDS["tech"] == ()`), поэтому без измерения группа получает
+    доход 0 — названно, а не выдуманным числом (`science` и колбы города темпом не
+    являются: замер 2026-10-06).
     """
     out = {str(r): float(v) for r, v in stocks.items()}
     for res, income in incomes.items():
         key = str(res)
         out[key] = out.get(key, 0.0) + float(income) * float(horizon)
+    if measured_tech_rate is not None:
+        out["tech"] = out.get("tech", 0.0) + float(measured_tech_rate) * float(horizon)
     return out
+
+
+def measured_science_rate(prev_obs: Optional[Mapping[str, Any]],
+                          obs: Optional[Mapping[str, Any]],
+                          player_id: Any = 0) -> Optional[float]:
+    """Измеренная скорость науки: Δ `bulbs_researched` между двумя наблюдениями.
+
+    §13.11: скорость науки — величина ИЗМЕРЯЕМАЯ, а не публикуемое поле. Замер на
+    стенде (2026-10-06): 1 балл за ход при `player["science"]` 60 и колбах города 5,
+    и технология с ценой 28 завершилась ровно через 28 ходов. Возвращается `None`,
+    когда измерять не по чему (нет предыдущего наблюдения) или цель сменилась —
+    тогда накопление сброшено и разность темпом не является. Это незнание, а не
+    ноль: ноль здесь был бы утверждением «наука не идёт».
+    """
+    if not prev_obs or not obs:
+        return None
+
+    def rec(source: Mapping[str, Any]) -> Mapping[str, Any]:
+        for layer_name in ("player", "players"):
+            layer = (source or {}).get(layer_name) or {}
+            if isinstance(layer, Mapping):
+                for key in (player_id, str(player_id), 0, "0"):
+                    if key in layer:
+                        return layer[key] or {}
+        return {}
+
+    before, after = rec(prev_obs), rec(obs)
+    if "bulbs_researched" not in before or "bulbs_researched" not in after:
+        return None
+    if before.get("researching") != after.get("researching"):
+        return None
+    delta = float(after.get("bulbs_researched") or 0.0) - float(before.get("bulbs_researched") or 0.0)
+    return delta if delta >= 0.0 else None
 
 
 def _group_numeraire(group: Sequence[str]) -> Optional[str]:

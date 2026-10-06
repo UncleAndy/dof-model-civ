@@ -233,7 +233,11 @@ def project_option(entity_id: str, action: str,
 def resource_draw(entity_id: str, action: str,
                   costs: Optional[Mapping[str, float]],
                   production: Optional[float] = None,
-                  horizon_turns: float = SPEC_MEANS_HORIZON_TURNS
+                  horizon_turns: float = SPEC_MEANS_HORIZON_TURNS,
+                  tech_price: Optional[float] = None,
+                  tech_progress: Optional[float] = None,
+                  tech_rate: Optional[float] = None,
+                  tech_target: Optional[str] = None
                   ) -> dict[str, dict[str, float]]:
     """Наблюдённый расход действия по ресурсам — для §4.8.
 
@@ -241,8 +245,27 @@ def resource_draw(entity_id: str, action: str,
     средств, иначе любая постройка выглядит неоплатной. Чего цена неизвестна —
     требование всё равно объявляется по производительности: незнание не
     превращается ни в ноль, ни в запрет.
+
+    Для исследования (§13.11) платёж берётся из ОПУБЛИКОВАННОЙ цены цели
+    (`player["researching_cost"]`) и накопленного (`player["bulbs_researched"]`):
+    `due = min(цена − накоплено, темп × H)`. Темп — измеренный
+    (`env.spec_lenses.measured_science_rate`), а не `player["science"]` и не колбы
+    города (замер 2026-10-06). У технологии, не назначенной целью, цены нет, и
+    платёж объявляется тем же темпом: незнание не читается как «бесплатно».
     """
     name = str(action)
+    if name.startswith(SPEC_RESEARCH_ACTION_PREFIX):
+        if tech_rate is None:
+            return {}                      # темп не измерен — платёж не объявляем
+        tech_id = name[len(SPEC_RESEARCH_ACTION_PREFIX):].rsplit("_", 1)[-1]
+        if tech_price is not None and str(tech_id) == str(tech_target):
+            left = max(0.0, float(tech_price) - float(tech_progress or 0.0))
+        else:
+            left = float(tech_rate) * float(horizon_turns)
+        due = min(left, float(tech_rate) * float(horizon_turns))
+        if due <= 0.0:
+            return {}
+        return {str(entity_id): {"tech": -float(due)}}
     if not name.startswith(SPEC_PRODUCTION_ACTION_PREFIX):
         return {}
     item = name[len(SPEC_PRODUCTION_ACTION_PREFIX):]
@@ -263,7 +286,11 @@ def build_options(vectors: Mapping[str, Sequence[str]],
                   means: Optional[Mapping[str, float]] = None,
                   production: Optional[Mapping[str, float]] = None,
                   standing: Optional[Mapping[str, float]] = None,
-                  horizon_turns: float = SPEC_MEANS_HORIZON_TURNS) -> list[ActionOption]:
+                  horizon_turns: float = SPEC_MEANS_HORIZON_TURNS,
+                  tech_price: Optional[float] = None,
+                  tech_progress: Optional[float] = None,
+                  tech_rate: Optional[float] = None,
+                  tech_target: Optional[str] = None) -> list[ActionOption]:
     """Кандидаты §3.3 для объявленных сущностей — по одной опции на вектор.
 
     Кандидат не выбирает и ничего не взвешивает: он объявляет прирост (§4.3),
@@ -303,7 +330,9 @@ def build_options(vectors: Mapping[str, Sequence[str]],
                 estimated_duration_mks=TURN_DURATION_MKS,
                 projected_resource_delta=resource_draw(
                     entity_id, action, costs, (production or {}).get(entity_id),
-                    horizon_turns),
+                    horizon_turns, tech_price=tech_price,
+                    tech_progress=tech_progress, tech_rate=tech_rate,
+                    tech_target=tech_target),
                 requires=requires_for(action),
                 act_id=act_id,
             ))

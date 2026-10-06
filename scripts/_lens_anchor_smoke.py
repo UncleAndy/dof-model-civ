@@ -202,13 +202,19 @@ def run_real(steps: int) -> None:
     cat_kept = 0
     cat_total = 0
     last: dict = {}
+    prev_obs_loop = None
     for snap in snaps[:steps]:
         obs, info = snap["observation"], snap["info"]
         state = extractor.extract(obs, info, snap["turn"]).state
         tech_skipped += len([e for e in state.entities if e.startswith("tech_")])
         menu = L.menu_by_entity(info.get("available_actions") or {})
         costs = build_cost_index(obs)
-        means = L.means_with_income(empire_stocks(obs), empire_incomes(obs))
+        # Темп науки — ИЗМЕРЕННЫЙ (§13.11): Δ накопленного (`bulbs_researched`)
+        # между двумя наблюдениями. Первый ход измерить нечем — тогда дохода нет
+        # (названно, а не нулём вместо неизвестного).
+        means = L.means_with_income(
+            empire_stocks(obs), empire_incomes(obs),
+            measured_tech_rate=L.measured_science_rate(prev_obs_loop, obs, MY_PLAYER))
 
         bindings = {}
         vectors: dict[str, list[str]] = {}
@@ -260,6 +266,7 @@ def run_real(steps: int) -> None:
                 "fields": fields_of, "measured": measured, "raw_menus": raw_menus,
                 "catalogue": catalogue, "known_techs": known_gates, "obs": obs,
                 "dof": {eid: m.current_dof for eid, m in measured.items()}}
+        prev_obs_loop = obs
 
     for turn, eid, m in rows:
         psi = m.psi
@@ -348,7 +355,15 @@ def run_real(steps: int) -> None:
     costs_last = build_cost_index(obs_last)
     stocks_last = empire_stocks(obs_last)
     incomes_last = empire_incomes(obs_last)
-    means_last = L.means_with_income(stocks_last, incomes_last)
+    # Темп науки (§13.11) — ИЗМЕРЕННЫЙ по двум последним наблюдениям прогона;
+    # цена цели — из опубликованного поля записи игрока.
+    prev_obs_last = snaps[steps - 2]["observation"] if steps >= 2 else None
+    tech_rate = L.measured_science_rate(prev_obs_last, obs_last, MY_PLAYER)
+    _players_last = obs_last.get("player") or {}
+    tech_rec = (_players_last.get(str(MY_PLAYER))
+                or _players_last.get(MY_PLAYER) or {})
+    means_last = L.means_with_income(stocks_last, incomes_last,
+                                     measured_tech_rate=tech_rate)
 
     def make_remeasure(cost_index):
         """Пересчёт линз на спроецированном меню **и** спроецированных средствах."""
@@ -383,7 +398,11 @@ def run_real(steps: int) -> None:
                               last["known_techs"], graph, remeasure,
                               only=deciders, costs=costs_last,
                               means=means_last, production=production,
-                              standing=standing)
+                              standing=standing,
+                              tech_price=tech_rec.get("researching_cost"),
+                              tech_progress=tech_rec.get("bulbs_researched"),
+                              tech_rate=tech_rate,
+                              tech_target=tech_rec.get("researching"))
     with_delta = [o for o in options if o.flat_delta()]
     priced = [o for o in options if o.projected_resource_delta]
     unpriced = [o for o in options if o.requires and not o.projected_resource_delta]
@@ -604,6 +623,58 @@ def run_real(steps: int) -> None:
           f"опций, называющих вход в `discovers`: "
           f"{sum(1 for o in options if 'tech_price' in (o.discovers or []))}; "
           f"в строках кандидатов флаг не встречается")
+    # I21 (§13.11): платёж исследования объявлен по опубликованной цене цели и
+    # ИЗМЕРЕННОМУ темпу, а не оставлен молчанием; при неизмеримом темпе — молчит
+    # названно (это незнание, а не «бесплатно»).
+    tech_opts = [o for o in options if ":research_tech_" in str(o.option_id)]
+    drawn = [o for o in tech_opts if o.projected_resource_delta]
+    price = tech_rec.get("researching_cost")
+    progress = tech_rec.get("bulbs_researched") or 0.0
+    if tech_rate is None:
+        ok21 = not drawn
+        detail21 = ("темп не измерен (наблюдений меньше двух) — платёж не объявлен у "
+                    f"{len(tech_opts)} опций исследования")
+    else:
+        if price is not None:
+            expected = min(max(float(price) - float(progress), 0.0),
+                           float(tech_rate) * SPEC_MEANS_HORIZON_TURNS)
+        else:
+            expected = float(tech_rate) * SPEC_MEANS_HORIZON_TURNS
+        if expected <= 0.0:
+            # Темп 0 (наблюдения не растут — свойство этого фикстура, а не мира):
+            # в горизонт платить нечего, и это объявлено нулём, а не умолчанием.
+            ok21 = not drawn
+            detail21 = (f"цена цели {price}, накоплено {progress:g}, темп "
+                        f"{tech_rate:g} → платёж в горизонт 0; опций с платежом "
+                        f"{len(drawn)} (ожидается 0)")
+        else:
+            ok21 = bool(drawn) and all(
+                any(abs(float(-(v or {}).get("tech", 0.0)) - expected) < 1e-9
+                    for v in (o.projected_resource_delta or {}).values())
+                for o in drawn)
+            detail21 = (f"цена цели из поля {price}, накоплено {progress:g}, темп "
+                        f"{tech_rate:g} → платёж {expected:g}; с платежом {len(drawn)} "
+                        f"из {len(tech_opts)} опций исследования")
+    check("I21 §13.11: платёж исследования — из опубликованной цены цели и "
+          "ИЗМЕРЕННОГО темпа (Δ накопленного)", ok21, detail21)
+    # I22: положительный контроль на числах ЖИВОГО замера (стенд 2026-10-06) —
+    # иначе «платёж не объявлен» неотличимо от «платёж посчитан по нулевому темпу».
+    live_due = O.resource_draw("player_0", "research_tech_Monarchy_2", None,
+                               None, 1.0, tech_price=28.0, tech_progress=0.0,
+                               tech_rate=1.0, tech_target="2")
+    live_due_done = O.resource_draw("player_0", "research_tech_Monarchy_2", None,
+                                    None, 1.0, tech_price=28.0, tech_progress=27.0,
+                                    tech_rate=1.0, tech_target="2")
+    live_due_other = O.resource_draw("player_0", "research_tech_Rocketry_70", None,
+                                     None, 1.0, tech_price=28.0, tech_progress=0.0,
+                                     tech_rate=1.0, tech_target="2")
+    due_of = lambda d: float(-(d.get("player_0") or {}).get("tech", 0.0))  # noqa: E731
+    check("I22 положительный контроль: на живом замере (цена 28, темп 1, H=1) платёж "
+          "цели равен 1 колбе, у почти готовой — тоже 1, у чужой технологии — темп",
+          due_of(live_due) == 1.0 and due_of(live_due_done) == 1.0
+          and due_of(live_due_other) == 1.0,
+          f"цель с нуля {due_of(live_due)}, почти готовая {due_of(live_due_done)}, "
+          f"не-цель {due_of(live_due_other)}")
     check("I3 §4.8b: τ' >= 0 у каждого кандидата (τ — самый срочный срок сущности)",
           all(bool(r["viable"]) for r in rows),
           f"неприменимых {sum(1 for r in rows if not r['viable'])}, τ={tau / 1e6:.0f} с")
