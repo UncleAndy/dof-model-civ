@@ -45,8 +45,11 @@ VERDICT_SHARE = 0.10          # и ≥ 10 % медианы |B|
 VERDICT_ALPHA = 0.05          # и односторонний знаковый тест p < 0.05
 
 ARMS = {
-    "A": {"DOF_CITY_NORM": "narrow", "DOF_PROD_GATE": "on"},
-    "B": {"DOF_CITY_NORM": "wide", "DOF_PROD_GATE": "off"},
+    "A": {"DOF_CITY_NORM": "narrow", "DOF_PROD_GATE": "on", "V011_SCOUT": "1",
+          "V011_SCOUT_MODE": "idle-only", "V011_SCOUT_LOG": "1"},
+    "B": {"DOF_CITY_NORM": "wide", "DOF_PROD_GATE": "off", "V011_SCOUT_LOG": "1"},
+    "C": {"DOF_CITY_NORM": "narrow", "DOF_PROD_GATE": "on", "V011_SCOUT": "1",
+          "V011_SCOUT_MODE": "settler-first", "V011_SCOUT_LOG": "1"},
 }
 for _lvl, _var in (("A", "DOF_AB_ENV_A"), ("B", "DOF_AB_ENV_B")):
     for _item in filter(None, str(os.environ.get(_var, "") or "").split(",")):
@@ -154,13 +157,13 @@ def cmd_pairs(args: argparse.Namespace) -> int:
         if pair in finished:
             print(f"пара {pair} (сид {seed}) уже записана — пропуск")
             continue
-        for arm, port in (("A", args.port_a), ("B", args.port_b)):
+        for arm, port in (("A", args.port_a), ("B", args.port_b), ("C", args.port_c)):
             tag = f"ab{pair:02d}_{arm}_{seed}"
             rec = _run(arm, seed, port, args.turns, tag)
             rec["pair"] = pair
             rec["score"], rec["turns"] = _last_score(rec)
             rows.append(rec)
-            print(f"пара {pair}/2, плечо {arm}: сид {seed}, порт {port}, "
+            print(f"пара {pair}/3, плечо {arm}: сид {seed}, порт {port}, "
                   f"ходов {rec['turns']}, счёт мира {rec['score']:g}, выход {rec['exit']}, "
                   f"{rec['seconds']:.0f} с")
             with OUT.open("a", encoding="utf-8") as fh:
@@ -222,6 +225,7 @@ def main() -> int:
     p_pairs.add_argument("--turns", type=int, default=150)
     p_pairs.add_argument("--port-a", type=int, default=6000)
     p_pairs.add_argument("--port-b", type=int, default=6004)
+    p_pairs.add_argument("--port-c", type=int, default=6005)
     p_pairs.add_argument("--out", default="", help="свой файл опыта (пилоту — своё имя, а не общее)")
     p_pairs.add_argument("--detach", action="store_true",
                          help="уйти из-под сессии (двойной fork + своя сессия): долгий опыт не гибнет с оболочкой")
