@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
 import warnings
@@ -210,8 +211,46 @@ def live(port: int, seed: int, turns: int, fps: int, fog: bool) -> dict[str, Any
                 loss, n_rows = 0.0, 0
                 loss_why = f"цена смены не измерена: {type(exc).__name__}: {str(exc)[:80]}"
             marks = getattr(extractor, "marked_collapse_sources", None) or {}
+            def _br(measured, counts=None, v_max=None):
+                """Разбивка индекса по сущностям ТЕМ ЖЕ счётом ядра.
+
+                Берутся ровно поля измерения порта (`brain/spec/measurement.py:EntityMeasurement`):
+                `contribution` (вклад = ln(max(DoF, ε))), `psi` по каналам, `binding_lens` (низшая
+                измеренная линза — узкое место), `dof_known`, `floored`. Для города добавляются оба
+                объявленных счёта: `V_сейчас` (идёт в индекс) и `V_максимум` (весь каталог), а также
+                их разность — объявленная дельта открытия. Второй формулы нет.
+                Сортировка — по вкладу вверх: сверху те, кто тянет индекс вниз.
+                """
+                pairs = list(measured.items()) if isinstance(measured, dict) else list(enumerate(measured or []))
+                out = []
+                for eid, ent in pairs:
+                    psi = getattr(ent, "psi", None) or {}
+                    out.append({
+                        "id": str(eid),
+                        "вид": str(eid).split("_")[0],
+                        "dof": round(float(getattr(ent, "current_dof", 0.0) or 0.0), 6),
+                        "вклад": round(float(getattr(ent, "contribution", 0.0) or 0.0), 4),
+                        "узкое_место": getattr(ent, "binding_lens", None),
+                        "знаем": bool(getattr(ent, "dof_known", True)),
+                        "пол": bool(getattr(ent, "floored", False)),
+                        "psi": {str(k): (round(float(v), 6) if isinstance(v, (int, float)) else v)
+                                for k, v in psi.items()},
+                    })
+                out.sort(key=lambda r: r["вклад"])
+                for r in out:
+                    if counts is not None and r["id"] in counts:
+                        r["V_сейчас"] = round(float(counts[r["id"]]), 1)
+                    if v_max and r["id"] in v_max:
+                        r["V_максимум"] = round(float(v_max[r["id"]]), 1)
+                        if "V_сейчас" in r:
+                            r["дельта_открытия"] = round(r["V_максимум"] - r["V_сейчас"], 1)
+                return out
+
             row = {"ход": turn, "индекс": round(float(m["index"]), 4),
                    "сущностей": len(m["measured"]),
+                   "разбивка": _br(m["measured"], counts, m.get("v_max")),
+                   "эффекты_производства": m.get("production_effects") or {},
+                   "медиана_боевой": m.get("median_combat"),
                    "V_всего": round(sum(counts.values()), 1),
                    "нападение": getattr(extractor, "last_attack_event", None),
                    "меток": len(marks),

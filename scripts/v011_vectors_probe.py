@@ -73,6 +73,12 @@ def main() -> int:
     except Exception:  # noqa: BLE001
         own_id = 0
     extractor = GameStateExtractor(my_player_id=own_id)
+    # Действие тем же драйвером, что и в живом прогоне: пассивный прогон города НЕ основывает,
+    # и разбирать «сколько у города векторов» становится не на чем.
+    from env.spec_drive import Decider  # noqa: PLC0415
+    dec = Decider(extractor, own_id=own_id)
+    prev_obs = None
+    last_turn = None
 
     print(f"[разбор] сид {a.seed}, порт {a.port}, наш игрок {own_id}", flush=True)
     print(f"[разбор] правило счёта векторов: {L.SPEC_RESPONSE_VECTOR_RULE}", flush=True)
@@ -103,7 +109,14 @@ def main() -> int:
                              "остаётся": len(groups.get("ОСТАЁТСЯ", [])),
                              "основания": {k: sorted(v) for k, v in groups.items()},
                              "заморожено": list(frozen)})
-        obs, _r, term, trunc, info = env.step(None)
+        if last_turn is not None and turn != last_turn:
+            dec.new_turn()
+        last_turn = turn
+        act = dec.decide(obs, info, turn, prev_obs=prev_obs)
+        if act is not None:
+            print(f"    [драйвер] действие: {act}", flush=True)
+        prev_obs = obs
+        obs, _r, term, trunc, info = env.step(act)
         if not obs or term or trunc:
             break
 

@@ -111,6 +111,74 @@ def powers_of(obs: Mapping[str, Any], my_player_id: Any = 0) -> list[str]:
     return L.foreign_powers(obs, my_player_id=int(my_player_id or 0))
 
 
+def hypothetical_city_dof(costs: Mapping[str, Any], means: Mapping[str, float],
+                          obs: Mapping[str, Any], own: int) -> tuple[Optional[float], str]:
+    """DoF города размера 1, посчитанный нашими линзами по ОПУБЛИКОВАННОМУ каталогу цен.
+
+    Клетка в счёт не входит (её мера — отдельный вопрос). Выход щитов неизвестен и нулём не
+    подставляется: требование считается без него, и причина это называет. Одна процедура на
+    всех потребителей — и на объявленную дельту основания, и на способность поселенца.
+    """
+    names = sorted(costs or {})
+    if not names:
+        return None, "каталог цен пуст — город нечем измерить (мир ещё не публикует цены)"
+    city_fields = {"size": 1, "prod_shield": None, "shield_stock": 0}
+    obs_lens = L.lens_observation(
+        variety=L.variety_counters(names, [], powers_of(obs, own)),
+        requirements=city_requirements(city_fields, costs, names, None),
+        constraint=L.constraint_observation("city", city_fields))
+    met = L.measure({"city_будущий": obs_lens}, means)
+    return (float(met["city_будущий"].current_dof),
+            "город по каталогу, prod_shield неизвестен")
+
+
+def production_effects_for_city(fields: Mapping[str, Any], raw_names: Iterable[str],
+                                costs: Mapping[str, Any], means: Mapping[str, float],
+                                unit_specs: Mapping[str, Mapping[str, Any]],
+                                median_combat: float,
+                                city_dof_by_catalogue: tuple[Optional[float], str]
+                                ) -> tuple[dict[str, float], list[dict[str, Any]]]:
+    """Эффект каждого имени производства: способность − платёж (правило владельца, порог > 0).
+
+    Способность — по объявленному правилу (`production_capability`). Платёж — ТОЙ ЖЕ процедурой,
+    что и линза требований: `city_requirements` + `option_blocks` для одного имени, отсюда доля
+    `c/p` в [0, 1]. Числа не выдумываются: и способность, и платёж берутся из мира и объявления.
+    Имя, чей эффект не измерен, в счёт НЕ идёт и называется в строках с причиной.
+    """
+    city_dof, why_city = city_dof_by_catalogue
+    prefix = L.SPEC_PRODUCTION_ACTION_PREFIX
+    items = sorted({str(n)[len(prefix):] for n in raw_names if str(n).startswith(prefix)})
+    effects: dict[str, float] = {}
+    rows: list[dict[str, Any]] = []
+    for item in items:
+        spec = unit_specs.get(item) or {}
+        cap, why_cap = L.production_capability(item, spec, median_combat=median_combat,
+                                               creating_dof=city_dof, opened_options=0)
+        price = costs.get(item)
+        if isinstance(price, (int, float)) and price > 0:
+            req = city_requirements(fields, {item: float(price)}, [f"{prefix}{item}"],
+                                    fields.get("prod_shield"))
+            blocks = L.option_blocks(req, means)
+            raw_pay = max((float(c) / float(C) if C else 0.0) for c, C in blocks) if blocks else 0.0
+            # Доля требования в средствах нормируется в [0, 1]: > 1 читается как «средств не хватает»,
+            # а не как «в шестнадцать раз не хватает» — сравнение с способностью идёт по одной шкале.
+            pay = min(1.0, raw_pay)
+            why_pay = (f"платёж {price:g} в окне, доля {pay:.4f}"
+                       + (f" (сырая доля {raw_pay:.2f} — требование перекрывает средства)" if raw_pay > 1.0 else ""))
+        else:
+            pay = 0.0
+            why_pay = "цена не опубликована — платёж не судится (не подставляется нулём как знание)"
+        if cap is None:
+            rows.append({"имя": item, "эффект": None, "причина": f"{why_cap}; {why_pay}"})
+            continue
+        value = float(cap) - float(pay)
+        effects[item] = value if value > 0 else 0.0
+        rows.append({"имя": item, "способность": round(float(cap), 4),
+                     "платёж": round(float(pay), 4), "эффект": round(value, 4),
+                     "причина": f"{why_cap}; {why_pay}"})
+    return effects, rows
+
+
 def measure_step(obs: Mapping[str, Any], info: Optional[Mapping[str, Any]], turn: Any,
                  extractor: Any, prev_obs: Optional[Mapping[str, Any]] = None,
                  my_player_id: Any = 0) -> dict[str, Any]:
@@ -130,6 +198,14 @@ def measure_step(obs: Mapping[str, Any], info: Optional[Mapping[str, Any]], turn
     known_gates = {tid for tid, rec in (obs.get("tech") or {}).items()
                    if isinstance(rec, dict) and L.gate_is_open(rec)}
     catalogue = L.catalogue_index(obs.get("tech") or {})
+    # Каталог города: меню БЕЗ отсева действий с пустыми параметрами. Мир перечисляет там всё, что
+    # город может строить (`produce_<Имя>`), и отсев «пустых» выбрасывал каталог целиком — отсюда
+    # 4–5 векторов вместо каталога. Для города каталог — часть предложения мира, не репертуар.
+    menu_all = L.menu_by_entity((info or {}).get("available_actions") or {}, valid_only=False)
+    unit_specs = L.unit_specs_index(obs.get("tech") or {})
+    median_combat, n_median, why_median = L.median_combat_share(unit_specs)
+    v_max_of: dict[str, float] = {}
+    effect_rows: dict[str, list[dict[str, Any]]] = {}
     bindings: dict[str, Any] = {}
     vectors: dict[str, list[str]] = {}
     fields_of: dict[str, dict] = {}
@@ -141,6 +217,8 @@ def measure_step(obs: Mapping[str, Any], info: Optional[Mapping[str, Any]], turn
             tech_skipped += 1               # технология — предмет действия, не сущность
             continue
         raw_names = menu.get(eid, [])
+        if kind == "city":
+            raw_names = menu_all.get(eid, raw_names)   # каталог города — без отсева «пустых»
         if not raw_names:
             continue                        # сущности без меню не о чем мерить
         raw_menus[eid] = raw_names
@@ -154,9 +232,25 @@ def measure_step(obs: Mapping[str, Any], info: Optional[Mapping[str, Any]], turn
                 if key in fields:
                     fields["moves_left"] = fields[key]
                     break
+        effects: Optional[dict[str, float]] = None
+        if kind == "city":
+            effects, rows_eff = production_effects_for_city(
+                fields, raw_names, costs, means, unit_specs, median_combat,
+                city_dof_by_catalogue=hypothetical_city_dof(costs, means, obs, own))
+            effect_rows[eid] = rows_eff
         names = L.available_vectors(kind, fields, raw_names, known_gates,
-                                    catalogue=catalogue, known_techs=known_gates)
+                                    catalogue=catalogue, known_techs=known_gates,
+                                    production_effects=effects,
+                                    allowed_now=(set(menu.get(eid, ())) if kind == "city" else None))
         vectors[eid] = names
+        if kind == "city":
+            # `V(максимум)`: тот же счёт, но судится весь каталог (`allowed_now` не передаётся) и
+            # доступность по технологиям не ограничивает. Разность — объявленная дельта открытия.
+            all_known = set((obs.get("tech") or {}).keys())
+            names_max = L.available_vectors(kind, fields, raw_names, known_gates,
+                                            catalogue=catalogue, known_techs=all_known,
+                                            production_effects=effects)
+            v_max_of[eid] = float(L.response_vector_count(names_max))
         fields_of[eid] = fields
         variety = L.variety_counters(names, disturbances(obs, eid, kind, own), powers_of(obs, own))
         requirements = (city_requirements(fields, costs, names, fields.get("prod_shield"))
@@ -171,4 +265,6 @@ def measure_step(obs: Mapping[str, Any], info: Optional[Mapping[str, Any]], turn
     return {"state": state, "measured": measured, "dof": dof, "counts": counts,
             "vectors": vectors, "fields": fields_of, "raw_menus": raw_menus,
             "catalogue": catalogue, "known_techs": known_gates, "tech_skipped": tech_skipped,
-            "index": L.total_index(measured)}
+            "index": L.total_index(measured),
+            "v_max": v_max_of, "production_effects": effect_rows,
+            "median_combat": (median_combat, n_median, why_median)}

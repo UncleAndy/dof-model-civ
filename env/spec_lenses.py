@@ -558,7 +558,9 @@ def available_vectors(entity_type: str, fields: Mapping[str, Any],
                       names: Iterable[str],
                       known_gates: Iterable[str] = (),
                       catalogue: Optional[Mapping[str, Any]] = None,
-                      known_techs: Iterable[str] = ()) -> list[str]:
+                      known_techs: Iterable[str] = (),
+                      production_effects: Optional[Mapping[str, float]] = None,
+                      allowed_now: Optional[Iterable[str]] = None) -> list[str]:
     """Векторы реакции сущности: меню минус то, что мертво (§4.6).
 
     Меню — предложение мира, а не список возможного. Вектором реакции не является
@@ -580,8 +582,82 @@ def available_vectors(entity_type: str, fields: Mapping[str, Any],
         variable = SPEC_VARIABLE_BY_CATEGORY.get(action_category(name))
         if variable is not None and variable in frozen:
             continue
+        if name.startswith(SPEC_PRODUCTION_ACTION_PREFIX) and production_effects is not None:
+            item = name[len(SPEC_PRODUCTION_ACTION_PREFIX):]
+            if float(production_effects.get(item, 0.0)) <= 0.0:
+                continue        # имя, которое ничего не даёт системе, вектором реакции не является
+        if (name.startswith(SPEC_PRODUCTION_ACTION_PREFIX) and allowed_now is not None
+                and name not in set(allowed_now)):
+            # «Сейчас» судит МИР: имя, которого нет среди предложенных им действий
+            # (`produce_<Имя>` с непустыми параметрами), городом сейчас не начато быть не может.
+            # Для «максимума» этот список не передаётся — тогда судится весь каталог.
+            continue
         out.append(name)
     return out
+
+
+#: Объявленный список типов-основателей (структура `v2` §3.1; ОБЪЯВЛЕНИЕ, не замер).
+SPEC_CITY_FOUNDING_UNIT_TYPES: tuple[str, ...] = ("Settlers", "Engineers")
+
+
+def unit_specs_index(tech_records: Optional[Mapping[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Имя предмета → его запись каталога с полями типа.
+
+    `catalogue_index` хранит только требования; для способности нужны поля типа
+    (атака, защита, цена), поэтому они собираются отдельным индексом.
+    """
+    out: dict[str, dict[str, Any]] = {}
+    for _tid, rec in (tech_records or {}).items():
+        if not isinstance(rec, Mapping):
+            continue
+        for key in ("sup_units", "sup_improvements"):
+            for spec in (rec.get(key) or []):
+                if isinstance(spec, Mapping) and spec.get("name"):
+                    out.setdefault(str(spec["name"]), dict(spec))
+    return out
+
+
+def median_combat_share(specs: Mapping[str, Mapping[str, Any]]) -> tuple[float, int, str]:
+    """Медиана «атака+защита» по боевым типам каталога — опора нормировки.
+
+    Константа не вводится: опора — статистика самого каталога. Медиана, а не
+    максимум, потому что одиночный выброс (`Nuclear`: 99 при следующем 24) обнулил бы
+    весь каталог.
+    """
+    vals: list[float] = []
+    for spec in specs.values():
+        a, d = spec.get("attack_strength"), spec.get("defense_strength")
+        if isinstance(a, (int, float)) and isinstance(d, (int, float)) and (a + d) > 0:
+            vals.append(float(a) + float(d))
+    if not vals:
+        return 0.0, 0, "боевых типов в каталоге нет — нормировать нечем"
+    vals.sort()
+    n = len(vals)
+    med = vals[n // 2] if n % 2 else (vals[n // 2 - 1] + vals[n // 2]) / 2.0
+    return float(med), n, f"медиана (атака+защита) по {n} боевым типам каталога"
+
+
+def production_capability(item: str, spec: Mapping[str, Any], *, median_combat: float,
+                          creating_dof: Optional[float] = None,
+                          opened_options: int = 0) -> tuple[Optional[float], str]:
+    """Способность имени по объявленному правилу (один уровень раскрытия).
+
+    Порядок оснований: (1) имя, создающее город, — способность равна `DoF` создаваемого
+    («город по каталогу»); (2) имя, открывающее опции города, — 1.0 (число открытых
+    называется рядом); (3) прочий юнит — медианная боевая доля. Если ни одно основание не
+    измерено, способность НЕИЗМЕРЕНА (`None`), а не ноль: незнание не подменяется числом.
+    """
+    if item in SPEC_CITY_FOUNDING_UNIT_TYPES:
+        if creating_dof is None:
+            return None, "создаёт город, но DoF города не измерен (каталог цен пуст)"
+        return float(creating_dof), "создаёт город: способность = DoF города по каталогу"
+    if opened_options > 0:
+        return 1.0, f"открывает опции города: {opened_options} (величина названа рядом)"
+    a, d = spec.get("attack_strength"), spec.get("defense_strength")
+    if not isinstance(a, (int, float)) or not isinstance(d, (int, float)) or median_combat <= 0:
+        return None, "боевая доля не измерена: нет полей типа или медианы каталога"
+    share = (float(a) + float(d)) / float(median_combat)
+    return min(1.0, share), f"боевая доля: ({a}+{d}) / медиана {median_combat:g}"
 
 
 def constraint_observation(entity_type: str,
