@@ -291,6 +291,9 @@ def live(port: int, seed: int, turns: int, fps: int, fog: bool) -> dict[str, Any
     fc_args["client_port"] = port
     # Сцена: число ИИ-игроков. Скрытые соперники — это `aifill` 8, а не 4 по умолчанию.
     fc_args["aifill"] = int(os.environ.get("V011_AIFILL", "4") or 4)
+    # Терпение мира — условие измерения, одинаковое для всех плеч (не коэффициент модели).
+    fc_args["server_timeout"] = int(os.environ.get("V011_SERVER_TIMEOUT", "0") or 0) or \
+        fc_args.get("server_timeout", 30)
     fc_args["debug.take_screenshot"] = True      # кадры снимает МИР, мы их только собираем
     fc_args["debug.headless"] = True
     fc_args["debug.global_view_screenshot"] = not fog
