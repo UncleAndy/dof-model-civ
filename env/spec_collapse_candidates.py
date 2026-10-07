@@ -182,3 +182,77 @@ def extraneous_candidates(obs: Mapping[str, Any], my_player_id: Any,
             out.append(dict(u, why=("посторонний юнит на нашей территории" if on_our_soil
                                     else "посторонний юнит в пределах открытых клеток")))
     return out
+
+
+def _city_tiles(obs: Mapping[str, Any]) -> dict[tuple[int, int], int]:
+    """Клетки с городом и их владельцы (слой `city_owner`)."""
+    grid = _layer(obs, "city_owner")
+    out: dict[tuple[int, int], int] = {}
+    if grid is None:
+        return out
+    try:
+        ys, xs = len(grid), len(grid[0])
+    except (TypeError, IndexError):
+        return out
+    for y in range(ys):
+        for x in range(xs):
+            v = _cell(grid, x, y)
+            if v is not None and v != EMPTY:
+                out[(x, y)] = v
+    return out
+
+
+def loss_events(prev: Mapping[str, Any], obs: Mapping[str, Any],
+                my_player_id: Any = 0) -> list[dict[str, Any]]:
+    """Чужие потери между двумя наблюдениями: юнит исчез, город исчез или сменил владельца.
+
+    Жертвой считается ЧУЖАЯ сущность: владелец модели (2026-10-07) приравнял нападение на
+    третью сторону к нападению на нас. Наши потери считает `env.spec_attack`, здесь они
+    не дублируются.
+    """
+    try:
+        me = int(my_player_id)
+    except (TypeError, ValueError):
+        me = 0
+    prev_units = {(u["x"], u["y"]): u for u in foreign_units(prev, me)}
+    now_units = {(u["x"], u["y"]): u for u in foreign_units(obs, me)}
+
+    events: list[dict[str, Any]] = []
+    for pos, u in prev_units.items():
+        if pos not in now_units:
+            events.append({"kind": "unit", "owner": u["owner"], "x": u["x"], "y": u["y"],
+                           "why": "чужой юнит исчез между срезами"})
+
+    prev_cities, now_cities = _city_tiles(prev), _city_tiles(obs)
+    for pos, owner in prev_cities.items():
+        if owner == me:
+            continue
+        new_owner = now_cities.get(pos)
+        if new_owner != owner:
+            events.append({"kind": "city", "owner": owner, "x": pos[0], "y": pos[1],
+                           "new_owner": new_owner,
+                           "why": ("чужой город перешёл другому игроку" if new_owner not in (None, me)
+                                   else "чужой город исчез между срезами")})
+    return events
+
+
+def classify_loss(obs: Mapping[str, Any], event: Mapping[str, Any],
+                  my_player_id: Any = 0) -> dict[str, Any]:
+    """Кто мог нанести потерю: видимые чужие рядом с местом события, разделённые по клетке.
+
+    Ни одного видимого чужого рядом — «нападающий не наблюдён», кандидатов нет: догадка
+    из тумана кандидатом не становится.
+    """
+    x, y = int(event["x"]), int(event["y"])
+    near = [u for u in foreign_units(obs, my_player_id)
+            if abs(int(u["x"]) - x) <= 1 and abs(int(u["y"]) - y) <= 1]
+    if not near:
+        return {"candidates": [], "attacker": None, "defender": None,
+                "reason": "нападающий не наблюдён — рядом с местом потери чужих нет"}
+    if len(near) == 1:
+        return {"candidates": [dict(near[0], why="единственный чужой рядом с местом потери")],
+                "attacker": None, "defender": None,
+                "reason": "единственный видимый чужой рядом — кандидат"}
+    res = classify_pair(obs, near[0], near[1])
+    res["reason"] = "двое видимых чужих рядом с местом потери: " + str(res["reason"])
+    return res

@@ -16,20 +16,25 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 from env.spec_collapse_candidates import (       # noqa: E402
-    EMPTY, classify_pair, extraneous_candidates, standing_on_own_tile, tile_owner_at,
+    EMPTY, classify_loss, classify_pair, extraneous_candidates, loss_events,
+    standing_on_own_tile, tile_owner_at,
 )
 
 XS, YS = 10, 10
 ME = 0
 
 
-def make_map(tile_owner=None, unit_owner=None, status=None):
+def make_map(tile_owner=None, unit_owner=None, status=None, city_owner=None):
     """Слои строятся В ПОРЯДКЕ МИРА: grid[y][x] (см. `spec_threat.foreign_units_from_map`)."""
     m = {}
     if tile_owner is not None:
         m["tile_owner"] = [[EMPTY for _ in range(XS)] for _ in range(YS)]
         for (x, y), v in tile_owner.items():
             m["tile_owner"][y][x] = v
+    if city_owner is not None:
+        m["city_owner"] = [[EMPTY for _ in range(XS)] for _ in range(YS)]
+        for (x, y), v in city_owner.items():
+            m["city_owner"][y][x] = v
     if unit_owner is not None:
         m["unit_owner"] = [[EMPTY for _ in range(XS)] for _ in range(YS)]
         for (x, y), v in unit_owner.items():
@@ -116,6 +121,34 @@ check("клетка не наблюдена -> None",
       standing_on_own_tile(make_map(), 4, 1, 1) is None)
 check("пустышка клетки -> None (а не владелец 0)",
       standing_on_own_tile(make_map(tile_owner={(1, 1): EMPTY}), ME, 1, 1) is None)
+
+# 12. Чужие потери: исчезнувший юнит и город, сменивший владельца.
+prev12 = make_map(tile_owner={(4, 4): 5, (3, 3): 4}, unit_owner={(4, 4): 5},
+                  city_owner={(3, 3): 4}, status={(4, 4)})
+obs12 = make_map(tile_owner={(3, 3): 6}, city_owner={(3, 3): 6}, status={(3, 3)})
+ev12 = loss_events(prev12, obs12, ME)
+check("исчезновение чужого юнита -> событие",
+      any(e["kind"] == "unit" and e["owner"] == 5 for e in ev12), f"событий {len(ev12)}")
+check("город сменил владельца -> событие перехода",
+      any(e["kind"] == "city" and e.get("new_owner") == 6 for e in ev12), f"событий {len(ev12)}")
+
+# 13. Единственный видимый чужой рядом с местом потери -> кандидат.
+obs13 = make_map(tile_owner={(4, 3): 6}, unit_owner={(4, 3): 6}, status={(4, 3)})
+r13 = classify_loss(obs13, {"x": 4, "y": 4}, ME)
+check("один чужой рядом с местом потери -> кандидат",
+      len(r13["candidates"]) == 1 and r13["candidates"][0]["owner"] == 6, r13["reason"])
+
+# 14. Двое рядом: на своей клетке — защитник, на чужой — нападающий.
+obs14 = make_map(tile_owner={(4, 3): 6, (5, 4): 3},
+                 unit_owner={(4, 3): 6, (5, 4): 7}, status={(4, 3), (5, 4)})
+r14 = classify_loss(obs14, {"x": 4, "y": 4}, ME)
+check("двое рядом -> нападающий различим по клетке",
+      r14["attacker"] is not None and r14["attacker"]["owner"] == 7, r14["reason"])
+
+# 15. Никого рядом -> кандидатов нет: догадка из тумана не считается.
+r15 = classify_loss(make_map(tile_owner={(8, 8): 6}), {"x": 4, "y": 4}, ME)
+check("никого рядом -> кандидатов нет",
+      not r15["candidates"] and "не наблюдён" in r15["reason"], r15["reason"])
 
 print()
 if failures:
