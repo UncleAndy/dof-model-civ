@@ -1392,6 +1392,61 @@ def run_recovery() -> None:
           f"{hv.verdict}, свидетель {hv.witness}")
 
 
+def run_city_indices() -> None:
+    """Городская ветка: оба счёта, гейт продажи, канал замера и правило эффекта.
+
+    Проверки идут на сохранённом живом наблюдении (`tests/fixtures/real_obs_01.json`) и на числах,
+    которые уже были измерены отдельно — `v2` подтвердил связь «индекс 21 = Palace» своим замером,
+    а `Settlers` своей способностью обязан нашему же счёту города по каталогу цен.
+    """
+    import json
+    import pathlib
+    from env import spec_obs as SO
+    from env.entity_extractor import GameStateExtractor
+
+    path = pathlib.Path("tests/fixtures/real_obs_01.json")
+    if not path.is_file():
+        check("город: фикстура живого наблюдения на месте", False, str(path))
+        return
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    snap = raw[-1]["observation"]
+    info = raw[-1].get("info")
+    m = SO.measure_step(snap, info, (info or {}).get("turn"), GameStateExtractor(), None, 0)
+    cities = [k for k in m["vectors"] if k.startswith("city")]
+    check("город: в разборе есть город", bool(cities), f"сущности: {sorted(m['vectors'])[:6]}")
+    if not cities:
+        return
+    cid = cities[0]
+    v_now, v_max = float(m["counts"][cid]), float((m.get("v_max") or {}).get(cid, -1))
+    check("город: V(сейчас) строго меньше V(максимума) — различение работает",
+          v_max > v_now, f"сейчас {v_now}, максимум {v_max}")
+    out = (m.get("city_output") or {}).get(cid) or {}
+    check("город: канал замера улучшений заполнен размером и именем постройки",
+          out.get("размер") == 1 and out.get("улучшения") == ["Palace"],
+          f"city_output = {out}")
+    rows = (m.get("production_effects") or {}).get(cid) or []
+    pos = [r for r in rows if (r.get("эффект") or 0) > 0]
+    settlers = [r for r in rows if r.get("имя") == "Settlers"]
+    # Инвариант правила, а не ожидаемое число: у КАЖДОГО вектора-производства эффект обязан быть > 0.
+    # Сколько именно имён проходит порог — свойство данных (здесь `prod_shield = 7`, поэтому платёж
+    # горизонтный и проходят десятки боевых типов), и подгонять проверку под одно имя нельзя.
+    vectors = set(m["vectors"].get(cid) or [])
+    passing = {r["имя"] for r in pos}
+    pref = L.SPEC_PRODUCTION_ACTION_PREFIX
+    now_prod = {str(n)[len(pref):] for n in vectors if str(n).startswith(pref)}
+    # Проверяем НАПРАВЛЕНИЕ: всё, что стоит в «сейчас» как производство, обязано иметь эффект > 0.
+    # Обратное неверно и верным быть не может: имя с положительным эффектом, которого город сейчас
+    # начать не может, живёт в «максимуме» и в «сейчас» его нет.
+    check("город: каждый вектор-производство в «сейчас» имеет эффект > 0",
+          bool(now_prod) and now_prod.issubset(passing),
+          f"в «сейчас» производств {len(now_prod)}, прошли порог {len(passing)}; "
+          f"без эффекта: {sorted(now_prod - passing)[:5]}")
+    check("город: поселенец среди прошедших порог и его способность — счёт города по каталогу",
+          "Settlers" in passing and bool(settlers)
+          and abs(float(settlers[0].get("способность") or 0) - 0.9744) < 0.001,
+          f"способность Settlers: {settlers[0].get('способность') if settlers else 'нет строки'}")
+
+
 def main() -> int:
     steps = 1
     if "--steps" in sys.argv:
@@ -1401,6 +1456,7 @@ def main() -> int:
     run_anchors()
     run_rules()
     run_horizon()
+    run_city_indices()
     run_declaration()
     print(f"\nпроверок: {PASS + FAIL}, падений: {FAIL}")
     return 0 if FAIL == 0 else 1

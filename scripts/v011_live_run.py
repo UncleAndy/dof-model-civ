@@ -250,6 +250,7 @@ def live(port: int, seed: int, turns: int, fps: int, fog: bool) -> dict[str, Any
                    "сущностей": len(m["measured"]),
                    "разбивка": _br(m["measured"], counts, m.get("v_max")),
                    "эффекты_производства": m.get("production_effects") or {},
+                   "city_output": m.get("city_output") or {},
                    "медиана_боевой": m.get("median_combat"),
                    "V_всего": round(sum(counts.values()), 1),
                    "нападение": getattr(extractor, "last_attack_event", None),

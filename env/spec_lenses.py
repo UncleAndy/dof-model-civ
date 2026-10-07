@@ -588,15 +588,21 @@ def available_vectors(entity_type: str, fields: Mapping[str, Any],
             item = name[len(SPEC_PRODUCTION_ACTION_PREFIX):]
             if float(production_effects.get(item, 0.0)) <= 0.0:
                 continue        # имя, которое ничего не даёт системе, вектором реакции не является
-        if (name.startswith(SPEC_PRODUCTION_ACTION_PREFIX) and allowed_now is not None
-                and name not in set(allowed_now)):
+        if allowed_now is not None and (
+                name.startswith(SPEC_PRODUCTION_ACTION_PREFIX)
+                or name.startswith(SPEC_SELL_IMPROVEMENT_PREFIX)):
             # «Сейчас» судит МИР: имя, которого нет среди предложенных им действий
-            # (`produce_<Имя>` с непустыми параметрами), городом сейчас не начато быть не может.
-            # Для «максимума» этот список не передаётся — тогда судится весь каталог.
-            continue
+            # (`produce_<Имя>` с непустыми параметрами), городом сейчас не начато быть не может;
+            # продать можно только построенное (`improvements` — маска мира, индекс = id улучшения).
+            # Для «максимума» список не передаётся — тогда судится весь каталог.
+            if name not in set(allowed_now):
+                continue
         out.append(name)
     return out
 
+
+#: Префикс действия «продать постройку»: продать можно только построенное (маска `improvements`).
+SPEC_SELL_IMPROVEMENT_PREFIX: str = "city_sell_improvement_"
 
 #: Объявленный список типов-основателей (структура `v2` §3.1; ОБЪЯВЛЕНИЕ, не замер).
 SPEC_CITY_FOUNDING_UNIT_TYPES: tuple[str, ...] = ("Settlers", "Engineers", "Migrants", "Nomads")
@@ -656,6 +662,42 @@ def unit_order_index(ruleset_path: Optional[Any] = None) -> dict[int, str]:
                 value = value.strip('"').strip("'")
                 if value and value not in out.values():
                     out[idx] = value
+    return out
+
+
+def improvement_id_index(tech_records: Optional[Mapping[str, Any]]) -> dict[int, str]:
+    """Отображение «позиция в городской маске `improvements` → имя улучшения».
+
+    Источник — `tech.sup_improvements`, где у записи есть `id` (так же читал `v2`: «id нужен, чтобы
+    читать вектор `improvements` в записи города (индекс = id)», связь подтверждена замером —
+    «у города-столицы стоит индекс 21 = Palace»).
+    """
+    out: dict[int, str] = {}
+    for _tid, rec in (tech_records or {}).items():
+        if not isinstance(rec, Mapping):
+            continue
+        for spec in (rec.get("sup_improvements") or []):
+            if isinstance(spec, Mapping) and isinstance(spec.get("id"), int):
+                name = spec.get("name") or spec.get("rule_name")
+                if name:
+                    out.setdefault(int(spec["id"]), str(name))
+    return out
+
+
+def name_kind_map(tech_records: Optional[Mapping[str, Any]]) -> dict[str, str]:
+    """Имя каталога → семейство (`unit` или `improvement`).
+
+    Нужна для правила платежа: скорость накопления — свойство семейства (`v2` §10.21.3: у улучшений
+    она своя), а не одна на всех.
+    """
+    out: dict[str, str] = {}
+    for _tid, rec in (tech_records or {}).items():
+        if not isinstance(rec, Mapping):
+            continue
+        for key, kind in (("sup_units", "unit"), ("sup_improvements", "improvement")):
+            for spec in (rec.get(key) or []):
+                if isinstance(spec, Mapping) and spec.get("name"):
+                    out.setdefault(str(spec["name"]), kind)
     return out
 
 

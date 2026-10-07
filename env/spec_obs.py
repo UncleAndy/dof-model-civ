@@ -14,7 +14,8 @@ from typing import Any, Mapping, Optional
 
 from env import spec_lenses as L
 from env import spec_options as O
-from env.config import SPEC_INCOME_FIELDS, SPEC_MEANS_HORIZON_TURNS
+from env.config import (SPEC_INCOME_FIELDS, SPEC_MEANS_HORIZON_TURNS,
+                        MEASURED_IMPROVEMENT_ACCUMULATION_PER_TURN)
 
 
 def build_cost_index(obs: Mapping[str, Any]) -> dict[str, float]:
@@ -44,18 +45,38 @@ def build_cost_index(obs: Mapping[str, Any]) -> dict[str, float]:
 
 def city_requirements(city_obs: Mapping[str, Any], costs: Mapping[str, float],
                       menu: list[str], production: Optional[float] = None,
-                      horizon: float = SPEC_MEANS_HORIZON_TURNS) -> dict[str, float]:
+                      horizon: float = SPEC_MEANS_HORIZON_TURNS,
+                      kinds: Optional[Mapping[str, str]] = None,
+                      notes: Optional[list[str]] = None) -> dict[str, float]:
     """Требования города: **платёж за горизонт** по тому, что мир предлагает строить.
 
     База времени одна и та же у требования и у средств: средства — запас плюс доход за горизонт,
     требование — то, что придётся оплатить за горизонт. Полная цена против однодневного дохода —
     не свойство города, а разные базы времени: `20/7` вместо `7/7`.
+
+    **Правило семейства.** Скорость накопления — свойство семейства, а не одна на всех: у улучшений
+    `v2` измерил **1 щит за ход** независимо от `prod_shield` (§10.21.3), поэтому у них своя скорость.
+    Значение берётся только из **своего** замера (`MEASURED_IMPROVEMENT_ACCUMULATION_PER_TURN`);
+    пока его нет — улучшение считается юнитовым правилом, и причина кладётся в `notes` (незнание
+    не выдаётся за знание).
     """
     per_transition: list[dict[str, float]] = []
     for name in menu:
         if not str(name).startswith("produce_"):
             continue
-        due = O.payment_due(costs.get(str(name)[len("produce_"):]), production, horizon)
+        item = str(name)[len("produce_"):]
+        rate, why = production, None
+        if (kinds or {}).get(item) == "improvement":
+            measured = MEASURED_IMPROVEMENT_ACCUMULATION_PER_TURN
+            if measured:
+                rate = float(measured)
+                why = f"улучшение {item}: своя скорость {measured:g} щитов/ход (замер)"
+            else:
+                why = (f"улучшение {item}: своя скорость НЕ измерена нами — считаем юнитовым "
+                       f"правилом ({production}), правило семейства у `v2` даёт до 5× разницы")
+        if why and notes is not None:
+            notes.append(why)
+        due = O.payment_due(costs.get(item), rate, horizon)
         if due is not None:
             per_transition.append({"energy": float(due)})
     return L.reduce_requirements(per_transition)
@@ -112,7 +133,8 @@ def powers_of(obs: Mapping[str, Any], my_player_id: Any = 0) -> list[str]:
 
 
 def hypothetical_city_dof(costs: Mapping[str, Any], means: Mapping[str, float],
-                          obs: Mapping[str, Any], own: int) -> tuple[Optional[float], str]:
+                          obs: Mapping[str, Any], own: int,
+                          kinds: Optional[Mapping[str, str]] = None) -> tuple[Optional[float], str]:
     """DoF города размера 1, посчитанный нашими линзами по ОПУБЛИКОВАННОМУ каталогу цен.
 
     Клетка в счёт не входит (её мера — отдельный вопрос). Выход щитов неизвестен и нулём не
@@ -125,7 +147,7 @@ def hypothetical_city_dof(costs: Mapping[str, Any], means: Mapping[str, float],
     city_fields = {"size": 1, "prod_shield": None, "shield_stock": 0}
     obs_lens = L.lens_observation(
         variety=L.variety_counters(names, [], powers_of(obs, own)),
-        requirements=city_requirements(city_fields, costs, names, None),
+        requirements=city_requirements(city_fields, costs, names, None, kinds=kinds),
         constraint=L.constraint_observation("city", city_fields))
     met = L.measure({"city_будущий": obs_lens}, means)
     return (float(met["city_будущий"].current_dof),
@@ -136,14 +158,16 @@ def production_effects_for_city(fields: Mapping[str, Any], raw_names: Iterable[s
                                 costs: Mapping[str, Any], means: Mapping[str, float],
                                 unit_specs: Mapping[str, Mapping[str, Any]],
                                 median_combat: float,
-                                city_dof_by_catalogue: tuple[Optional[float], str]
+                                city_dof_by_catalogue: tuple[Optional[float], str],
+                                kinds: Optional[Mapping[str, str]] = None
                                 ) -> tuple[dict[str, float], list[dict[str, Any]]]:
     """Эффект каждого имени производства: способность − платёж (правило владельца, порог > 0).
 
     Способность — по объявленному правилу (`production_capability`). Платёж — ТОЙ ЖЕ процедурой,
     что и линза требований: `city_requirements` + `option_blocks` для одного имени, отсюда доля
-    `c/p` в [0, 1]. Числа не выдумываются: и способность, и платёж берутся из мира и объявления.
-    Имя, чей эффект не измерен, в счёт НЕ идёт и называется в строках с причиной.
+    `c/p` в [0, 1]. **Скорость накопления — по семейству** (`kinds`): у улучшений она своя, `v2`
+    измерил 1 щит/ход, но значение берётся только из нашего замера, иначе причина называется.
+    Числа не выдумываются: и способность, и платёж берутся из мира и объявления.
     """
     city_dof, why_city = city_dof_by_catalogue
     prefix = L.SPEC_PRODUCTION_ACTION_PREFIX
@@ -156,15 +180,17 @@ def production_effects_for_city(fields: Mapping[str, Any], raw_names: Iterable[s
                                                creating_dof=city_dof, opened_options=0)
         price = costs.get(item)
         if isinstance(price, (int, float)) and price > 0:
+            notes: list[str] = []
             req = city_requirements(fields, {item: float(price)}, [f"{prefix}{item}"],
-                                    fields.get("prod_shield"))
+                                    fields.get("prod_shield"), kinds=kinds, notes=notes)
             blocks = L.option_blocks(req, means)
             raw_pay = max((float(c) / float(C) if C else 0.0) for c, C in blocks) if blocks else 0.0
             # Доля требования в средствах нормируется в [0, 1]: > 1 читается как «средств не хватает»,
             # а не как «в шестнадцать раз не хватает» — сравнение с способностью идёт по одной шкале.
             pay = min(1.0, raw_pay)
             why_pay = (f"платёж {price:g} в окне, доля {pay:.4f}"
-                       + (f" (сырая доля {raw_pay:.2f} — требование перекрывает средства)" if raw_pay > 1.0 else ""))
+                       + (f" (сырая доля {raw_pay:.2f} — требование перекрывает средства)" if raw_pay > 1.0 else "")
+                       + (" | " + "; ".join(notes) if notes else ""))
         else:
             pay = 0.0
             why_pay = "цена не опубликована — платёж не судится (не подставляется нулём как знание)"
@@ -204,8 +230,10 @@ def measure_step(obs: Mapping[str, Any], info: Optional[Mapping[str, Any]], turn
     menu_all = L.menu_by_entity((info or {}).get("available_actions") or {}, valid_only=False)
     unit_specs = L.unit_specs_index(obs.get("tech") or {})
     unit_names_by_id = L.unit_order_index()
+    kinds = L.name_kind_map(obs.get("tech") or {})
     median_combat, n_median, why_median = L.median_combat_share(unit_specs)
     v_max_of: dict[str, float] = {}
+    city_output: dict[str, dict[str, Any]] = {}
     effect_rows: dict[str, list[dict[str, Any]]] = {}
     bindings: dict[str, Any] = {}
     vectors: dict[str, list[str]] = {}
@@ -237,7 +265,8 @@ def measure_step(obs: Mapping[str, Any], info: Optional[Mapping[str, Any]], turn
         if kind == "city":
             effects, rows_eff = production_effects_for_city(
                 fields, raw_names, costs, means, unit_specs, median_combat,
-                city_dof_by_catalogue=hypothetical_city_dof(costs, means, obs, own))
+                city_dof_by_catalogue=hypothetical_city_dof(costs, means, obs, own, kinds=kinds),
+                kinds=kinds)
             effect_rows[eid] = rows_eff
         allowed_now: Optional[set[str]] = None
         if kind == "city":
@@ -249,6 +278,14 @@ def measure_step(obs: Mapping[str, Any], info: Optional[Mapping[str, Any]], turn
                 allowed_now |= {f"{L.SPEC_PRODUCTION_ACTION_PREFIX}{name}"
                                 for uid, name in unit_names_by_id.items()
                                 if uid < len(mask) and mask[uid]}
+            # Продажа — обратный переход (`v2` §4.1: «постройка → золото, потеря устойчивых опций»),
+            # поэтому продать можно только ПОСТРОЕННОЕ. Какие построены, говорит маска мира
+            # `improvements` (индекс = id улучшения из `tech.sup_improvements`).
+            imask = fields.get("improvements")
+            imp_names = L.improvement_id_index(obs.get("tech") or {})
+            if isinstance(imask, (list, tuple)) and imp_names:
+                allowed_now |= {f"{L.SPEC_SELL_IMPROVEMENT_PREFIX}{imp_names[i]}"
+                                for i, v in enumerate(imask) if v and i in imp_names}
         names = L.available_vectors(kind, fields, raw_names, known_gates,
                                     catalogue=catalogue, known_techs=known_gates,
                                     production_effects=effects,
@@ -262,9 +299,18 @@ def measure_step(obs: Mapping[str, Any], info: Optional[Mapping[str, Any]], turn
                                             catalogue=catalogue, known_techs=all_known,
                                             production_effects=effects)
             v_max_of[eid] = float(L.response_vector_count(names_max))
+            # Канал будущего корпусного замера (как у `v2`: `city_output` + `measure_improvement_unlock`):
+            # размер, построенные улучшения и число опубликованных предметов — то, из чего наблюдением
+            # берётся «насколько улучшение расширяет меню». На одном наблюдении величина не выводится.
+            city_output[eid] = {
+                "размер": fields.get("size"),
+                "улучшения": sorted(imp_names[i] for i, v in enumerate(imask)
+                                    if v and i in imp_names) if isinstance(imask, (list, tuple)) else [],
+                "публикуемых": len([n for n in raw_names
+                                    if str(n).startswith(L.SPEC_PRODUCTION_ACTION_PREFIX)])}
         fields_of[eid] = fields
         variety = L.variety_counters(names, disturbances(obs, eid, kind, own), powers_of(obs, own))
-        requirements = (city_requirements(fields, costs, names, fields.get("prod_shield"))
+        requirements = (city_requirements(fields, costs, names, fields.get("prod_shield"), kinds=kinds)
                         if kind == "city" else {})   # мир не публикует цены переходов — не выдумываем
         bindings[eid] = L.lens_observation(
             variety=variety,
@@ -278,4 +324,5 @@ def measure_step(obs: Mapping[str, Any], info: Optional[Mapping[str, Any]], turn
             "catalogue": catalogue, "known_techs": known_gates, "tech_skipped": tech_skipped,
             "index": L.total_index(measured),
             "v_max": v_max_of, "production_effects": effect_rows,
+            "city_output": city_output,
             "median_combat": (median_combat, n_median, why_median)}
