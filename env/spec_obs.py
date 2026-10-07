@@ -203,6 +203,7 @@ def measure_step(obs: Mapping[str, Any], info: Optional[Mapping[str, Any]], turn
     # 4–5 векторов вместо каталога. Для города каталог — часть предложения мира, не репертуар.
     menu_all = L.menu_by_entity((info or {}).get("available_actions") or {}, valid_only=False)
     unit_specs = L.unit_specs_index(obs.get("tech") or {})
+    unit_names_by_id = L.unit_order_index()
     median_combat, n_median, why_median = L.median_combat_share(unit_specs)
     v_max_of: dict[str, float] = {}
     effect_rows: dict[str, list[dict[str, Any]]] = {}
@@ -238,10 +239,20 @@ def measure_step(obs: Mapping[str, Any], info: Optional[Mapping[str, Any]], turn
                 fields, raw_names, costs, means, unit_specs, median_combat,
                 city_dof_by_catalogue=hypothetical_city_dof(costs, means, obs, own))
             effect_rows[eid] = rows_eff
+        allowed_now: Optional[set[str]] = None
+        if kind == "city":
+            # «Сейчас» читается у МИРА: маска города по размеру (число типов юнитов) плюс то, что
+            # мир сам предложил действиями. Имена из маски берутся по `id` типа из каталога.
+            mask = fields.get("can_build_unit")
+            allowed_now = set(menu.get(eid, ()))
+            if isinstance(mask, (list, tuple)):
+                allowed_now |= {f"{L.SPEC_PRODUCTION_ACTION_PREFIX}{name}"
+                                for uid, name in unit_names_by_id.items()
+                                if uid < len(mask) and mask[uid]}
         names = L.available_vectors(kind, fields, raw_names, known_gates,
                                     catalogue=catalogue, known_techs=known_gates,
                                     production_effects=effects,
-                                    allowed_now=(set(menu.get(eid, ())) if kind == "city" else None))
+                                    allowed_now=allowed_now)
         vectors[eid] = names
         if kind == "city":
             # `V(максимум)`: тот же счёт, но судится весь каталог (`allowed_now` не передаётся) и

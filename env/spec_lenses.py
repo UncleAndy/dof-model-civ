@@ -17,6 +17,8 @@
 """
 from __future__ import annotations
 
+import os
+from pathlib import Path
 from typing import Any, Iterable, Mapping, Optional, Sequence
 
 from brain.spec.measurement import (
@@ -597,7 +599,12 @@ def available_vectors(entity_type: str, fields: Mapping[str, Any],
 
 
 #: Объявленный список типов-основателей (структура `v2` §3.1; ОБЪЯВЛЕНИЕ, не замер).
-SPEC_CITY_FOUNDING_UNIT_TYPES: tuple[str, ...] = ("Settlers", "Engineers")
+SPEC_CITY_FOUNDING_UNIT_TYPES: tuple[str, ...] = ("Settlers", "Engineers", "Migrants", "Nomads")
+
+#: Путь к `units.ruleset` мира — источник порядка типов юнитов для маски города `can_build_unit`.
+SPEC_UNIT_RULESET_PATH: str = os.environ.get(
+    "SPEC_UNIT_RULESET_PATH",
+    "civrealm/src/civrealm/freeciv/misc/modified_server_code/units.ruleset")
 
 
 def unit_specs_index(tech_records: Optional[Mapping[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -614,6 +621,41 @@ def unit_specs_index(tech_records: Optional[Mapping[str, Any]]) -> dict[str, dic
             for spec in (rec.get(key) or []):
                 if isinstance(spec, Mapping) and spec.get("name"):
                     out.setdefault(str(spec["name"]), dict(spec))
+    return out
+
+
+def unit_order_index(ruleset_path: Optional[Any] = None) -> dict[int, str]:
+    """Отображение «номер позиции в маске города → имя типа юнита».
+
+    Источник — мировая таблица `UNIT_TYPES` (`civrealm/src/civrealm/freeciv/utils/unit_improvement_const.py`):
+    52 имени, ровно как длина маски `can_build_unit`. Порядок из `units.ruleset` для этого **не годится**:
+    там 56 секций и есть лишний `Migrants`, из-за чего позиции сдвигаются (проверено: по ruleset
+    истины `[0, 3]` читались как «Settlers + Engineers», а по мировой таблице — «Settlers + Warriors»,
+    и верно второе: инженеры требуют технологий, воины — нет).
+    """
+    try:                                    # мировая таблица — основной источник
+        from civrealm.freeciv.utils.unit_improvement_const import UNIT_TYPES  # type: ignore
+        return {i: str(n) for i, n in enumerate(UNIT_TYPES)}
+    except Exception:
+        pass
+    path = Path(str(ruleset_path or SPEC_UNIT_RULESET_PATH))   # запасной путь: разбор ruleset
+    if not path.is_file():
+        return {}
+    out: dict[int, str] = {}
+    idx = -1
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        s = line.strip()
+        if s.startswith("[unit_"):
+            idx += 1
+            continue
+        if idx >= 0 and s.startswith("name") and "=" in s:
+            if idx not in out:
+                value = s.split("=", 1)[1].strip()
+                if "(" in value and value.endswith(")"):
+                    value = value[value.find("(") + 1:-1].strip()   # `name = _("Settlers")` → литерал
+                value = value.strip('"').strip("'")
+                if value and value not in out.values():
+                    out[idx] = value
     return out
 
 
