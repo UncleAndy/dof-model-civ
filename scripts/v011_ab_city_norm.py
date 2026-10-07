@@ -48,6 +48,11 @@ ARMS = {
     "A": {"DOF_CITY_NORM": "narrow", "DOF_PROD_GATE": "on"},
     "B": {"DOF_CITY_NORM": "wide", "DOF_PROD_GATE": "off"},
 }
+for _lvl, _var in (("A", "DOF_AB_ENV_A"), ("B", "DOF_AB_ENV_B")):
+    for _item in filter(None, str(os.environ.get(_var, "") or "").split(",")):
+        _k, _, _v = _item.partition("=")
+        if _k.strip():
+            ARMS[_lvl][_k.strip()] = _v.strip()
 
 
 def _run(arm: str, seed: int, port: int, turns: int, tag: str) -> dict:

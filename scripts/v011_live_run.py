@@ -65,6 +65,59 @@ def _score_of_world(obs, own_id):  # noqa: ANN001, ANN201
     return world_score(obs, own_id)
 
 
+#: Направления игры `goto_N` → смещение клетки. Взято из конфига civrealm
+#: (`configs/llm_wrapper_settings.yaml`, 0 NW, 1 N, 2 NE, 3 W, 4 E, 5 SW, 6 S, 7 SE) — проверить здесь,
+#: а не помнить: 3 и 4 — это запад и восток, последовательность не круговая.
+_SCOUT_DIRS = {0: (-1, -1), 1: (0, -1), 2: (1, -1), 3: (-1, 0),
+               4: (1, 0), 5: (-1, 1), 6: (0, 1), 7: (1, 1)}
+#: Открытая клетка в `obs["map"]["status"]`; всё прочее (0 — вне обзора, 1) считается нераскрытым.
+_OPEN = 2
+#: Ходы, в которых разведка уже сделала свой шаг (правило: один шаг за ход).
+_SCOUT_DONE_TURNS: set = set()
+
+
+def _scout_action(obs, info):  # noqa: ANN001, ANN201
+    """Оснастка опыта: шаг к нераскрытой клетке. `(unit, actor, действие)` или `None`.
+
+    Правило объявлено ДО данных: (1) если рядом с юнитом есть нераскрытая клетка — шаг на неё, при
+    нескольких — меньший номер направления; (2) иначе шаг, уменьшающий расстояние до ближайшей
+    нераскрытой клетки карты; (3) если и такого нет — юнит пропускается. Ничего не подбирается и не
+    взвешивается: это разведка, а не политика.
+    """
+    units = ((info or {}).get("available_actions") or {}).get("unit") or {}
+    raw = ((obs or {}).get("map") or {}).get("status")
+    if not units or raw is None:
+        return None
+    # Карта приходит массивом: булево чтение массива запрещено (`ValueError` на `not grid`),
+    # поэтому сразу приводим к спискам целых — и вопросы «истинности» снимаются вместе с ним.
+    grid = [[int(s) for s in row] for row in raw]
+    xsize = int(((obs or {}).get("map") or {}).get("xsize") or 0)
+    unseen = [(y, x) for y, row in enumerate(grid) for x, s in enumerate(row) if s != _OPEN]
+    if not unseen:
+        return None
+    for actor in sorted(units):
+        names = units.get(actor) or {}
+        u = ((obs or {}).get("unit") or {}).get(actor) or {}
+        ux, uy = u.get("x"), u.get("y")
+        if ux is None or uy is None:
+            continue
+        here = [(ux + dx, uy + dy) for dx, dy in _SCOUT_DIRS.values()]
+        for d in sorted(_SCOUT_DIRS):
+            tx, ty = ux + _SCOUT_DIRS[d][0], uy + _SCOUT_DIRS[d][1]
+            if tx < 0 or ty < 0 or (xsize and tx >= xsize):
+                continue
+            if 0 <= ty < len(grid) and 0 <= tx < len(grid[ty]) and grid[ty][tx] != _OPEN:
+                if f"goto_{d}" in names:
+                    return ("unit", actor, f"goto_{d}")
+        best = min(unseen, key=lambda c: max(abs(c[1] - ux), abs(c[0] - uy)))
+        dx = (best[1] > ux) - (best[1] < ux)
+        dy = (best[0] > uy) - (best[0] < uy)
+        for d, (ddx, ddy) in _SCOUT_DIRS.items():
+            if (ddx, ddy) == (dx, dy) and f"goto_{d}" in names:
+                return ("unit", actor, f"goto_{d}")
+    return None
+
+
 def decide(obs, info, own_id):  # noqa: ANN001, ANN201
     """Точка проводки живого агента `v0.11`.
 
@@ -79,6 +132,22 @@ def decide(obs, info, own_id):  # noqa: ANN001, ANN201
     видео ничего не происходит, и причина не в записи, а в отсутствии решений.
     """
     global _DRIVER, _LAST_TURN, _PREV_OBS, _SOURCE
+    if str(os.environ.get("V011_SCOUT", "") or "").strip() not in ("", "0"):
+        # Темп объявлен: один шаг разведки за ход. Иначе на каждый шаг приходится обмен с сервером
+        # игры, и мир не успевает за ход (`AssertionError` на `server_timeout_handle`).
+        _turn_now = (info or {}).get("turn")
+        if _turn_now in _SCOUT_DONE_TURNS:
+            action = None
+        else:
+            action = _scout_action(obs, info)
+            if action is not None:
+                _SCOUT_DONE_TURNS.add(_turn_now)
+        _SOURCE[0] = ("РАЗВЕДКА (оснастка опыта «разведка против без разведки»), не поведение модели"
+                      if action is not None else
+                      "РАЗВЕДКА (оснастка опыта): нераскрытых клеток рядом нет — ход отдан драйверу")
+        if action is not None:
+            print(f"    разведка (оснастка): {action[2]} юнитом {action[1]}", flush=True)
+            return action
     k = int(os.environ.get("V011_DEMO_MOVE", "0") or 0)
     if k > 0:
         _SOURCE[0] = "САМОПРОВЕРКА ЗАПИСИ, не поведение модели"
