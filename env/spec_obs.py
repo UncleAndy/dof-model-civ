@@ -43,6 +43,13 @@ def build_cost_index(obs: Mapping[str, Any]) -> dict[str, float]:
     return index
 
 
+def _entity_record(raw: Any, eid: str) -> dict[str, Any]:
+    """Запись сущности из секции наблюдения (общий поиск по ключу — `L.section_for`)."""
+    key = str(eid).split("_", 1)[1] if "_" in str(eid) else str(eid)
+    found = L.section_for(raw, key)
+    return dict(found) if isinstance(found, Mapping) else {}
+
+
 def city_requirements(city_obs: Mapping[str, Any], costs: Mapping[str, float],
                       menu: list[str], production: Optional[float] = None,
                       horizon: float = SPEC_MEANS_HORIZON_TURNS,
@@ -54,11 +61,14 @@ def city_requirements(city_obs: Mapping[str, Any], costs: Mapping[str, float],
     требование — то, что придётся оплатить за горизонт. Полная цена против однодневного дохода —
     не свойство города, а разные базы времени: `20/7` вместо `7/7`.
 
-    **Правило семейства.** Скорость накопления — свойство семейства, а не одна на всех: у улучшений
-    `v2` измерил **1 щит за ход** независимо от `prod_shield` (§10.21.3), поэтому у них своя скорость.
-    Значение берётся только из **своего** замера (`MEASURED_IMPROVEMENT_ACCUMULATION_PER_TURN`);
-    пока его нет — улучшение считается юнитовым правилом, и причина кладётся в `notes` (незнание
-    не выдаётся за знание).
+    **Правило семейства — проверено ЗАМЕРОМ, а не принято на веру.** `v2` измерил у улучшений **1 щит за
+    ход** независимо от `prod_shield` (§10.21.3) и сам предупредил, что при смене стенда правило надо
+    перемерить. Мы перемерили (2026-10-07, слот 6000, сид 9780, `scripts/v011_improve_probe.py`): запас
+    постройки `Barracks` шёл 18 → 21 → 24 → 27 при выходе города 3 — то есть **скорость улучшения равна
+    выходу города**, как у юнитов, а правило `v2` здесь **опровергнуто**. Поэтому отдельная константа не
+    нужна: значение `MEASURED_IMPROVEMENT_ACCUMULATION_PER_TURN` остаётся `None` как результат замера, и
+    улучшение считается юнитовым правилом — теперь это подтверждённое правило, и причина кладётся в `notes`.
+    Если константа когда-нибудь будет заполнена, она перекроет юнитовое правило (ветка выше).
     """
     per_transition: list[dict[str, float]] = []
     for name in menu:
@@ -72,8 +82,9 @@ def city_requirements(city_obs: Mapping[str, Any], costs: Mapping[str, float],
                 rate = float(measured)
                 why = f"улучшение {item}: своя скорость {measured:g} щитов/ход (замер)"
             else:
-                why = (f"улучшение {item}: своя скорость НЕ измерена нами — считаем юнитовым "
-                       f"правилом ({production}), правило семейства у `v2` даёт до 5× разницы")
+                why = (f"улучшение {item}: своя скорость не нужна — ЗАМЕРЕНО 2026-10-07 (слот 6000, сид 9780, "
+                       f"`v011_improve_probe.py`), что она равна выходу города; считаем юнитовым правилом "
+                       f"({production}). Правило `v2` «1 щит/ход» на нашем стенде опровергнуто")
         if why and notes is not None:
             notes.append(why)
         due = O.payment_due(costs.get(item), rate, horizon)
@@ -172,8 +183,36 @@ def production_effects_for_city(fields: Mapping[str, Any], raw_names: Iterable[s
     city_dof, why_city = city_dof_by_catalogue
     prefix = L.SPEC_PRODUCTION_ACTION_PREFIX
     items = sorted({str(n)[len(prefix):] for n in raw_names if str(n).startswith(prefix)})
+    surplus = fields.get("surplus_shield")
+    if isinstance(surplus, (int, float)) and float(surplus) <= 0.0:
+        from .config import SPEC_AB_PROD_GATE       # плечо опыта (в): `off` — прежняя процедура
+        if SPEC_AB_PROD_GATE != "off":
+            # Правило `v2` §10.99 (замер: ход 1 — чистые 3, DoF города 21.125; застой — 0, DoF 3.0 → 2.0):
+            # производство входит в DoF города, только если оно ИДЁТ. Мир публикует чистый прирост щитов
+            # (`surplus_shield`); при ≤ 0 разрешённые постройки недостижимы, и приписывать их городу —
+            # это богатство, которого у него нет. Отсутствие поля — не ноль (аксиома 5): считаем как раньше.
+            # Правило применяется и к «сейчас», и к потолку: один правитель, одно чтение.
+            reason = (f"производство НЕ идёт: чистый прирост щитов {float(surplus):g} ≤ 0 — разрешённые "
+                      f"постройки недостижимы (правило `v2` §10.99)")
+            return {}, [{"имя": it, "эффект": 0.0, "причина": reason} for it in items]
     effects: dict[str, float] = {}
     rows: list[dict[str, Any]] = []
+    # Способность имени, которого НЕТ в каталоге, не подменяется нулём (аксиома 5; правило владельца
+    # «незнание ≠ отсутствие»): берётся медиана способностей известных предметов этого города.
+    # Замерено (2026-10-07): из четырёх разрешённых миром имён города два (`Barracks`, `Coinage`) в
+    # каталоге технологий отсутствуют, и без этой строки «сейчас» города читалось как 2 вместо 4.
+    measured_caps: list[float] = []
+    for item in items:
+        cap_i, _ = L.production_capability(item, unit_specs.get(item) or {}, median_combat=median_combat,
+                                           creating_dof=city_dof, opened_options=0)
+        if cap_i is not None:
+            measured_caps.append(float(cap_i))
+    measured_caps.sort()
+    n_caps = len(measured_caps)
+    median_cap: Optional[float] = None
+    if n_caps:
+        median_cap = (measured_caps[n_caps // 2] if n_caps % 2
+                      else 0.5 * (measured_caps[n_caps // 2 - 1] + measured_caps[n_caps // 2]))
     for item in items:
         spec = unit_specs.get(item) or {}
         cap, why_cap = L.production_capability(item, spec, median_combat=median_combat,
@@ -195,8 +234,12 @@ def production_effects_for_city(fields: Mapping[str, Any], raw_names: Iterable[s
             pay = 0.0
             why_pay = "цена не опубликована — платёж не судится (не подставляется нулём как знание)"
         if cap is None:
-            rows.append({"имя": item, "эффект": None, "причина": f"{why_cap}; {why_pay}"})
-            continue
+            if median_cap is None:
+                rows.append({"имя": item, "эффект": None, "причина": f"{why_cap}; {why_pay}"})
+                continue
+            cap = median_cap
+            why_cap = (f"способность не измерена ({why_cap}); взята медиана известных по городу "
+                       f"{median_cap:.4f} (n={n_caps}) — незнание не подменяется нулём")
         value = float(cap) - float(pay)
         effects[item] = value if value > 0 else 0.0
         rows.append({"имя": item, "способность": round(float(cap), 4),
@@ -252,7 +295,7 @@ def measure_step(obs: Mapping[str, Any], info: Optional[Mapping[str, Any]], turn
             continue                        # сущности без меню не о чем мерить
         raw_menus[eid] = raw_names
         raw = obs.get("dipl" if kind == "diplomacy" else kind, {}) or {}
-        fields = dict(raw.get(eid.split("_", 1)[1], {}) or {})
+        fields = _entity_record(raw, eid)
         if kind == "unit":
             # Число оставшихся ходов мир называет по-разному в разных сборках, и от этой величины
             # зависит заморозка `position` (§4.6). Переносим её в поля под одним именем, если она
@@ -292,12 +335,15 @@ def measure_step(obs: Mapping[str, Any], info: Optional[Mapping[str, Any]], turn
                                     allowed_now=allowed_now)
         vectors[eid] = names
         if kind == "city":
-            # `V(максимум)`: тот же счёт, но судится весь каталог (`allowed_now` не передаётся) и
-            # доступность по технологиям не ограничивает. Разность — объявленная дельта открытия.
+            # `V(максимум)`: тот же счёт, но доступность по технологиям не ограничивает — судится весь
+            # каталог. Разрешённое миром множество передаётся и здесь: потолок обязан включать всё, что
+            # считает «сейчас» (иначе «сейчас» может превысить потолок — замерено 2026-10-07 у города
+            # фикстуры: 126 против 121, потому что `produce_Warriors` даёт маска мира, а каталожный
+            # потолок его не видел). Разность — объявленная дельта открытия.
             all_known = set((obs.get("tech") or {}).keys())
             names_max = L.available_vectors(kind, fields, raw_names, known_gates,
                                             catalogue=catalogue, known_techs=all_known,
-                                            production_effects=effects)
+                                            production_effects=effects, allowed_now=allowed_now)
             v_max_of[eid] = float(L.response_vector_count(names_max))
             # Канал будущего корпусного замера (как у `v2`: `city_output` + `measure_improvement_unlock`):
             # размер, построенные улучшения и число опубликованных предметов — то, из чего наблюдением
@@ -307,7 +353,20 @@ def measure_step(obs: Mapping[str, Any], info: Optional[Mapping[str, Any]], turn
                 "улучшения": sorted(imp_names[i] for i, v in enumerate(imask)
                                     if v and i in imp_names) if isinstance(imask, (list, tuple)) else [],
                 "публикуемых": len([n for n in raw_names
-                                    if str(n).startswith(L.SPEC_PRODUCTION_ACTION_PREFIX)])}
+                                    if str(n).startswith(L.SPEC_PRODUCTION_ACTION_PREFIX)]),
+                # Есть ли у нас отображение «позиция маски улучшений → имя» в ЖИВОМ наблюдении
+                # (`tech.sup_improvements` с полем `id`). Пусто — гейт продажи работает по
+                # предложению мира, и это надо видеть числом, а не догадкой.
+                "имён_улучшений_из_каталога": len(imp_names),
+                # Диагностика живой формы и канал замера скорости улучшений: что строится и как
+                # растёт запас щитов. По ходам из этого берётся Δзапас за ход (правило `v2` §10.21.3
+                # обещает 1 щит/ход независимо от `prod_shield` — проверяется НАШИМ замером).
+                "поля_есть": {k: (k in fields) for k in
+                              ("size", "prod_shield", "shield_stock", "production_kind",
+                               "production_value", "improvements", "can_build_unit")},
+                "запас_щитов": fields.get("shield_stock"),
+                "выход_щитов": fields.get("prod_shield"),
+                "проект": f"{fields.get('production_kind')}:{fields.get('production_value')}"}
         fields_of[eid] = fields
         variety = L.variety_counters(names, disturbances(obs, eid, kind, own), powers_of(obs, own))
         requirements = (city_requirements(fields, costs, names, fields.get("prod_shield"), kinds=kinds)

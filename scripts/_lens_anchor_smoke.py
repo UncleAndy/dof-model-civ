@@ -29,6 +29,7 @@ from brain.spec.world_graph import ActEdge, EntityNode, WorldGraph  # noqa: E402
 from env.config import (  # noqa: E402
     SPEC_MEANS_CLASS,
     SPEC_MEANS_HORIZON_TURNS,
+    SPEC_UNKNOWN_INPUTS,
     TURN_DURATION_MKS,
 )
 from env.entity_extractor import GameStateExtractor  # noqa: E402
@@ -541,16 +542,18 @@ def run_real(steps: int) -> None:
            if opt_best is not None and opt_best.flat_delta()
            else f"опции с технологией {t_best} нет"))
     # I20 (§4.7/§6.2): решение объявлено неполным, и это поле отчёта, а не вход в счёт.
-    check("I20 решение объявлено неполным, и это не двигает числа: неизвестный вход "
-          "`tech_price` не разрешён ни одним кандидатом (§6.2), `t_m` не объявлен (§4.7)",
+    # Список неразрешённых входов сравнивается с ОБЪЯВЛЕННЫМ набором (`env.config.SPEC_UNKNOWN_INPUTS`),
+    # а не с одним именем: добавление объявленного входа — не поломка проверки, а её вход.
+    check("I20 решение объявлено неполным, и это не двигает числа: ни один объявленный неизвестный вход "
+          "не разрешён кандидатами (§6.2), `t_m` не объявлен (§4.7)",
           bool(completeness_now["incomplete"])
-          and completeness_now["binding"] == ["tech_price"]
+          and completeness_now["binding"] == [str(i["id"]) for i in SPEC_UNKNOWN_INPUTS]
           and not any(bool(r["used_estimated"]) for r in completeness_now["unknown_resources"])
-          and not any("tech_price" in str(row) for row in rows),
+          and not any(str(i["id"]) in str(row) for i in SPEC_UNKNOWN_INPUTS for row in rows),
           f"incomplete={completeness_now['incomplete']}, не разрешено: "
           f"{completeness_now['binding']}, причин {len(completeness_now['reasons'])}; "
           f"опций, называющих вход в `discovers`: "
-          f"{sum(1 for o in options if 'tech_price' in (o.discovers or []))}; "
+          f"{sum(1 for o in options if (o.discovers or []))}; "
           f"в строках кандидатов флаг не встречается")
     # I21 (§13.11): платёж исследования объявлен по опубликованной цене цели и
     # ИЗМЕРЕННОМУ темпу, а не оставлен молчанием; при неизмеримом темпе — молчит
@@ -1447,6 +1450,29 @@ def run_city_indices() -> None:
           f"способность Settlers: {settlers[0].get('способность') if settlers else 'нет строки'}")
 
 
+def run_record_keys() -> None:
+    """Запись сущности читается и по строковому, и по числовому ключу.
+
+    Живой мир отдаёт идентификаторы числом, сохранённое наблюдение — строкой; разница уже приводила
+    к «поля пусты» (`moves_left`, затем `size`/`prod_shield` у города). Проверка держит этот случай
+    закрытым: обе формы обязаны давать одну и ту же запись, отсутствующая — пустую, а не чужую.
+    """
+    from env.spec_lenses import section_for
+    from env.spec_obs import _entity_record
+
+    rec = {"size": 1, "prod_shield": 5}
+    check("запись сущности: строковый ключ читается",
+          _entity_record({"121": rec}, "city_121") == rec, "")
+    check("запись сущности: числовой ключ читается так же, как строковый",
+          _entity_record({121: rec}, "city_121") == rec, "")
+    check("запись сущности: чужой идентификатор даёт пустую запись, а не первую попавшуюся",
+          _entity_record({7: rec}, "city_121") == {}, "")
+    check("секция: числовой ключ (живой мир) и строковый (сохранённое наблюдение) находят одно",
+          section_for({121: rec}, 121) == rec and section_for({"121": rec}, "121") == rec, "")
+    check("секция: чужой ключ не подменяется первым попавшимся",
+          section_for({"unit": {1: rec}}, "city") is None, "")
+
+
 def main() -> int:
     steps = 1
     if "--steps" in sys.argv:
@@ -1456,6 +1482,7 @@ def main() -> int:
     run_anchors()
     run_rules()
     run_horizon()
+    run_record_keys()
     run_city_indices()
     run_declaration()
     print(f"\nпроверок: {PASS + FAIL}, падений: {FAIL}")

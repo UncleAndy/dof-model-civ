@@ -401,6 +401,99 @@ def build_options(vectors: Mapping[str, Sequence[str]],
     return options
 
 
+#: Порядок направлений CivRealm (`goto_N`): 0 = NW, далее по часовой стрелке до 7 = SE (замер §13.36).
+SPEC_DIR8: tuple[tuple[int, int], ...] = ((-1, -1), (0, -1), (1, -1), (-1, 0),
+                                          (1, 0), (-1, 1), (0, 1), (1, 1))
+
+#: Объявленный запас обзора для пометки измерения: клетка-цель и её 8 соседей (§3.3).
+SPEC_MEASURE_REACH_TILES: int = 1
+
+#: Значение `map.status`, означающее «клетка вне обзора наших юнитов» (замер: 0 — вне обзора, 2 — открыта).
+SPEC_MAP_UNSEEN_STATUS: int = 0
+
+
+def mark_measure(options: Sequence[Any], obs: Mapping[str, Any], *,
+                 resource_id: str = "map_knowledge",
+                 reach: int = SPEC_MEASURE_REACH_TILES) -> list[str]:
+    """§3.3/§6.2: пометить `goto_N`, ведущий к клеткам вне обзора, как измерение (`discovers`).
+
+    Цена шага измерения **не выдумывается**: пометка говорит «этот кандидат добывает знание», а
+    величину даёт замер (число у мира `v2` — `клеток × сущностей × ln DoF` — было частным случаем).
+    Поэтому здесь только `discovers`: величина остаётся объявленным неизвестным входом (§6.2).
+
+    Позиции берутся из записей юнитов (`obs["unit"]`, поля `x`/`y`), состояние обзора — из
+    `obs["map"]["status"]` (0 — вне обзора, 2 — открыта; замерено 2026-10-07: 4035 из 4056 клеток
+    вне обзора на первом ходу). Строка сетки — `y`, столбец — `x`; выход за сетку пропускается,
+    а не подменяется нулём. Возвращает `option_id` помеченных кандидатов.
+    """
+    # Живое наблюдение отдаёт контейнеры numpy-массивами (`env.entity_extractor.as_dict`),
+    # и «правда одна»: читаем той же процедурой, что проект, а не своим `or {}`.
+    from env.entity_extractor import as_dict
+    records = as_dict(obs.get("unit"))
+    if not records:
+        return []
+    status = as_dict(obs.get("map")).get("status")
+    tolist = getattr(status, "tolist", None)
+    if tolist is not None:
+        status = tolist()
+    if not isinstance(status, Sequence) or not status:
+        return []
+    rows = len(status)
+    cols = len(status[0]) if isinstance(status[0], Sequence) else 0
+    if not cols:
+        return []
+    marked: list[str] = []
+    for opt in options:
+        text = str(getattr(opt, "option_id", ""))
+        if ":" not in text:
+            continue
+        entity_id, action = text.split(":", 1)
+        digits = action[len("goto_"):] if action.startswith("goto_") else ""
+        if not digits.isdigit():
+            continue
+        direction = int(digits)
+        if not 0 <= direction < len(SPEC_DIR8):
+            continue
+        key = entity_id.split("_", 1)[-1]
+        rec = records.get(key) or records.get(str(key))
+        if rec is None:
+            try:
+                rec = records.get(int(key))
+            except (TypeError, ValueError):
+                rec = None
+        if not isinstance(rec, Mapping):
+            continue
+        pos = _point(rec.get("x"), rec.get("y"))
+        if pos is None:
+            continue
+        dx, dy = SPEC_DIR8[direction]
+        target = (pos[0] + dx, pos[1] + dy)
+        if _unseen_within(status, target, reach, rows, cols):
+            opt.discovers = sorted(set(list(getattr(opt, "discovers", None) or []) + [resource_id]))
+            marked.append(text)
+    return marked
+
+
+def _point(x: Any, y: Any) -> Optional[tuple[int, int]]:
+    """Пара координат из записи наблюдения; мусор читается как отсутствие, не как (0, 0)."""
+    try:
+        return int(x), int(y)
+    except (TypeError, ValueError):
+        return None
+
+
+def _unseen_within(status: Sequence[Any], target: tuple[int, int], reach: int,
+                   rows: int, cols: int) -> bool:
+    """Есть ли в квадрате Чебышёва вокруг клетки-цели клетка вне обзора (0)."""
+    for y in range(target[1] - reach, target[1] + reach + 1):
+        for x in range(target[0] - reach, target[0] + reach + 1):
+            if 0 <= y < rows and 0 <= x < cols:
+                line = status[y]
+                if isinstance(line, Sequence) and int(line[x]) == SPEC_MAP_UNSEEN_STATUS:
+                    return True
+    return False
+
+
 def budget_deadlines(entities: Iterable[str]) -> dict[str, float]:
     """Срок каждой сущности — её горизонт восстановления, в абсолютном времени.
 

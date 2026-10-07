@@ -55,6 +55,16 @@ _SOURCE = ["—"]
 _FOUNDING_SHOWN: set = set()
 
 
+def _score_of_world(obs, own_id):  # noqa: ANN001, ANN201
+    """Счёт, публикуемый игрой, по нашей стороне — внешняя мера парного опыта (в).
+
+    Процедура одна на проект: `env.spec_drive.world_score`. Импорт отложенный — прогон без живой
+    игры не должен тянуть драйвер ради одной величины.
+    """
+    from env.spec_drive import world_score  # noqa: PLC0415
+    return world_score(obs, own_id)
+
+
 def decide(obs, info, own_id):  # noqa: ANN001, ANN201
     """Точка проводки живого агента `v0.11`.
 
@@ -253,6 +263,9 @@ def live(port: int, seed: int, turns: int, fps: int, fog: bool) -> dict[str, Any
                    "city_output": m.get("city_output") or {},
                    "медиана_боевой": m.get("median_combat"),
                    "V_всего": round(sum(counts.values()), 1),
+                   # Мера парного опыта (в) — СЧЁТ, ПУБЛИКУЕМЫЙ ИГРОЙ (`player[].score`): плечи
+                   # различаются правителем, и §3.4.4 запрещает сравнивать их наши числа.
+                   "счёт_мира": _score_of_world(obs, own_id),
                    "нападение": getattr(extractor, "last_attack_event", None),
                    "меток": len(marks),
                    "строк_смены": n_rows,

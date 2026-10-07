@@ -588,14 +588,18 @@ def available_vectors(entity_type: str, fields: Mapping[str, Any],
             item = name[len(SPEC_PRODUCTION_ACTION_PREFIX):]
             if float(production_effects.get(item, 0.0)) <= 0.0:
                 continue        # имя, которое ничего не даёт системе, вектором реакции не является
-        if allowed_now is not None and (
-                name.startswith(SPEC_PRODUCTION_ACTION_PREFIX)
-                or name.startswith(SPEC_SELL_IMPROVEMENT_PREFIX)):
-            # «Сейчас» судит МИР: имя, которого нет среди предложенных им действий
-            # (`produce_<Имя>` с непустыми параметрами), городом сейчас не начато быть не может;
-            # продать можно только построенное (`improvements` — маска мира, индекс = id улучшения).
-            # Для «максимума» список не передаётся — тогда судится весь каталог.
-            if name not in set(allowed_now):
+        if allowed_now is not None and name not in set(allowed_now):
+            # «Сейчас» судит МИР целиком — норма `v2` §10.91–10.92: мир публикует меню города полностью,
+            # «разрешена сейчас лишь часть (медиана 4 действия), остальное — гейт по технологиям и
+            # ресурсам: это и есть будущий DoF, который открывает наука». Раньше гейт касался только
+            # производств и продажи, из-за чего городу засчитывались плиточные назначения, которых мир
+            # в этот ход не предлагает (замерено: 53 против 4 разрешённых). Для «максимума» список не
+            # передаётся — тогда судится весь каталог, как и было.
+            from .config import SPEC_AB_CITY_NORM      # плечо опыта (в): `wide` — прежняя процедура
+            narrow = SPEC_AB_CITY_NORM != "wide"
+            is_production = (name.startswith(SPEC_PRODUCTION_ACTION_PREFIX)
+                             or name.startswith(SPEC_SELL_IMPROVEMENT_PREFIX))
+            if narrow or is_production:
                 continue
         out.append(name)
     return out
@@ -628,6 +632,25 @@ def unit_specs_index(tech_records: Optional[Mapping[str, Any]]) -> dict[str, dic
                 if isinstance(spec, Mapping) and spec.get("name"):
                     out.setdefault(str(spec["name"]), dict(spec))
     return out
+
+
+def section_for(section: Any, key: Any) -> Any:
+    """Секция сущности/контроллера по ключу: живой мир нумерует **числом**, сохранённое наблюдение — строкой.
+
+    Эта разница трижды приводила к «поля пусты» — на `moves_left`, на записи города и на секции
+    действий, — и каждый раз выглядела как свойство мира, а была свойством нашего чтения. Поиск один
+    на проект: пробуются оба вида ключа, затем сравнение по строке.
+    """
+    if not isinstance(section, Mapping):
+        return None
+    text = str(key)
+    for candidate in (key, text, int(text) if text.isdigit() else None):
+        if candidate is not None and candidate in section:
+            return section[candidate]
+    for k, v in section.items():
+        if str(k) == text:
+            return v
+    return None
 
 
 def unit_order_index(ruleset_path: Optional[Any] = None) -> dict[int, str]:
@@ -696,8 +719,11 @@ def name_kind_map(tech_records: Optional[Mapping[str, Any]]) -> dict[str, str]:
             continue
         for key, kind in (("sup_units", "unit"), ("sup_improvements", "improvement")):
             for spec in (rec.get(key) or []):
-                if isinstance(spec, Mapping) and spec.get("name"):
-                    out.setdefault(str(spec["name"]), kind)
+                # Живые записи зовут поле по-разному: `name` в сохранённом наблюдении,
+                # `rule_name` в живом. Без второго варианта улучшения в карту не попадали.
+                name = spec.get("name") or spec.get("rule_name") if isinstance(spec, Mapping) else None
+                if name:
+                    out.setdefault(str(name), kind)
     return out
 
 

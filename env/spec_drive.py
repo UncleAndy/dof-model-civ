@@ -26,7 +26,7 @@
 from __future__ import annotations
 
 import collections
-from typing import Any, Optional, Sequence
+from typing import Any, Mapping, Optional, Sequence
 
 from brain.spec.calculus_core import DOFCalculusCore
 
@@ -37,6 +37,32 @@ from . import spec_options as O
 from .action_family import family_of
 from .action_mapper import FOUNDING_ACTIONS
 from .dof_deltas import measured_delta_any_controller
+
+
+def world_score(obs: Mapping[str, Any], own_id: Any) -> Optional[float]:
+    """Счёт, ПУБЛИКУЕМЫЙ ИГРОЙ, по нашей стороне — внешняя мера парного опыта (§3.4.4).
+
+    Плечи A и B различаются правителем (процедурой счёта), поэтому §3.4.4 запрещает сравнивать
+    их наши числа; сравнивать можно только величину мира. Читается из записи `player` (поле
+    `score`); отсутствие — `None`, а не ноль: ноль у мира означает «столько и набрано».
+    """
+    from .entity_extractor import as_dict
+    players = as_dict((obs or {}).get("player"))
+    if not players:
+        return None
+    keys: list[Any] = []
+    try:
+        keys.append(int(own_id))
+    except (TypeError, ValueError):
+        pass
+    keys += [str(own_id), 0, "0"]
+    for key in keys:
+        rec = players.get(key)
+        if isinstance(rec, Mapping):
+            value = rec.get("score")
+            if isinstance(value, (int, float)):
+                return float(value)
+    return None
 
 __all__ = ["Decider"]
 
@@ -150,6 +176,9 @@ class Decider:
                                   tech_rate=L.measured_science_rate(prev_obs, obs, self.own_id),
                                   tech_target=tech.get("researching"),
                                   measured=measured)
+        # §3.3/§6.2: кандидаты-измерения помечаются `discovers` — «этот кандидат добывает знание».
+        # Цена шага не выдумывается: величина остаётся объявленным неизвестным входом (`map_knowledge`).
+        measure_marks = O.mark_measure(options, obs)
         # Правила `v2`, применённые ПРИ ПОРОЖДЕНИИ (§13.24, п.7): повтор настройки в ходу и повтор
         # прошлого выбора при неизменном индексе — не порождаем, а не удаляем из набора.
         cur_index = float(m["index"])
@@ -168,6 +197,10 @@ class Decider:
                 "кандидатов": len(options), "выбор": getattr(winner, "option_id", None),
                 "прирост": (winner.flat_delta() if winner is not None else None),
                 "барьеры": dict(bars.most_common(4)), "основание": founding_rows,
+                "измерений": len(measure_marks), "измерения": measure_marks[:4],
+                # Мера для парного опыта (в) — СЧЁТ, ПУБЛИКУЕМЫЙ ИГРОЙ, а не наш индекс:
+                # плечи A и B различаются правителем, и §3.4.4 запрещает сравнивать их числа.
+                "счёт_мира": world_score(obs, self.own_id),
                 "info_меню": (info or {}).get("available_actions") or {}}
 
     def env_action(self, option_id: Any, info: dict) -> Optional[tuple]:
