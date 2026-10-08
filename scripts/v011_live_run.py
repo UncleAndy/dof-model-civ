@@ -422,6 +422,10 @@ def live(port: int, seed: int, turns: int, fps: int, fog: bool) -> dict[str, Any
                    # различаются правителем, и §3.4.4 запрещает сравнивать их наши числа.
                    "счёт_мира": _score_of_world(obs, own_id),
                    "нападение": getattr(extractor, "last_attack_event", None),
+                   # Кандидаты «возможного источника коллапса» (§13.64): ОТДЕЛЬНЫЙ канал.
+                   # Подтверждённая метка (`is_collapse_source`) — выше, в `нападение`; здесь —
+                   # подозрение с названной причиной, включая посторонних на нашей земле.
+                   "кандидаты_коллапса": getattr(extractor, "last_collapse_candidates", None),
                    "меток": len(marks),
                    "строк_смены": n_rows,
                    "цена_смены": loss, "почему_смены": loss_why,
