@@ -13,7 +13,9 @@
 со своей причиной, отдельно от подтверждённой пометки.
 
 Кандидат ≠ подтверждённая метка: кандидат — подозрение с названной причиной, которое
-держится, пока первичное нападение не наблюдено (срок держания — `COLLAPSE_HORIZON`).
+держится, пока первичное нападение **не наблюдено**: если в новом срезе кандидатов нет,
+прежние переносятся дальше с той же причиной и пометкой `carried`/`carried_from`.
+Наблюдённое нападение снимает держание — источник коллапса назван меткой.
 
 Два готовых читателя мира НЕ переизобретаются здесь (правило «один читатель на проект»):
 чужой канал карты читает `env.spec_threat.foreign_units_from_map` (он же знает пустышку
@@ -256,6 +258,25 @@ def classify_loss(obs: Mapping[str, Any], event: Mapping[str, Any],
     res = classify_pair(obs, near[0], near[1])
     res["reason"] = "двое видимых чужих рядом с местом потери: " + str(res["reason"])
     return res
+
+
+def carry_candidates(fresh: dict, prev_result: dict | None, attacked: bool) -> dict:
+    """Правило владельца (§13.64): кандидат держится, пока первичное нападение НЕ наблюдено.
+
+    Наблюдённое нападение снимает держание — источник коллапса назван меткой, и подозрение
+    больше не нужно. Если в новом срезе кандидатов нет, а прежде они были, прежние
+    переносятся дальше с той же причиной и пометкой `carried`/`carried_from`.
+    """
+    prev_cands = list((prev_result or {}).get("candidates") or [])
+    if fresh.get("candidates") or not prev_cands or attacked:
+        return fresh
+    was_turn = (prev_result or {}).get("turn")
+    out = dict(fresh)
+    out["candidates"] = [dict(c, carried_from=was_turn) for c in prev_cands]
+    out["carried"] = True
+    out["reason"] = (f"новых кандидатов нет; держатся прежние ({len(prev_cands)}) "
+                     f"с хода {was_turn} — первичное нападение не наблюдено")
+    return out
 
 
 def observe_candidates(prev: Optional[Mapping[str, Any]], obs: Mapping[str, Any],

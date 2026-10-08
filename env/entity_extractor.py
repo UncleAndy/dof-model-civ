@@ -650,8 +650,15 @@ class GameStateExtractor:
         # клетке своего игрока (при недоступности признака кандидатами идут оба воюющих);
         # плюс любой посторонний юнит на нашей территории или в открытых клетках.
         # Кандидат ≠ подтверждённая метка: метку ставит только наблюдённое нападение выше.
-        self.last_collapse_candidates = _spec_collapse_candidates.observe_candidates(
+        fresh = _spec_collapse_candidates.observe_candidates(
             self._collapse_prev_obs, observations, self.my_player_id, turn)
+        # Правило владельца (§13.64): кандидат держится, пока первичное нападение НЕ наблюдено.
+        # Само правило живёт в модуле (`carry_candidates`) — здесь только его вызов с признаком
+        # наблюдённого нападения, который известен извлекателю.
+        attacked = bool((self.last_attack_event or {}).get("attacked"))
+        fresh = _spec_collapse_candidates.carry_candidates(
+            fresh, self.last_collapse_candidates, attacked)
+        self.last_collapse_candidates = fresh
         self._collapse_prev_obs = observations
 
         # ── Канал смены производства (`produce_switch`, §10.102) ────────────

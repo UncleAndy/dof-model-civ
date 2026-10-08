@@ -129,5 +129,39 @@ own = {"unit": {"5": {"owner": 0, "x": 2, "y": 2}}, "city": {},
 own_res = CC.observe_candidates(None, own, 0, 14)
 check("наш юнит кандидатом не становится", own_res["candidates"] == [], str(own_res))
 
+# ── Держание кандидата: правило владельца (§13.64) — держится, пока нападение не наблюдено ──
+prev_res = {"turn": 11,
+            "candidates": [{"source": "intruder",
+                            "why": "посторонний юнит на нашей территории",
+                            "unit_id": "7", "owner": 3, "x": 4, "y": 1}]}
+carried = CC.carry_candidates({"turn": 12, "candidates": [], "reason": "кандидатов нет"},
+                              prev_res, attacked=False)
+check("нападения нет — прежний кандидат держится, пометка и причина сохранены",
+      len(carried["candidates"]) == 1 and carried.get("carried") is True
+      and carried["candidates"][0]["carried_from"] == 11
+      and carried["candidates"][0]["why"] == prev_res["candidates"][0]["why"], str(carried))
+check("держание названо в причине",
+      "первичное нападение не наблюдено" in carried["reason"], carried["reason"])
+
+dropped = CC.carry_candidates({"turn": 12, "candidates": [], "reason": "кандидатов нет"},
+                              prev_res, attacked=True)
+check("нападение наблюдено — держание снято",
+      dropped["candidates"] == [] and not dropped.get("carried"), str(dropped))
+
+WHY_FIGHT = "бой без признака клетки"
+fresh_slice = {"turn": 12, "candidates": [{"source": "fight", "why": WHY_FIGHT}],
+               "reason": "кандидатов 1"}
+kept_fresh = CC.carry_candidates(fresh_slice, prev_res, attacked=False)
+check("в новом срезе есть свои кандидаты — прежние их не подменяют",
+      len(kept_fresh["candidates"]) == 1
+      and kept_fresh["candidates"][0]["why"] == WHY_FIGHT
+      and kept_fresh.get("carried") is not True, repr(kept_fresh))
+print(f"  (диагностика строки: len={len(WHY_FIGHT)}, repr={WHY_FIGHT!r})")
+
+nothing = CC.carry_candidates({"turn": 12, "candidates": [], "reason": "предыдущего среза нет"},
+                              None, attacked=False)
+check("держать нечего — срез не меняется",
+      nothing["candidates"] == [] and not nothing.get("carried"), str(nothing))
+
 print(f"\nпроверок: {ok + bad}, падений: {bad}")
 sys.exit(1 if bad else 0)
