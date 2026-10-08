@@ -389,6 +389,82 @@ def unit_options(unit_obs: dict[str, Any], age: int = 0,
     return options, s_current, s_future
 
 
+def strike_acts(prev_obs: dict[str, Any], obs: dict[str, Any],
+                event: dict[str, Any], my_player_id: Any = 0,
+                model: Optional[WorldModel] = None) -> list[dict[str, Any]]:
+    """Наблюдённый удар → акт с ИЗМЕРЕННОЙ величиной (§13.91).
+
+    Величина — health-часть падения DoF цели: линза цели пересчитывается на ПРЕЖНЕМ
+    здоровье при неизменном прочем, и разница с текущей DoF есть эффект удара. Ни
+    одного нового коэффициента: и величина, и её источник взяты из публикации мира.
+
+    Источник — владелец нападающего (`player_<владелец>`), цель — наша сущность.
+    Чужой владелец узлом состояния пока НЕ является, поэтому запись живёт в событии
+    нападения и метку §4.2 ещё не подтверждает (граница названа в §13.91).
+
+    Правило ролей (§13.88 а): источником всегда чужой. Наши действия метки не создают.
+    """
+    out: list[dict[str, Any]] = []
+    if not isinstance(event, dict) or not event.get("attacked"):
+        return out
+    attackers = event.get("attackers") or []
+    if not attackers:
+        return out                      # П3: без наблюдённого нападающего акта нет
+    owners = {int(a[0]) for a in attackers if isinstance(a, (list, tuple)) and a}
+    if not isinstance(prev_obs, dict) or not isinstance(obs, dict):
+        return out
+
+    cur_units = obs.get("unit") if isinstance(obs.get("unit"), dict) else {}
+    prev_units = prev_obs.get("unit") if isinstance(prev_obs.get("unit"), dict) else {}
+    for victim in event.get("victims") or []:
+        vid = str((victim or {}).get("id") or "")
+        if not vid:
+            continue
+        # Событие называет СУЩНОСТЬ (`unit_5`), а сырое наблюдение — ключ мира (`5`).
+        raw = vid[5:] if vid.startswith("unit_") else vid
+        before = prev_units.get(raw) if raw in prev_units else prev_units.get(vid)
+        if not isinstance(before, dict):
+            continue
+        after = cur_units.get(raw) if raw in cur_units else cur_units.get(vid)
+        if isinstance(after, dict) and not _spec_attack.owns(after, my_player_id):
+            continue                    # жертва не наша — это не наш урон
+        owner = next(iter(owners)) if len(owners) == 1 else None
+        source = f"{_spec_attack.OWNER_PREFIX}{owner}" if owner is not None else None
+        if source is None:
+            # Рядом оказалось несколько чужих — виновный не назначается (как в §13.85).
+            out.append({"source": None, "target": f"unit_{raw}", "delta": None,
+                        "why": "удара не приписано: рядом несколько чужих, "
+                               "виновный не назначается"})
+            continue
+
+        if isinstance(after, dict):
+            hr_before = health_ratio(before)
+            hr_after = health_ratio(after)
+            if hr_after >= hr_before:
+                continue                # здоровья не убыло — удара не было
+            probe = dict(after)
+            probe["health"] = before.get("health", after.get("health"))
+            # Мера §13.89: DoF = базовый DoF × доля здоровья, поэтому множитель
+            # применяется к ОБЕИМ сторонам — иначе эффект считался бы не по мере.
+            dof_after = unit_options(after, model=model)[0] / float(DOF_SCALE) * hr_after
+            dof_before = unit_options(probe, model=model)[0] / float(DOF_SCALE) * hr_before
+            delta = dof_after - dof_before
+            why = (f"наблюдённый удар: {victim.get('how')}; "
+                   f"health-часть падения DoF {delta:+.4f}")
+        else:
+            # Жертва исчезла: величина — весь её прежний DoF (цель в нуль).
+            hr_before, hr_after = health_ratio(before), 0.0
+            delta = -unit_options(before, model=model)[0] / float(DOF_SCALE) * hr_before
+            why = (f"наблюдённая потеря: {victim.get('how')}; "
+                   f"жертва исчезла — величина −DoF_до {delta:+.4f}")
+        if delta >= 0.0:
+            continue
+        out.append({"source": source, "target": f"unit_{raw}", "delta": delta,
+                    "health_before": hr_before, "health_after": hr_after,
+                    "why": why})
+    return out
+
+
 def improvement_options(spec: dict[str, Any],
                         model: Optional[WorldModel] = None) -> float:
     """DoF an improvement adds, in options.
@@ -644,6 +720,15 @@ class GameStateExtractor:
         # Метка — ВХОД для ядра, а не параметр модели: гипотеза не может её менять.
         self.last_attack_event = self.attack_tracker.observe(observations, turn)
         self.marked_collapse_sources = self.attack_tracker.apply(entities, turn)
+        # ── Разрушительные акты (§13.91) ────────────────────────────────────
+        # Наблюдённый удар чужого юнита получает акт с ИЗМЕРЕННОЙ величиной:
+        # health-часть падения DoF цели. Источник — владелец нападающего, цель — наша
+        # сущность; правила ролей (§13.88 а) держит сама запись (источник только чужой).
+        # Запись живёт в событии: узла нападающего в состоянии пока нет, поэтому метку
+        # §4.2 она ещё не подтверждает — граница названа в §13.91.
+        self.last_attack_event["strikes"] = strike_acts(
+            self._collapse_prev_obs, observations, self.last_attack_event,
+            my_player_id=self.my_player_id, model=self.model)
 
         # ── Кандидаты «возможного источника коллапса» (§13.64) ──────────────
         # Кто из чужих МОГ ударить: при бое двух сторон защитник — тот, кто стоит на
