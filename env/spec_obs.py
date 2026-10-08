@@ -248,6 +248,23 @@ def production_effects_for_city(fields: Mapping[str, Any], raw_names: Iterable[s
     return effects, rows
 
 
+def calc_set_reason(in_calc: Optional[int], n_measured: int,
+                    error: Optional[str] = None) -> Optional[str]:
+    """Почему набор расчёта назван именно так (ноль обязан называть своё состояние).
+
+    Возвращает причину, когда набор ПУСТ или не посчитан, и `None`, когда он непустой: пустой
+    набор даёт индекс 0.0 — «считать нечего», а не «всё хорошо» (§13.79, ловушка 14).
+    """
+    if error:
+        return f"набор расчёта не посчитан: {error}"
+    if in_calc is None:
+        return "набор расчёта не посчитан (причина не названа)"
+    if in_calc == 0:
+        return (f"набор расчёта пуст при {n_measured} измеренных — индекс 0.0 означает "
+                f"«считать нечего», а не «всё хорошо»")
+    return None
+
+
 def measure_step(obs: Mapping[str, Any], info: Optional[Mapping[str, Any]], turn: Any,
                  extractor: Any, prev_obs: Optional[Mapping[str, Any]] = None,
                  my_player_id: Any = 0) -> dict[str, Any]:
@@ -387,10 +404,26 @@ def measure_step(obs: Mapping[str, Any], info: Optional[Mapping[str, Any]], turn
     measured = L.measure(bindings, means)
     dof = {eid: m.current_dof for eid, m in measured.items()}
     counts = {eid: float(m.variety_counters.get("V") or 0.0) for eid, m in measured.items()}
+    # §4.2/§4.1: набор счёта `calc(S)` и индекс ЯДРА по нему — ОТДЕЛЬНЫМИ числами рядом с нашим
+    # `total_index`. Ядро держит в наборе и незнание (оно не считается ни нулём, ни идеалом) и
+    # выкидывает только `proven_unreachable`, поэтому наш счёт по всем измеренным может с ядром
+    # расходиться. Расхождение здесь — НАБЛЮДЕНИЕ, а не правка: `index` остаётся тем же, чем был
+    # для решения (§13.79).
+    in_calc = core_index = None
+    calc_error = None
+    try:
+        from env import spec_graph as _G          # ленивый импорт: цикл импортов не создаём
+        members, core_index = _G.calc_and_index(state, None)   # ctx=None → предохранительный набор
+        in_calc = len(members)
+    except Exception as exc:  # noqa: BLE001
+        calc_error = f"{type(exc).__name__}: {str(exc)[:80]}"
     return {"state": state, "measured": measured, "dof": dof, "counts": counts,
             "vectors": vectors, "fields": fields_of, "raw_menus": raw_menus,
             "catalogue": catalogue, "known_techs": known_gates, "tech_skipped": tech_skipped,
             "index": L.total_index(measured),
+            "в_расчёте": in_calc,
+            "индекс_ядра": (round(float(core_index), 4) if core_index is not None else None),
+            "причина_набора": calc_set_reason(in_calc, len(measured), calc_error),
             "v_max": v_max_of, "production_effects": effect_rows,
             "city_output": city_output,
             "median_combat": (median_combat, n_median, why_median)}
