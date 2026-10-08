@@ -777,9 +777,13 @@ class GameStateExtractor:
                 first_seen = self._first_seen.setdefault(entity_id, turn)
                 age = max(0, turn - first_seen)
 
+            hr = health_ratio(unit_obs)
             options, _s_current, _s_future = unit_options(unit_obs, age=age,
                                                           model=self.model)
-            hr = health_ratio(unit_obs)
+            # Владелец (§13.89): DoF сущности = базовый DoF × доля здоровья (hr).
+            # При нулевом здоровье DoF ровно ноль — тогда удар может довести цель
+            # до известного нуля и дать свидетеля §4.2.
+            options = options * hr
 
             # Survival is a gate, not a bonus: a nearly destroyed unit has almost
             # no future state space however well equipped it is.

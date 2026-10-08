@@ -778,3 +778,45 @@ class TestUnitDofIsNotConsumedByActing:
             {}, turn=1)
         city_opts = city.state.entities['city_1'].dof_count
         assert dof < city_opts <= CITY_CEIL
+
+
+class TestDofScalesWithHealth:
+    """Мера владельца (§13.89): DoF сущности = базовый DoF × доля здоровья.
+
+    Множитель — `health / type_hp`. Проверяется объявленное правило, а не
+    подобранное число: при полном здоровье множитель нейтрален; нулевое здоровье
+    даёт ровно ноль (без этого удар не может довести сущность до известного нуля
+    и свидетеля §4.2 не будет); раненый юнит строго беднее здорового.
+    """
+
+    @staticmethod
+    def _obs(health, ceiling=20):
+        return {'unit': {'7': {'type_rule_name': 'Settlers', 'health': health,
+                               'type_hp': ceiling, 'moves_left': 3,
+                               'max_moves': 3, 'x': 10, 'y': 10, 'owner': 0}}}
+
+    def test_ratio_comes_from_the_world_field(self):
+        """Доля здоровья — из публикации мира: health / type_hp."""
+        from env.entity_extractor import health_ratio
+
+        assert health_ratio(self._obs(8)['unit']['7']) == pytest.approx(0.4)
+
+    def test_full_health_is_neutral(self, extractor):
+        """При полном здоровье мера DoF не двигает: множитель равен единице."""
+        from env.entity_extractor import DOF_SCALE, unit_options
+
+        full = extractor.extract(self._obs(20), {}, turn=1)
+        base = unit_options(self._obs(20)['unit']['7'])[0] / DOF_SCALE
+        assert full.state.entities['unit_7'].current_dof == pytest.approx(base)
+
+    def test_zero_health_gives_exactly_zero(self, extractor):
+        """Нулевое здоровье даёт DoF ровно ноль."""
+        gone = extractor.extract(self._obs(0), {}, turn=1)
+        assert gone.state.entities['unit_7'].current_dof == 0.0
+
+    def test_a_wounded_unit_is_strictly_poorer(self, extractor):
+        """Раненый юнит строго беднее здорового при том же прочем."""
+        full = extractor.extract(self._obs(20), {}, turn=1)
+        hurt = extractor.extract(self._obs(8), {}, turn=1)
+        assert (hurt.state.entities['unit_7'].current_dof
+                < full.state.entities['unit_7'].current_dof)
