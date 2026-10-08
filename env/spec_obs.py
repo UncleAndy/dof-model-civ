@@ -366,6 +366,15 @@ def measure_step(obs: Mapping[str, Any], info: Optional[Mapping[str, Any]], turn
                                "production_value", "improvements", "can_build_unit")},
                 "запас_щитов": fields.get("shield_stock"),
                 "выход_щитов": fields.get("prod_shield"),
+                # Публикуемая коробка роста (§13.77): сколько еды требует следующий размер.
+                # Ищем по ИМЕНАМ полей, а не по одному ожидаемому: имя, которого мы не знаем,
+                # иначе просто не найдётся. Рядом — полный список опубликованных полей города,
+                # чтобы «его нет» было проверяемо, а не предположительно.
+                "рост_поля": {str(k): v for k, v in fields.items()
+                              if any(w in str(k).lower() for w in
+                                     ("food", "gran", "growth", "size"))
+                              and not isinstance(v, (dict, list))},
+                "имена_полей": sorted(str(k) for k in fields),
                 "проект": f"{fields.get('production_kind')}:{fields.get('production_value')}"}
         fields_of[eid] = fields
         variety = L.variety_counters(names, disturbances(obs, eid, kind, own), powers_of(obs, own))

@@ -14,7 +14,11 @@
 4. `estimated_mean` — цены и публикации нет: срок моделируется **средним по
    измеренным** (правило владельца модели: «неизвестное моделировать средним по
    известным, НЕ нулём»), и это тоже названо;
-5. `unknown` — измерять нечего и усреднять не по чему: `None`, а не ноль.
+5. `never_scale_limit` — мир (или записи прошлой линии) опубликовал **предел шкалы**
+   `32767` (`2^15 − 1`): это «срока нет», а не срок. Предел не считается сроком ни в
+   публикации, ни в собственном замере, ни в среднем; если других источников нет,
+   возвращается `None` с этим именем причины — так же читает `env/video.py`;
+6. `unknown` — измерять нечего и усреднять не по чему: `None`, а не ноль.
 
 Цена не выдумывается: она берётся либо из паспорта типа (`build_cost`), либо из
 чисел самого города (`env.measured_facts.cost_from_city`: `shield_stock /
@@ -31,8 +35,24 @@ ETA_SOURCES: tuple[str, ...] = (
     "published_current",
     "derived_price_shields",
     "estimated_mean",
+    "never_scale_limit",
     "unknown",
 )
+
+#: Предел шкалы, которым мир (и записи прошлой линии) помечают «срока нет»: `2^15 − 1`.
+#: Читается так же, как в `env/video.py` и в смоуке линз, — «никогда», а не число ходов.
+#: Замер §13.75: в архиве прошлой линии 722 записи из 2000 несут это значение, и один и тот же
+#: вариант встречается и с настоящим сроком, и с пределом (например `Warriors`: медиана 5 против
+#: 358 записей предела) — то есть это состояние, а не свойство предмета.
+ETA_NEVER: float = 32767.0
+
+
+def eta_is_never(value: Optional[float]) -> bool:
+    """Предел шкалы — это не срок, а «никогда» (одно правило на проект)."""
+    try:
+        return float(value) >= ETA_NEVER
+    except (TypeError, ValueError):
+        return False
 
 
 def eta_from_price_and_shields(price: Optional[float],
@@ -65,17 +85,30 @@ def build_eta(*, price: Optional[float] = None,
     `measured` — срок, опубликованный миром для варианта, который МЫ запустили;
     `published` — публикация для текущего производства города;
     `known_etas` — измеренные сроки других вариантов (для среднего).
+
+    Предел шкалы (`ETA_NEVER`) сроком не считается: он либо пропускается в пользу следующего
+    источника, либо, если других источников нет, даёт `None` с причиной `never_scale_limit` —
+    «мир сказал, что срока нет», а не выдуманное число ходов.
     """
+    never_seen = False
     if measured is not None:
-        return float(measured), "measured_own_launch"
+        if eta_is_never(measured):
+            never_seen = True
+        else:
+            return float(measured), "measured_own_launch"
     if published is not None:
-        return float(published), "published_current"
+        if eta_is_never(published):
+            never_seen = True
+        else:
+            return float(published), "published_current"
     derived = eta_from_price_and_shields(price, stock, shields_per_turn)
     if derived is not None:
         return derived, "derived_price_shields"
-    known = [float(x) for x in known_etas if x is not None]
+    known = [float(x) for x in known_etas if x is not None and not eta_is_never(x)]
     if known:
         return sum(known) / float(len(known)), "estimated_mean"
+    if never_seen:
+        return None, "never_scale_limit"
     return None, "unknown"
 
 

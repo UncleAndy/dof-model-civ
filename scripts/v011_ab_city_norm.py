@@ -72,31 +72,46 @@ def _run(arm: str, seed: int, port: int, turns: int, tag: str) -> dict:
                                 stdout=fh, stderr=subprocess.STDOUT)
         # Сторож завершения. Замер: плечо может зависнуть ПОСЛЕ последнего хода — свои 150
         # ходов оно записывает, а процесс не выходит (уборка съёмки). Тогда раннер ждёт его
-        # вечно, и строка плеча не пишется. Признак: все запрошенные ходы в трассе есть,
-        # а запись в неё прекратилась. Данные в этом случае уже полные — гасим мягко.
+        # вечно, и строка плеча не пишется. Признак вынесен функцией (`finished_but_silent`),
+        # чтобы его можно было проверить синтетикой, а не только живым зависанием.
         trace = ROOT / "knowledge" / f"live_trace_{seed}_port{port}_{tag}.jsonl"
         released = False
         while proc.poll() is None:
             time.sleep(20)
-            try:
-                if trace.exists():
-                    turns_done = sum(1 for _ in trace.open(encoding="utf-8"))
-                    quiet = time.time() - trace.stat().st_mtime
-                    if turns_done >= turns and quiet > 180:
-                        proc.terminate()
-                        try:
-                            proc.wait(timeout=60)
-                        except subprocess.TimeoutExpired:
-                            proc.kill()
-                            proc.wait(timeout=30)
-                        released = True
-                        break
-            except OSError:
-                continue
+            if finished_but_silent(trace, turns, 180.0):
+                try:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=60)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait(timeout=30)
+                except OSError:
+                    pass
+                released = True
+                break
         code = proc.returncode if proc.returncode is not None else -1
     return {"arm": arm, "seed": seed, "port": port, "turns_asked": turns, "tag": tag,
             "exit": int(code), "log": str(log), "seconds": round(time.time() - started, 1),
             "released_by_watchdog": released}
+
+
+def finished_but_silent(trace: Path, turns_asked: int, quiet_seconds: float,
+                        now: float | None = None) -> bool:
+    """Признак «плечо отработало и зависло на выходе»: все ходы записаны, а запись замерла.
+
+    Само молчание трассы ничего не значит, пока не записаны **все** запрошенные ходы: зависнуть
+    может и середина партии, и тогда гасить нельзя — данные неполные. Условие проверяется
+    синтетикой (`scripts/_check_watchdog_release.py`), а не только живым зависанием.
+    """
+    try:
+        if not trace.exists():
+            return False
+        done = sum(1 for _ in trace.open(encoding="utf-8"))
+        quiet = (time.time() if now is None else float(now)) - trace.stat().st_mtime
+        return done >= int(turns_asked) and quiet > float(quiet_seconds)
+    except OSError:
+        return False
 
 
 def _last_score(record: dict) -> tuple[float, int]:
