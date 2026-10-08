@@ -411,6 +411,7 @@ def measure_step(obs: Mapping[str, Any], info: Optional[Mapping[str, Any]], turn
     # случай незнания: ψ = ½ на линзу, DoF = ⅛, `ln ⅛ = −2.0794` (§13.79). Вторая сборка не
     # изобретается. Расхождение здесь — НАБЛЮДЕНИЕ: `index` решения остаётся тем же (§13.80).
     in_calc = core_index = None
+    verdict_rows = None
     calc_error = None
     try:
         from env import spec_graph as _G          # ленивый импорт: цикл импортов не создаём
@@ -420,6 +421,13 @@ def measure_step(obs: Mapping[str, Any], info: Optional[Mapping[str, Any]], turn
         st_calc = _G.state_with_measured_dof(state, dof)
         members, core_index = _G.calc_and_index(st_calc, ctx)
         in_calc = len(members)
+        # §13.82: вердикт достижимости по КАЖДОЙ сущности — тем же читателем, что у смоука.
+        # Нужен, чтобы различать «выпала вердиктом proven_unreachable» и «уничтожена в игре»:
+        # по одной трассе §13.81 эти два случая не разводились.
+        verdicts = _G.recoverability(st_calc, ctx)
+        verdict_rows = {str(k): {"вердикт": str((v or {}).get("verdict")),
+                                 "причина": str((v or {}).get("reason"))[:80]}
+                        for k, v in (verdicts or {}).items()}
     except Exception as exc:  # noqa: BLE001
         calc_error = f"{type(exc).__name__}: {str(exc)[:80]}"
     return {"state": state, "measured": measured, "dof": dof, "counts": counts,
@@ -429,6 +437,7 @@ def measure_step(obs: Mapping[str, Any], info: Optional[Mapping[str, Any]], turn
             "в_расчёте": in_calc,
             "индекс_ядра": (round(float(core_index), 4) if core_index is not None else None),
             "причина_набора": calc_set_reason(in_calc, len(measured), calc_error),
+            "вердикты": verdict_rows,
             "v_max": v_max_of, "production_effects": effect_rows,
             "city_output": city_output,
             "median_combat": (median_combat, n_median, why_median)}
