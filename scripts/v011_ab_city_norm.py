@@ -68,9 +68,35 @@ def _run(arm: str, seed: int, port: int, turns: int, tag: str) -> dict:
            "--seed", str(seed), "--turns", str(turns)]
     started = time.time()
     with log.open("w", encoding="utf-8") as fh:
-        proc = subprocess.run(cmd, cwd=str(ROOT), env=env, stdout=fh, stderr=subprocess.STDOUT)
+        proc = subprocess.Popen(cmd, cwd=str(ROOT), env=env,
+                                stdout=fh, stderr=subprocess.STDOUT)
+        # Сторож завершения. Замер: плечо может зависнуть ПОСЛЕ последнего хода — свои 150
+        # ходов оно записывает, а процесс не выходит (уборка съёмки). Тогда раннер ждёт его
+        # вечно, и строка плеча не пишется. Признак: все запрошенные ходы в трассе есть,
+        # а запись в неё прекратилась. Данные в этом случае уже полные — гасим мягко.
+        trace = ROOT / "knowledge" / f"live_trace_{seed}_port{port}_{tag}.jsonl"
+        released = False
+        while proc.poll() is None:
+            time.sleep(20)
+            try:
+                if trace.exists():
+                    turns_done = sum(1 for _ in trace.open(encoding="utf-8"))
+                    quiet = time.time() - trace.stat().st_mtime
+                    if turns_done >= turns and quiet > 180:
+                        proc.terminate()
+                        try:
+                            proc.wait(timeout=60)
+                        except subprocess.TimeoutExpired:
+                            proc.kill()
+                            proc.wait(timeout=30)
+                        released = True
+                        break
+            except OSError:
+                continue
+        code = proc.returncode if proc.returncode is not None else -1
     return {"arm": arm, "seed": seed, "port": port, "turns_asked": turns, "tag": tag,
-            "exit": int(proc.returncode), "log": str(log), "seconds": round(time.time() - started, 1)}
+            "exit": int(code), "log": str(log), "seconds": round(time.time() - started, 1),
+            "released_by_watchdog": released}
 
 
 def _last_score(record: dict) -> tuple[float, int]:
