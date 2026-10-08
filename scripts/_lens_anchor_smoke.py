@@ -1327,6 +1327,12 @@ def run_recovery() -> None:
     путь простой, и вердикт обязан назвать свидетеля. Собственные акты города тут
     не помогают: правило простоты пути запрещает акт на самого себя. Юнит на нуле
     не восстановим ничем — дверей, ведущих к нему, нет вовсе.
+
+    Отдельно проверяется **возврат** (H5, H6): исключение — вердикт текущего
+    состояния, а не приговор. Поднятый до положительного значения ноль обязан
+    вернуть сущность в счёт; и сильнее — появившаяся дверь обязана вернуть её при
+    ТОМ ЖЕ нуле, потому что счёт следит за возможностью подъёма, а не за
+    значением. Ожидания объявлены здесь, до прогона.
     """
     print("\n=== H. §4.9 в работе: живой ноль против мёртвого (синтетика) ===")
     snap = json.load(open(OBS_FILE))[0]
@@ -1393,6 +1399,54 @@ def run_recovery() -> None:
     check("H4 контроль в изоляции: чужой акт восстанавливает ноль (правило простоты пути)",
           hv.verdict == "reachable" and hv.witness == ["b:revive"],
           f"{hv.verdict}, свидетель {hv.witness}")
+
+    # ── возврат: исключение — вердикт состояния, а не приговор (§13.81 в форме, где
+    # вопрос отвечаем). Объявлено ДО прогона: поднятый до положительного значения ноль
+    # обязан вернуть сущность в счёт; и — сильнее — появившаяся дверь обязана вернуть её
+    # при ТОМ ЖЕ нуле, потому что счёт следит за возможностью подъёма, а не за значением.
+    dof_back = {player_id: 0.5, city_id: 0.0, unit_id: 0.35}
+    ctx_back = ctx.with_dof({unit_id: 0.35})
+    st_back = G.state_with_measured_dof(state, dof_back)
+    members_back, index_back = G.calc_and_index(st_back, ctx_back)
+    unit_back = G.recoverability(st_back, ctx_back)[unit_id]
+    check("H5 исключённая сущность возвращается в счёт, как только её ноль поднят до "
+          "положительного DoF (исключение — не приговор, а вердикт текущего состояния)",
+          unit_id not in members and unit_id in members_back
+          and unit_back["verdict"] == "reachable",
+          f"при DoF 0: {'в счёте' if unit_id in members else 'вне счёта'}; при DoF "
+          f"{dof_back[unit_id]}: {'в счёте' if unit_id in members_back else 'вне счёта'}, "
+          f"{unit_back['verdict']}, индекс {index_back:.4f}")
+
+    # H6: возврат по ДВЕРИ при неизменном нуле. Мини-граф — как в H4, но спрашивается не
+    # вердикт сам по себе, а место в счёте: без двери — вне, с дверью — в счёте.
+    from brain.spec.calculus_core import ObservationContext as _Ctx
+    mini_means = list(SPEC_MEANS_CLASS)
+    mini_dof = {"a": 0.0, "b": 1.0}
+    mini_t_rec = {name: 5 * TURN_DURATION_MKS for name in mini_dof}
+    horizon_mini = 5.0 * TURN_DURATION_MKS
+    revive = ActEdge(id="b:revive", source="b", target="a", category="production",
+                     effect={"a": 1.0}, duration_mks=TURN_DURATION_MKS)
+    got: dict[str, tuple] = {}
+    for tag, acts in (("без двери", []), ("с дверью", [revive])):
+        g_mini = WorldGraph(entities={name: EntityNode(id=name, current_dof=v)
+                                      for name, v in mini_dof.items()},
+                            means=["energy"], acts=list(acts))
+        c_mini = _Ctx(world=g_mini, means_class=mini_means, t_rec=mini_t_rec,
+                      counting_horizon_mks=horizon_mini,
+                      observation_digest=g_mini.observation_digest(mini_means, mini_t_rec,
+                                                                   horizon_mini),
+                      dof_override=mini_dof)
+        s_mini = G.state_with_measured_dof(state, mini_dof, deadlines=mini_t_rec)
+        m_mini, i_mini = G.calc_and_index(s_mini, c_mini)
+        got[tag] = (G.recoverability(s_mini, c_mini)["a"]["verdict"], "a" in m_mini,
+                    i_mini)
+    check("H6 счёт следит за ВОЗМОЖНОСТЬЮ, а не за значением: при нуле и без двери сущность "
+          "вне счёта, а с появившейся дверью — вернулась, хотя её DoF не изменился",
+          got["без двери"][:2] == ("proven_unreachable", False)
+          and got["с дверью"][:2] == ("reachable", True),
+          f"без двери: {got['без двери'][0]}, в счёте {got['без двери'][1]}, индекс "
+          f"{got['без двери'][2]:.4f}; с дверью: {got['с дверью'][0]}, в счёте "
+          f"{got['с дверью'][1]}, индекс {got['с дверью'][2]:.4f}")
 
 
 def run_city_indices() -> None:
