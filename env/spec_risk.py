@@ -227,6 +227,33 @@ def cover_price(city_dof: Any, intruders: Sequence[Any],
                    f"защитник), цена условной угрозы {factor:g} × ln({count:g}) = {value:.3f}")
 
 
+def foreign_powers(obs: Mapping[str, Any], my_player_id: Any = 0) -> Optional[int]:
+    """Сколько ЧУЖИХ игроков насчитывает наблюдение: `None` — данных нет.
+
+    «Угроз нет» — утверждение о мире, и оно допустимо лишь тогда, когда чужих игроков нет
+    вовсе (владелец: в игре это возможно только если наш игрок один на сервере). Отсутствие
+    наблюдённых нападений при живых соперниках — это «не наблюдено», а не «нет угроз».
+
+    Чтение ключей терпимое: мир отдаёт секции то числами, то строками (правило наблюдения).
+    """
+    section = (obs or {}).get("player")
+    if not isinstance(section, Mapping):
+        return None
+    try:
+        me = int(my_player_id)
+    except (TypeError, ValueError):
+        me = 0
+    powers = 0
+    for key, rec in section.items():
+        try:
+            pid = int((rec or {}).get("id", key)) if isinstance(rec, Mapping) else int(key)
+        except (TypeError, ValueError):
+            continue
+        if pid != me:
+            powers += 1
+    return powers
+
+
 def risk_with_reason(obs: Mapping[str, Any], marks: Any, turn: Any, my_player_id: Any = 0,
                      dof_by_entity: Optional[Mapping[str, Any]] = None,
                      tau: float = STRIKE_TURNS) -> tuple[float, dict[str, Any], str]:
@@ -242,8 +269,16 @@ def risk_with_reason(obs: Mapping[str, Any], marks: Any, turn: Any, my_player_id
             return 0.0, {}, (f"источник коллапса известен ({len(active)}), но в текущем наблюдении "
                              f"не виден: по устаревшим координатам не считаем — «видели бы» там, "
                              f"где его давно нет")
-        return 0.0, {}, ("нападения ещё не наблюдалось — угроз нет; цена риска нулевая не потому, "
-                         "что опасности нет, а потому что нападения не было")
+        powers = foreign_powers(obs, my_player_id)
+        if powers == 0:
+            return 0.0, {}, ("мы на карте одни: чужих игроков нет — угроз нет по существу, "
+                             "а не потому, что их не видно")
+        if powers is None:
+            return 0.0, {}, ("нападения ещё не наблюдалось; о соперниках данных нет — состояние "
+                             "не измерено, «угроз нет» НЕ утверждается")
+        return 0.0, {}, (f"нападения ещё не наблюдалось, но на карте {powers} чужих игроков: "
+                         f"угрозы есть, они просто не наблюдены (мы их не видели) — цена риска "
+                         f"нулевая именно поэтому")
     exp = exposure(obs, marks, turn, my_player_id, tau)
     if not exp:
         return 0.0, {}, (f"наблюдённых угроз {len(found)}, но ни одна не достаёт до наших сущностей "

@@ -256,3 +256,41 @@ def classify_loss(obs: Mapping[str, Any], event: Mapping[str, Any],
     res = classify_pair(obs, near[0], near[1])
     res["reason"] = "двое видимых чужих рядом с местом потери: " + str(res["reason"])
     return res
+
+
+def observe_candidates(prev: Optional[Mapping[str, Any]], obs: Mapping[str, Any],
+                       my_player_id: Any = 0, turn: Any = None) -> dict[str, Any]:
+    """Кандидаты «возможного источника коллапса» по двум срезам (§13.64).
+
+    Возврат: `{"turn", "extraneous", "losses", "candidates", "reason"}`. Каждый кандидат —
+    словарь с `why` (названная причина) и `source` (`extraneous` / `loss`). Пусто — С
+    НАЗВАННОЙ причиной, а не молчанием: «не наблюдено» и «никого нет» — разные вещи
+    (правило проекта: ноль обязан называть, какой он).
+
+    Сравнивать надо СЫРЫЕ наблюдения (урок `spec_attack.observe`: срез вместо наблюдения
+    давал «потерь не наблюдено» на синтетике с наблюдаемым нападением).
+    """
+    extraneous = extraneous_candidates(obs, my_player_id)
+    losses: list[dict[str, Any]] = []
+    if prev is not None:
+        for event in loss_events(prev, obs, my_player_id):
+            losses.append({**event, **classify_loss(obs, event, my_player_id)})
+
+    candidates: list[dict[str, Any]] = []
+    for u in extraneous:
+        candidates.append({**u, "source": "extraneous"})
+    for item in losses:
+        for c in item.get("candidates", []):
+            candidates.append({**c, "source": "loss", "loss_kind": item.get("kind"),
+                               "at": [item.get("x"), item.get("y")]})
+
+    if candidates:
+        reason = (f"кандидатов {len(candidates)}: посторонних на нашей земле или в открытых "
+                  f"клетках {len(extraneous)}, при потерях {len(losses)}")
+    elif prev is None:
+        reason = "предыдущего среза нет — сравнить нечем, кандидатов нет"
+    else:
+        reason = ("чужих рядом с местами потерь и посторонних на нашей земле не видно — "
+                  "кандидатов нет")
+    return {"turn": turn, "extraneous": extraneous, "losses": losses,
+            "candidates": candidates, "reason": reason}

@@ -62,6 +62,7 @@ from .site_eval import (
 )
 from . import site_outcomes
 from . import spec_attack as _spec_attack
+from . import spec_collapse_candidates as _spec_collapse_candidates
 from . import switch_channel as _switch_channel
 from .terrain_work import WORK_ACTION_EXTRA, tile_effect, tile_terrain_extras
 
@@ -571,6 +572,15 @@ class GameStateExtractor:
         #: Наблюдение нападения (порт `v2:brain/v2/attack.py`): ведёт срезы между
         #: ходами и ставит метку «источник коллапса» — только по наблюдённому.
         self.attack_tracker = _spec_attack.AttackTracker(my_player_id=my_player_id)
+        #: Наш номер игрока — нужен читателям, которые сравнивают владельцев (кандидаты §13.64).
+        self.my_player_id = my_player_id
+        #: Предыдущее СЫРОЕ наблюдение для сравнения срезов — то же правило, что у трекера
+        #: (срез вместо наблюдения даёт «потерь не наблюдено» на видимом нападении).
+        self._collapse_prev_obs: Optional[dict[str, Any]] = None
+        #: Кандидаты «возможного источника коллапса» (§13.64, правило владельца): ОТДЕЛЬНЫЙ
+        #: канал. Подтверждённую метку `is_collapse_source` не подменяет и в ядро не пишется:
+        #: кандидат — подозрение с названной причиной, метка — только наблюдённое нападение.
+        self.last_collapse_candidates: dict[str, Any] = {}
         #: Последнее событие наблюдения нападения и то, что помечено в этом ходу.
         self.last_attack_event: dict[str, Any] = {"attacked": False, "victims": [],
                                                   "attackers": [], "marked": [],
@@ -634,6 +644,15 @@ class GameStateExtractor:
         # Метка — ВХОД для ядра, а не параметр модели: гипотеза не может её менять.
         self.last_attack_event = self.attack_tracker.observe(observations, turn)
         self.marked_collapse_sources = self.attack_tracker.apply(entities, turn)
+
+        # ── Кандидаты «возможного источника коллапса» (§13.64) ──────────────
+        # Кто из чужих МОГ ударить: при бое двух сторон защитник — тот, кто стоит на
+        # клетке своего игрока (при недоступности признака кандидатами идут оба воюющих);
+        # плюс любой посторонний юнит на нашей территории или в открытых клетках.
+        # Кандидат ≠ подтверждённая метка: метку ставит только наблюдённое нападение выше.
+        self.last_collapse_candidates = _spec_collapse_candidates.observe_candidates(
+            self._collapse_prev_obs, observations, self.my_player_id, turn)
+        self._collapse_prev_obs = observations
 
         # ── Канал смены производства (`produce_switch`, §10.102) ────────────
         # Заявки раннера закрываются ФАКТОМ мира: запас щитов до и после смены.
