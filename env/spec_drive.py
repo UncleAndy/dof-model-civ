@@ -100,7 +100,9 @@ class Decider:
             SO.empire_stocks(obs, self.own_id), SO.empire_incomes(obs, self.own_id),
             measured_tech_rate=L.measured_science_rate(prev_obs, obs, self.own_id))
         graph = G.world_graph(m["vectors"], m["fields"], m["dof"], catalogue=m["catalogue"],
-                              known_techs=m["known_techs"], raw_menus=m["raw_menus"])
+                              known_techs=m["known_techs"], raw_menus=m["raw_menus"],
+                              strikes=(getattr(self.extractor, "last_attack_event", {}) or {}
+                                       ).get("strikes") or ())
         ctx = G.observation_context(graph, m["dof"])
         st = G.state_with_measured_dof(m["state"], m["dof"])
         player_id = f"player_{self.own_id}"

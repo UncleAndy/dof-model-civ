@@ -416,7 +416,9 @@ def measure_step(obs: Mapping[str, Any], info: Optional[Mapping[str, Any]], turn
     try:
         from env import spec_graph as _G          # ленивый импорт: цикл импортов не создаём
         graph = _G.world_graph(vectors, fields_of, dof, catalogue=catalogue,
-                               known_techs=known_gates, raw_menus=raw_menus)
+                               known_techs=known_gates, raw_menus=raw_menus,
+                               strikes=(getattr(extractor, "last_attack_event", {}) or {}
+                                        ).get("strikes") or ())
         ctx = _G.observation_context(graph, dof)
         st_calc = _G.state_with_measured_dof(state, dof)
         members, core_index = _G.calc_and_index(st_calc, ctx)

@@ -36,6 +36,7 @@ from brain.spec.world_graph import ActEdge, EntityNode, WorldGraph
 
 from .config import (
     SPEC_ACT_EFFECT,
+    SPEC_OBSERVED_ATTACK_CATEGORY,
     SPEC_COUNTING_HORIZON_TURNS,
     SPEC_MEANS_CLASS,
     SPEC_PRODUCTION_ACTION_PREFIX,
@@ -87,7 +88,8 @@ def world_graph(vectors: Mapping[str, Sequence[str]],
                 dof: Mapping[str, float],
                 catalogue: Optional[Mapping[str, Any]] = None,
                 known_techs: Iterable[str] = (),
-                raw_menus: Optional[Mapping[str, Sequence[str]]] = None) -> WorldGraph:
+                raw_menus: Optional[Mapping[str, Sequence[str]]] = None,
+                strikes: Iterable[Mapping[str, Any]] = ()) -> WorldGraph:
     """Собрать граф мира: узлы — наблюдаемые сущности, акты — их живые векторы.
 
     `vectors` — меню по сущностям (векторы реакции, уже очищенные от мертвого),
@@ -138,6 +140,29 @@ def world_graph(vectors: Mapping[str, Sequence[str]],
                 resources={},
                 duration_mks=TURN_DURATION_MKS,
             ))
+    # ── Наблюдённые удары (§13.93) ────────────────────────────────────────────────
+    # Это НЕ объявленное средство из меню, а измеренный факт мира: чужой удар, у которого
+    # есть владелец и измеренная величина (§13.91). Категория названа отдельно, чтобы её
+    # нельзя было спутать с объявленными категориями средств; величина берётся из записи,
+    # а не из таблицы эффектов. Узел, которого нет в наблюдении, путь не ведёт.
+    for st in strikes or ():
+        src = str((st or {}).get("source") or "")
+        tgt = str((st or {}).get("target") or "")
+        delta = float((st or {}).get("delta") or 0.0)
+        if src not in nodes or tgt not in nodes:
+            continue                      # узла нет наблюдения — акта нет (§13.93)
+        if delta >= 0.0:
+            continue                      # наблюдённый удар только отнимает
+        acts.append(ActEdge(
+            id=f"strike:{src}:{tgt}:{(st or {}).get('turn')}",
+            source=src,
+            target=tgt,
+            category=SPEC_OBSERVED_ATTACK_CATEGORY,
+            requires=[],
+            effect={tgt: delta},
+            resources={},
+            duration_mks=TURN_DURATION_MKS,
+        ))
     means = sorted({str(r) for group in SPEC_RESOURCE_GROUPS for r in group})
     return WorldGraph(entities=nodes, means=means, acts=acts, exchanges=[])
 

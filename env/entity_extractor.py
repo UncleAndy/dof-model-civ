@@ -391,7 +391,8 @@ def unit_options(unit_obs: dict[str, Any], age: int = 0,
 
 def strike_acts(prev_obs: dict[str, Any], obs: dict[str, Any],
                 event: dict[str, Any], my_player_id: Any = 0,
-                model: Optional[WorldModel] = None) -> list[dict[str, Any]]:
+                model: Optional[WorldModel] = None,
+                entities: Optional[dict[str, Any]] = None) -> list[dict[str, Any]]:
     """Наблюдённый удар → акт с ИЗМЕРЕННОЙ величиной (§13.91).
 
     Величина — health-часть падения DoF цели: линза цели пересчитывается на ПРЕЖНЕМ
@@ -429,7 +430,15 @@ def strike_acts(prev_obs: dict[str, Any], obs: dict[str, Any],
         if isinstance(after, dict) and not _spec_attack.owns(after, my_player_id):
             continue                    # жертва не наша — это не наш урон
         owner = next(iter(owners)) if len(owners) == 1 else None
-        source = f"{_spec_attack.OWNER_PREFIX}{owner}" if owner is not None else None
+        source = None
+        if owner is not None:
+            # §13.93: источником может быть только узел, который В СОСТОЯНИИ, — у силы
+            # нападающего это `diplomacy_<номер>` (номер = владелец). Имя `player_<номер>`
+            # остаётся запасным: узла с таким именем у нас нет, путь такой акт не ведёт —
+            # это названо, а не замаскировано.
+            host = f"diplomacy_{owner}"
+            source = (host if (entities and host in entities)
+                      else f"{_spec_attack.OWNER_PREFIX}{owner}")
         if source is None:
             # Рядом оказалось несколько чужих — виновный не назначается (как в §13.85).
             out.append({"source": None, "target": f"unit_{raw}", "delta": None,
@@ -728,7 +737,9 @@ class GameStateExtractor:
         # §4.2 она ещё не подтверждает — граница названа в §13.91.
         self.last_attack_event["strikes"] = strike_acts(
             self._collapse_prev_obs, observations, self.last_attack_event,
-            my_player_id=self.my_player_id, model=self.model)
+            my_player_id=self.my_player_id, model=self.model, entities=entities)
+        # §13.93: метка порта размещается на узел силы, который есть в состоянии.
+        self.last_attack_event["label_hosts"] = self._host_marks(entities, turn)
 
         # ── Кандидаты «возможного источника коллапса» (§13.64) ──────────────
         # Кто из чужих МОГ ударить: при бое двух сторон защитник — тот, кто стоит на
@@ -975,6 +986,45 @@ class GameStateExtractor:
             )
 
     # ── Diplomacy extraction ──────────────────────────────────────────────
+
+    def _host_marks(self, entities: dict[str, Any], turn: Any = 0) -> list[dict[str, Any]]:
+        """§13.93: метка порта ложится на узел, который В СОСТОЯНИИ.
+
+        Порт `spec_attack` метит владельца (`player_<номер>`) и, если нападающий сам
+        оказался сущностью графа, его самого. У нас узла `player_<номер>` нет: в состоянии
+        живут наши юниты и города, технологии, дипломатия — и узел силы `diplomacy_<номер>`.
+        Поэтому метка ПЕРЕНОСИТСЯ на узел силы, а не теряется: берётся НАМЕРЕНИЕ порта (его
+        живые метки на этом ходу), а не список уже приложенных — приложенный пуст именно
+        потому, что `player_<номер>` среди наших сущностей не находится.
+        """
+        rows: list[dict[str, Any]] = []
+        tracker = getattr(self, "attack_tracker", None)
+        marks: dict[str, Any] = {}
+        if tracker is not None:
+            try:
+                marks = tracker.marks.active(int(turn))
+            except (TypeError, ValueError):
+                marks = dict(getattr(getattr(tracker, "marks", None), "_marks", {}) or {})
+        for marked, rec in sorted(marks.items()):
+            owner = (rec or {}).get("owner")
+            if owner is None:
+                owner = str(marked).rsplit("_", 1)[-1]
+            host = f"diplomacy_{owner}"
+            ent = entities.get(host)
+            if ent is None:
+                ent = entities.get(str(marked))
+                if ent is None:
+                    rows.append({"метка": str(marked), "узел": None,
+                                 "причина": "узла силы в состоянии нет — метка не размещена"})
+                    continue
+                ent.is_collapse_source = True
+                rows.append({"метка": str(marked), "узел": str(marked),
+                             "причина": "метка размещена на самого нападающего (он узел)"})
+                continue
+            ent.is_collapse_source = True
+            rows.append({"метка": str(marked), "узел": host,
+                         "причина": "метка наблюдённого нападения размещена на узел силы"})
+        return rows
 
     def _extract_diplomacy(
         self,
