@@ -405,15 +405,20 @@ def measure_step(obs: Mapping[str, Any], info: Optional[Mapping[str, Any]], turn
     dof = {eid: m.current_dof for eid, m in measured.items()}
     counts = {eid: float(m.variety_counters.get("V") or 0.0) for eid, m in measured.items()}
     # §4.2/§4.1: набор счёта `calc(S)` и индекс ЯДРА по нему — ОТДЕЛЬНЫМИ числами рядом с нашим
-    # `total_index`. Ядро держит в наборе и незнание (оно не считается ни нулём, ни идеалом) и
-    # выкидывает только `proven_unreachable`, поэтому наш счёт по всем измеренным может с ядром
-    # расходиться. Расхождение здесь — НАБЛЮДЕНИЕ, а не правка: `index` остаётся тем же, чем был
-    # для решения (§13.79).
+    # `total_index`. Ядру подаётся ДЕЙСТВИТЕЛЬНОЕ наблюдение и состояние с измеренными DoF — тем же
+    # способом, что проверен смоуком (`_lens_anchor_smoke.py`): `world_graph` →
+    # `observation_context` → `state_with_measured_dof` → `calc_and_index`. Без этого ядро считает
+    # случай незнания: ψ = ½ на линзу, DoF = ⅛, `ln ⅛ = −2.0794` (§13.79). Вторая сборка не
+    # изобретается. Расхождение здесь — НАБЛЮДЕНИЕ: `index` решения остаётся тем же (§13.80).
     in_calc = core_index = None
     calc_error = None
     try:
         from env import spec_graph as _G          # ленивый импорт: цикл импортов не создаём
-        members, core_index = _G.calc_and_index(state, None)   # ctx=None → предохранительный набор
+        graph = _G.world_graph(vectors, fields_of, dof, catalogue=catalogue,
+                               known_techs=known_gates, raw_menus=raw_menus)
+        ctx = _G.observation_context(graph, dof)
+        st_calc = _G.state_with_measured_dof(state, dof)
+        members, core_index = _G.calc_and_index(st_calc, ctx)
         in_calc = len(members)
     except Exception as exc:  # noqa: BLE001
         calc_error = f"{type(exc).__name__}: {str(exc)[:80]}"
