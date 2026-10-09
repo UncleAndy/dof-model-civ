@@ -863,9 +863,9 @@ def run_horizon() -> None:
 
     prev_slice = {"unit": {"1": {"owner": 0, "health": 20, "x": 25, "y": 43}},
                   "city": {"121": {"owner": 0, "x": 25, "y": 43}}}
-    lost_map = _grid(); lost_map[43][26] = 1          # чужой вплотную, юнит исчез
+    lost_map = _grid(); lost_map[26][43] = 1          # чужой вплотную, юнит исчез
     blind_map = _grid()                                # юнит исчез, соседа не видно
-    wound_map = _grid(); wound_map[43][24] = 2         # чужой с другой стороны, ранение
+    wound_map = _grid(); wound_map[24][43] = 2         # чужой с другой стороны, ранение
     cur_lost = {"unit": {}, "city": {"121": {"owner": 0, "x": 25, "y": 43}},
                 "map": {"unit_owner": lost_map}}
     cur_blind = {"unit": {}, "city": {"121": {"owner": 0, "x": 25, "y": 43}},
@@ -1025,7 +1025,7 @@ def run_horizon() -> None:
     def _mk_map(own_cells):
         grid = [[255] * 4 for _ in range(4)]
         for (ax, ay), aown in own_cells.items():
-            grid[ay][ax] = aown
+            grid[ax][ay] = aown          # порядок слоя — [x][y], измерен (§13.99)
         return grid
 
     base_unit = {"5": {"owner": 0, "x": 1, "y": 1, "health": 10}}
@@ -1198,7 +1198,7 @@ def run_horizon() -> None:
     def _grid(cells, size=8):
         g = [[255] * size for _ in range(size)]
         for (x, y), own in cells.items():
-            g[y][x] = own
+            g[x][y] = own               # порядок слоя — [x][y], измерен (§13.99)
         return g
 
     _city = {"121": {"owner": 0, "x": 2, "y": 2, "city_radius_sq": 9}}

@@ -20,14 +20,14 @@ EMPTY = 255
 def grid(size, cells):
     g = [[EMPTY] * size for _ in range(size)]
     for (x, y), v in cells.items():
-        g[y][x] = v
+        g[x][y] = v                  # порядок слоя — [x][y], измерен (§13.99)
     return g
 
 
 def status_grid(size, open_cells):
     g = [[0] * size for _ in range(size)]
     for (x, y) in open_cells:
-        g[y][x] = 1
+        g[x][y] = 1                  # порядок слоя — [x][y], измерен (§13.99)
     return g
 
 

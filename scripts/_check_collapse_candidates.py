@@ -25,24 +25,29 @@ ME = 0
 
 
 def make_map(tile_owner=None, unit_owner=None, status=None, city_owner=None):
-    """Слои строятся В ПОРЯДКЕ МИРА: grid[y][x] (см. `spec_threat.foreign_units_from_map`)."""
+    """Слои строятся В ИЗМЕРЕННОМ ПОРЯДКЕ МИРА: grid[x][y] (§13.99).
+
+    Порядок установлен замером на своих: координаты юнитов и города публикуются в `unit`/`city`, и
+    `map.unit_owner` показывает наш id на них только при чтении `[x][y]` — четыре из четырёх.
+    Сетка тут квадратная (10x10), поэтому транспозиция формой не ловится: её надо именно знать.
+    """
     m = {}
     if tile_owner is not None:
-        m["tile_owner"] = [[EMPTY for _ in range(XS)] for _ in range(YS)]
+        m["tile_owner"] = [[EMPTY for _ in range(YS)] for _ in range(XS)]
         for (x, y), v in tile_owner.items():
-            m["tile_owner"][y][x] = v
+            m["tile_owner"][x][y] = v
     if city_owner is not None:
-        m["city_owner"] = [[EMPTY for _ in range(XS)] for _ in range(YS)]
+        m["city_owner"] = [[EMPTY for _ in range(YS)] for _ in range(XS)]
         for (x, y), v in city_owner.items():
-            m["city_owner"][y][x] = v
+            m["city_owner"][x][y] = v
     if unit_owner is not None:
-        m["unit_owner"] = [[EMPTY for _ in range(XS)] for _ in range(YS)]
+        m["unit_owner"] = [[EMPTY for _ in range(YS)] for _ in range(XS)]
         for (x, y), v in unit_owner.items():
-            m["unit_owner"][y][x] = v
+            m["unit_owner"][x][y] = v
     if status is not None:
-        m["status"] = [[0 for _ in range(XS)] for _ in range(YS)]
+        m["status"] = [[0 for _ in range(YS)] for _ in range(XS)]
         for (x, y) in status:
-            m["status"][y][x] = 1
+            m["status"][x][y] = 1
     return {"map": m}
 
 

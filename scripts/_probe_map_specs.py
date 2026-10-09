@@ -56,18 +56,29 @@ def main() -> int:
     mask = rec.get("improvements") or []
     built = [i for i, on in enumerate(mask) if on]
     print(f"  построено в городе (индексы маски): {built} из {len(mask)}")
+    # СЛОИ ИНДЕКСИРУЮТСЯ [x][y] — проверено на наших юнитах (4 из 4) и городе.
+    known_all = sum(1 for x in range(len(terrain)) for y in range(len(terrain[x]))
+                    if isinstance(terrain[x][y], int) and terrain[x][y] != 255)
+    print(f"  известно плиток во всём срезе: {known_all}")
+    known_near = 0
+    lines = []
     for dy in range(-2, 3):
-        line = []
+        row = []
         for dx in range(-2, 3):
-            y, x = cy + dy, cx + dx
-            if 0 <= y < len(terrain) and 0 <= x < len(terrain[y]):
-                t = terrain[y][x]
-                cell = extras[y][x] if y < len(extras) and x < len(extras[y]) else []
-                ids = [i for i, on in enumerate(cell)] if isinstance(cell, list) else []
-                line.append(f"{t}{'+' + ','.join(map(str, ids)) if ids else ''}")
+            x, y = cx + dx, cy + dy
+            if 0 <= x < len(terrain) and 0 <= y < len(terrain[x]):
+                t = terrain[x][y]
+                cell = extras[x][y] if x < len(extras) and y < len(extras[x]) else []
+                ids = [i for i, on in enumerate(cell) if on] if isinstance(cell, list) else []
+                if isinstance(t, int) and t != 255:
+                    known_near += 1
+                row.append(f"{t}{'+' + ','.join(map(str, ids)) if ids else ''}")
             else:
-                line.append("..")
-        print("   ", " ".join(f"{v:>10}" for v in line))
+                row.append("..")
+        lines.append(row)
+    print(f"  из 25 клеток окрестности (радиус 2) разведано: {known_near}")
+    for row in lines:
+        print("   ", " ".join(f"{v:>10}" for v in row))
     # Есть ли в захвате справочник имён местности/ресурсов вообще
     for key in ("terrain", "extras", "ruleset", "settings", "improvement", "unit_type"):
         v = obs.get(key)

@@ -33,7 +33,7 @@ def check(name: str, cond: bool, detail: str = "") -> None:
 def _map(cells: dict) -> list:
     grid = [[255] * 4 for _ in range(4)]
     for (x, y), own in cells.items():
-        grid[y][x] = own
+        grid[x][y] = own             # порядок слоя — [x][y], измерен (§13.99)
     return grid
 
 

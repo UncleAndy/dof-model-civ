@@ -83,16 +83,18 @@ def foreign_units_from_map(obs: Mapping[str, Any], my_player_id: Any = 0
 
     Карта — **второй канал**: паспорта чужого в секции `unit` может не быть, а на
     карте он виден. Значение `255` означает «юнита нет» (замер `v2`), свои клетки
-    не возвращаются. Формат — список строк карты (`map.unit_owner[y][x]`).
+    не возвращаются. Порядок слоя — `map.unit_owner[x][y]` (§13.99, измерено на своих
+    юнитах: чтение `[x][y]` даёт наш id четыре раза из четырёх, `[y][x]` — ни разу),
+    поэтому и тройка возвращается в том же смысле: `(владелец, x, y)`.
     """
     grid = ((obs or {}).get("map") or {}).get("unit_owner")
     if not isinstance(grid, Sequence):
         return []
     found: list[tuple[int, int, int]] = []
-    for y, row in enumerate(grid):
-        if not isinstance(row, Sequence):
+    for x, column in enumerate(grid):
+        if not isinstance(column, Sequence):
             continue
-        for x, value in enumerate(row):
+        for y, value in enumerate(column):
             try:
                 owner = int(value)
             except (TypeError, ValueError):

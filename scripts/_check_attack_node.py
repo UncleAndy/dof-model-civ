@@ -36,7 +36,7 @@ def check(name: str, cond: bool, detail: str = "") -> None:
 def _map(cells: dict) -> list:
     grid = [[255] * 4 for _ in range(4)]
     for (x, y), own in cells.items():
-        grid[y][x] = own
+        grid[x][y] = own                 # порядок слоя — [x][y], измерен (§13.99)
     return grid
 
 
@@ -69,12 +69,16 @@ def poisoned(prev: dict, cur: dict):
     if not isinstance(grid, list) or not grid or not isinstance(grid[0], list):
         return None
     rec["health"] = 2                       # удар почти насмерть: порог §13.92 пройден
-    gy, gx = min(max(y, 0), len(grid) - 1), min(max(x, 0), len(grid[0]) - 1)
+    # Слои индексируются [x][y] (§13.99, измерено): длина внешнего списка — число x (78),
+    # внутреннего — число y (52). Прежняя запись брала grid[y][x] и сажала чужого в клетку,
+    # зеркальную к жертве, — потому удар и не обнаруживался после исправления читателя.
+    x0 = min(max(x, 0), len(grid) - 1)
+    y0 = min(max(y, 0), len(grid[0]) - 1)
     cells = []
     for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
-        nx, ny = gx + dx, gy + dy
-        if 0 <= ny < len(grid) and 0 <= nx < len(grid[ny]):
-            cells.append((ny, nx, grid[ny][nx]))
+        nx, ny = x0 + dx, y0 + dy
+        if 0 <= nx < len(grid) and 0 <= ny < len(grid[nx]):
+            cells.append((nx, ny, grid[nx][ny]))
     free = [c for c in cells if c[2] == 255]
     pick = (free or cells)[0]
     grid[pick[0]][pick[1]] = 3
