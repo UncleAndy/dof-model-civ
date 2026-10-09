@@ -86,8 +86,14 @@ check("не начал вовсе: запись свежая — НЕ гасим
 
 zero_trace = tmp / "zero.jsonl"
 zero_trace.write_text("", encoding="utf-8")
-check("не начал вовсе: трасса есть, но пуста, и запись молчит — гасим",
-      ab.never_started(nlog, zero_trace, 240.0, now=now) is True)
+aged_zero = tmp / "zero_aged.jsonl"
+aged_zero.write_text("", encoding="utf-8")
+stamp = time.time() - 10 * 60.0
+os.utime(aged_zero, (stamp, stamp))
+check("не начал вовсе: трасса пуста и СВЕЖАЯ — НЕ гасим (плечо только создало файл)",
+      ab.never_started(nlog, zero_trace, 240.0, now=now) is False)
+check("не начал вовсе: трасса пуста и молчит больше порога — гасим",
+      ab.never_started(nlog, aged_zero, 240.0, now=now) is True)
 
 some_trace = tmp / "some.jsonl"
 make_trace(some_trace, 5, 10)
