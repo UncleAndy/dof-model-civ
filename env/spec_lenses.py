@@ -473,6 +473,20 @@ def action_targets_open_gate(name: str, known_gates: Iterable[str] = ()) -> bool
     return tail in {str(g) for g in known_gates}
 
 
+#: Вид требования «нужна постройка» (`kind = 3`). Опознан ЗАМЕРОМ на настоящем захвате (§13.96), а не
+#: по памяти о правилах: все 14 значений этого вида разрешаются по опубликованному справочнику улучшений,
+#: и имена согласуются со смыслом предмета (Research Lab — University, Stock Exchange — Bank, Cathedral
+#: — Temple, Power Plant — Factory, Sewer System — Aqueduct). Требование судится по маске построек
+#: КОНКРЕТНОГО города: маски у городов разные, глобальная оценка каталога была бы неверной.
+SPEC_ITEM_REQ_KIND_IMPROVEMENT: int = 3
+
+#: Виды требований, которые по нашим захватам судить нечем (объявлены, чтобы причина была названа, а не
+#: потеряна): `14` — приморье, `22` — река. Оценка возможна только при РАЗВЕДАННОЙ окрестности города
+#: (`terrain` не 255 и `extras` плитки); в наших срезах окрестность не разведана, поэтому эти виды
+#: остаются неоценёнными (§13.96, п. 2).
+SPEC_ITEM_REQ_KIND_UNJUDGED_HERE: tuple[int, ...] = (14, 22)
+
+
 def catalogue_index(tech_records: Mapping[str, Any]) -> dict[str, Any]:
     """Каталог мира: чем открывается предмет и какие технологии ему нужны.
 
@@ -483,8 +497,10 @@ def catalogue_index(tech_records: Mapping[str, Any]) -> dict[str, Any]:
     технология». Отсюда две вещи сразу: что доступно сейчас и что откроется, если
     технологию исследовать.
 
-    Требования прочих видов не оцениваются — их число возвращается в
-    `unevaluated`, а не размазывается молчанием по результату.
+    Требования прочих видов: `kind = 3` (постройка, §13.96) переносится в `reqs` и судится
+    `item_available` по маске построек ИМЕННО ЭТОГО города — постройки у городов разные, поэтому
+    глобальная оценка каталога была бы неверной. Виды, которые судить нечем (приморье, река), их число
+    возвращается в `unevaluated`, а не размазывается молчанием по результату.
     """
     items: dict[str, dict[str, Any]] = {}
     unlocks: dict[str, list[str]] = {}
@@ -499,38 +515,64 @@ def catalogue_index(tech_records: Mapping[str, Any]) -> dict[str, Any]:
                 if not name:
                     continue
                 advance: set[str] = set()
+                reqs: list[dict[str, Any]] = []
                 other = 0
                 for req in (spec.get(req_key) or []):
                     if not isinstance(req, Mapping) or not req.get("present"):
                         continue
-                    if req.get("kind") == SPEC_ITEM_REQ_KIND_ADVANCE:
+                    kind = req.get("kind")
+                    if kind == SPEC_ITEM_REQ_KIND_ADVANCE:
                         advance.add(str(req.get("value")))
+                    elif kind == SPEC_ITEM_REQ_KIND_IMPROVEMENT:
+                        reqs.append({"kind": int(kind), "value": req.get("value"),
+                                     "range": req.get("range")})
                     else:
                         other += 1
-                entry = items.setdefault(str(name), {"advance": set(), "unevaluated": 0})
+                entry = items.setdefault(str(name), {"advance": set(), "unevaluated": 0,
+                                                     "reqs": []})
                 entry["advance"] |= advance
+                entry["reqs"].extend(reqs)
                 entry["unevaluated"] = max(int(entry["unevaluated"]), other)
                 unlocks.setdefault(str(tech_id), []).append(str(name))
     unevaluated = sum(int(e["unevaluated"]) for e in items.values())
-    return {"items": items, "unlocks": unlocks, "unevaluated": unevaluated}
+    return {"items": items, "unlocks": unlocks, "unevaluated": unevaluated,
+            "improvements": improvement_id_index(tech_records)}
 
 
 def item_available(name: str, catalogue: Optional[Mapping[str, Any]],
-                   known: Iterable[str] = ()) -> bool:
-    """Доступен ли предмет сейчас: все его технологические требования известны.
+                   known: Iterable[str] = (), fields: Optional[Mapping[str, Any]] = None) -> bool:
+    """Доступен ли предмет сейчас: технологические требования известны, постройки стоят.
 
-    Предмет с неоценёнными требованиями недоступным не объявляется — он просто не
-    судится (`True`), иначе незнание читалось бы как запрет. Предмет, которого нет
-    в каталоге, тоже не судится.
+    Технологические требования (`kind = 1`) судятся по известным технологиям. Требование «нужна
+    постройка» (`kind = 3`, §13.96) судится по маске `improvements` ТОГО города, чей это предмет
+    (`fields`): маски у городов разные. Если город не назван, маски нет, или id постройки выходит за
+    справочник мира — требование НЕ судится, и это не запрет: незнание читалось бы как запрет, чего
+    правило владельца не допускает. Требование, которое судить нечем (приморье, река), тоже не мешает.
+
+    Предмет с неоценёнными требованиями недоступным не объявляется (`True`). Предмета нет в каталоге —
+    тоже не судится.
     """
     if not catalogue:
         return True
     entry = (catalogue.get("items") or {}).get(str(name))
     if entry is None:
         return True
-    if entry["unevaluated"]:
-        return True
-    return set(entry["advance"]) <= {str(k) for k in known}
+    if not set(entry["advance"]) <= {str(k) for k in known}:
+        return False                    # технология не исследована: запрет ИЗМЕРЕН, а не предположен
+    if fields is not None:
+        mask = fields.get("improvements")
+        index = catalogue.get("improvements") or {}
+        for req in (entry.get("reqs") or []):
+            if int(req.get("kind", 0)) != SPEC_ITEM_REQ_KIND_IMPROVEMENT:
+                continue
+            value = req.get("value")
+            if not isinstance(value, int) or value not in index:
+                continue                # id вне справочника: судить нечем, значит не запрет
+            if not isinstance(mask, (list, tuple)) or len(mask) <= value:
+                continue                # маски нет или она короче: судить нечем
+            if not mask[value]:
+                return False            # постройки нет: требование не выполнено, и это измерено
+    return True
 
 
 def gate_opens(tech_id: Any, catalogue: Optional[Mapping[str, Any]],
@@ -579,7 +621,7 @@ def available_vectors(entity_type: str, fields: Mapping[str, Any],
             continue
         if name.startswith(SPEC_PRODUCTION_ACTION_PREFIX) and catalogue:
             item = name[len(SPEC_PRODUCTION_ACTION_PREFIX):]
-            if not item_available(item, catalogue, known_techs):
+            if not item_available(item, catalogue, known_techs, fields=fields):
                 continue
         variable = SPEC_VARIABLE_BY_CATEGORY.get(action_category(name))
         if variable is not None and variable in frozen:
