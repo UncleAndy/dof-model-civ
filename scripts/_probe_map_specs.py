@@ -27,7 +27,7 @@ def main() -> int:
     if terrain:
         print("  terrain[0][:12]:", terrain[0][:12])
     if extras:
-        print("  extras[y][x] — маска длиной", len(extras[0][0]) if extras[0] else 0)
+        print("  extras[x][y] — маска длиной", len(extras[0][0]) if extras[0] else 0)
         per_id = collections.Counter()
         for row in extras:
             for cell in (row if isinstance(row, list) else []):

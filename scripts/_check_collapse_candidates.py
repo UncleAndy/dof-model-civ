@@ -110,11 +110,12 @@ obs9 = make_map(tile_owner={(2, 2): ME}, unit_owner={(2, 2): ME}, status={(2, 2)
 c9 = extraneous_candidates(obs9, ME)
 check("свой юнит кандидатом не объявляется", len(c9) == 0, f"кандидатов {len(c9)}")
 
-# 10. Чтение клетки: порядок мира [y][x].
+# 10. Чтение клетки: порядок мира [x][y] (измерен, §13.99).
 obs10 = make_map(tile_owner={(3, 5): 42})
-check("клетка читается как [y][x]", tile_owner_at(obs10, 3, 5) == 42,
+check("клетка читается как [x][y]: положенная в (3,5) видна в (3,5)", tile_owner_at(obs10, 3, 5) == 42,
       f"прочитано {tile_owner_at(obs10, 3, 5)}")
-check("соседняя клетка не подменяется", tile_owner_at(obs10, 5, 3) is None,
+check("зеркальная клетка (5,3) НЕ подменяется — транспозиция была бы ошибкой",
+      tile_owner_at(obs10, 5, 3) is None,
       f"прочитано {tile_owner_at(obs10, 5, 3)}")
 
 # 11. Признак «на своей клетке»: True / False / None.
