@@ -76,6 +76,7 @@ def _run(arm: str, seed: int, port: int, turns: int, tag: str) -> dict:
         # чтобы его можно было проверить синтетикой, а не только живым зависанием.
         trace = ROOT / "knowledge" / f"live_trace_{seed}_port{port}_{tag}.jsonl"
         released = False
+        released_reason = ""
         while proc.poll() is None:
             time.sleep(20)
             if finished_but_silent(trace, turns, 180.0):
@@ -89,11 +90,25 @@ def _run(arm: str, seed: int, port: int, turns: int, tag: str) -> dict:
                 except OSError:
                     pass
                 released = True
+                released_reason = "finished_but_silent"
+                break
+            if never_started(log, trace, 240.0):
+                try:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=60)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait(timeout=30)
+                except OSError:
+                    pass
+                released = True
+                released_reason = "never_started"
                 break
         code = proc.returncode if proc.returncode is not None else -1
     return {"arm": arm, "seed": seed, "port": port, "turns_asked": turns, "tag": tag,
             "exit": int(code), "log": str(log), "seconds": round(time.time() - started, 1),
-            "released_by_watchdog": released}
+            "released_by_watchdog": released, "released_reason": released_reason}
 
 
 def finished_but_silent(trace: Path, turns_asked: int, quiet_seconds: float,
@@ -110,6 +125,34 @@ def finished_but_silent(trace: Path, turns_asked: int, quiet_seconds: float,
         done = sum(1 for _ in trace.open(encoding="utf-8"))
         quiet = (time.time() if now is None else float(now)) - trace.stat().st_mtime
         return done >= int(turns_asked) and quiet > float(quiet_seconds)
+    except OSError:
+        return False
+
+
+def never_started(log: Path, trace: Path, quiet_seconds: float,
+                  now: float | None = None) -> bool:
+    """Признак «плечо вообще не начало партию»: ни хода в трассе, ни роста своей записи.
+
+    Дополняет `finished_but_silent`, а не заменяет его. Тот отпускает плечо, записавшее ВСЕ ходы
+    (зависло на уборке); этот — плечо, которое не написало НИ ОДНОГО хода и молчит: так выглядит
+    слот, отдающий `BeginTurnTimeoutException` (измерено: порты 6002, 6003 на этом стенде).
+    Середину партии по-прежнему не гасим: неполные данные дороже потерянного времени.
+
+    Пометка в записи отдельная (`released_reason`), чтобы отпущенное плечо нельзя было принять за
+    отработавшее.
+    """
+    stamp_now = time.time() if now is None else float(now)
+    try:
+        if not log.exists():
+            return False
+        if stamp_now - log.stat().st_mtime <= float(quiet_seconds):
+            return False
+        if trace.exists():
+            if trace.stat().st_size > 0:
+                return False
+            if stamp_now - trace.stat().st_mtime <= float(quiet_seconds):
+                return False
+        return True
     except OSError:
         return False
 
@@ -198,13 +241,15 @@ def cmd_pairs(args: argparse.Namespace) -> int:
         if pair in finished:
             print(f"пара {pair} (сид {seed}) уже записана — пропуск")
             continue
-        for arm, port in (("A", args.port_a), ("B", args.port_b), ("C", args.port_c)):
+        _ports = {"A": args.port_a, "B": args.port_b, "C": args.port_c}
+        for arm in str(args.arms):
+            port = _ports[arm]
             tag = f"ab{pair:02d}_{arm}_{seed}"
             rec = _run(arm, seed, port, args.turns, tag)
             rec["pair"] = pair
             rec["score"], rec["turns"] = _last_score(rec)
             rows.append(rec)
-            print(f"пара {pair}/3, плечо {arm}: сид {seed}, порт {port}, "
+            print(f"пара {pair}, плечо {arm}: сид {seed}, порт {port}, "
                   f"ходов {rec['turns']}, счёт мира {rec['score']:g}, выход {rec['exit']}, "
                   f"{rec['seconds']:.0f} с")
             with OUT.open("a", encoding="utf-8") as fh:
@@ -267,6 +312,8 @@ def main() -> int:
     p_pairs.add_argument("--port-a", type=int, default=6000)
     p_pairs.add_argument("--port-b", type=int, default=6004)
     p_pairs.add_argument("--port-c", type=int, default=6005)
+    p_pairs.add_argument("--arms", default="ABC",
+                         help="какие плечи гонять: ABC (по умолчанию) или AB для повтора по двум рукам")
     p_pairs.add_argument("--out", default="", help="свой файл опыта (пилоту — своё имя, а не общее)")
     p_pairs.add_argument("--detach", action="store_true",
                          help="уйти из-под сессии (двойной fork + своя сессия): долгий опыт не гибнет с оболочкой")

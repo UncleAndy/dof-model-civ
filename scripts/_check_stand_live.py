@@ -78,6 +78,7 @@ def newest_artifact() -> tuple[str, float]:
 
 
 def main() -> int:
+    smoke = "--smoke" in sys.argv
     print("── слоты: игровой порт по TCP, парный прокси по HTTP ──")
     live: dict[str, bool] = {}
     for name, port, proxy in SLOTS:
@@ -86,7 +87,33 @@ def main() -> int:
         alive = t and code == 200 and ok_text
         live[name] = alive
         print(f"  {name}: игровой {port} TCP {'есть' if t else 'нет'} | прокси {proxy} "
-              f"HTTP {code}{', «Process status: OK»' if ok_text else ''} ⇒ {'ЖИВ' if alive else 'мёртв'}")
+              f"HTTP {code}{', «Process status: OK»' if ok_text else ''} ⇒ "
+              f"{'годен по сокету' if alive else 'мёртв'}")
+
+    if smoke:
+        # Сокет и прокси НЕ доказывают, что слот отдаст партию: измерено (§13.108) — в один и тот
+        # же момент 6000 и 6001 играли (код 0), а 6002 и 6003 давали BeginTurnTimeoutException.
+        # Единственная честная проверка слота перед серией — сыграть в него.
+        print("── проба игрой: по 5 ходов на слот (единственная честная проверка) ──")
+        import subprocess
+        for name, port, _proxy in SLOTS:
+            seed = 9500 + port
+            cmd = [str(ROOT / ".venv" / "bin" / "python"), "scripts/v011_live_run.py",
+                   "--port", str(port), "--seed", str(seed), "--turns", "5"]
+            try:
+                r = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True, timeout=180)
+                code = r.returncode
+                err = ""
+                for token in ("BeginTurnTimeoutException", "AssertionError", "Timeout"):
+                    if token in (r.stdout + r.stderr):
+                        err = token
+                        break
+            except subprocess.TimeoutExpired:
+                code, err = -1, "не ответил за 180 с"
+            plays = code == 0
+            live[name] = live[name] and plays
+            print(f"  {name}: слот {port} — код {code}, играет: {'да' if plays else 'НЕТ'}"
+                  f"{f', ошибка {err}' if err else ''}")
 
     art, age = newest_artifact()
     print("── свежесть артефактов (правило 84) ──")

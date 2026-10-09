@@ -72,5 +72,30 @@ make_trace(edge2, 150, 2)  # 120 с < 180 с
 check("порог 180 с не перейдён (120 с) — НЕ гасим",
       ab.finished_but_silent(edge2, 150, 180.0, now=now) is False)
 
+# ── второй признак: плечо вообще не начало партию (§13.108) ──
+nlog = tmp / "arm.log"
+make_trace(nlog, 1, 10)                       # запись плеча молчит 10 мин
+forbidden = tmp / "нет_трассы.jsonl"
+check("не начал вовсе: запись молчит, трассы нет — гасим",
+      ab.never_started(nlog, forbidden, 240.0, now=now) is True)
+
+nlog_fresh = tmp / "arm_fresh.log"
+make_trace(nlog_fresh, 1, 0.5)
+check("не начал вовсе: запись свежая — НЕ гасим (плечо работает)",
+      ab.never_started(nlog_fresh, forbidden, 240.0, now=now) is False)
+
+zero_trace = tmp / "zero.jsonl"
+zero_trace.write_text("", encoding="utf-8")
+check("не начал вовсе: трасса есть, но пуста, и запись молчит — гасим",
+      ab.never_started(nlog, zero_trace, 240.0, now=now) is True)
+
+some_trace = tmp / "some.jsonl"
+make_trace(some_trace, 5, 10)
+check("начал, но оборвался на середине — НЕ гасим (неполные данные дороже)",
+      ab.never_started(nlog, some_trace, 240.0, now=now) is False)
+
+check("не начал вовсе: своей записи нет — НЕ гасим (нечего судить)",
+      ab.never_started(tmp / "нет_лога.log", forbidden, 240.0, now=now) is False)
+
 print(f"\nпроверок: {ok + bad}, падений: {bad}")
 sys.exit(1 if bad else 0)
