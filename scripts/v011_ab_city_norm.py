@@ -15,7 +15,10 @@
   медиана попарных разностей (A − B) ≥ 2 очка  И  ≥ 10 % медианы |B| при медиане B ≠ 0  И
   односторонний знаковый тест по турам, где A > B, при p < 0.05.
   Иначе — «эффект не установлен». Вымершие и оборванные партии НЕ выбрасываются: счёт берётся на
-  момент окончания, отсутствие счёта = 0.
+  момент окончания, отсутствие счёта = 0. НО плечо, которому стенд не дал партию
+  (`released_reason='never_started'` или ноль записанных ходов), в вердикт не идёт вовсе: иначе
+  отказ стенда читался бы как результат процедуры счёта. Отброшенные строки печатаются с причиной
+  (переобъявлено 09.10.2026, §13.117, до данных серии).
 
 Запуск опыта (долгий, владелец запускает сам):
   <venv>/bin/python scripts/v011_ab_city_norm.py pairs --pairs 10 --first-seed 9100 --turns 150 \
@@ -43,6 +46,11 @@ LOGS = Path("/home/hermes")
 VERDICT_POINTS = 2.0          # медиана попарных разностей ≥ 2 очка
 VERDICT_SHARE = 0.10          # и ≥ 10 % медианы |B|
 VERDICT_ALPHA = 0.05          # и односторонний знаковый тест p < 0.05
+
+#: Жёсткий предел на плечо (объявлен до данных): если плечо ВОШЛО в мир, но за это время не записало
+#: ни одного хода, оно снимается с отдельной пометкой `stalled`. Нужен потому, что признак «в слоте
+#: есть вошедшие» запрещает снимать плечо вообще — иначе зависшее ВНУТРИ мира плечо висело бы вечно.
+STALL_CAP = 1800.0
 
 ARMS = {
     "A": {"DOF_CITY_NORM": "narrow", "DOF_PROD_GATE": "on", "V011_SCOUT": "1",
@@ -92,7 +100,7 @@ def _run(arm: str, seed: int, port: int, turns: int, tag: str) -> dict:
                 released = True
                 released_reason = "finished_but_silent"
                 break
-            if never_started(log, trace, 240.0):
+            if never_started(log, trace, 240.0, port=port):
                 try:
                     proc.terminate()
                     try:
@@ -104,6 +112,19 @@ def _run(arm: str, seed: int, port: int, turns: int, tag: str) -> dict:
                     pass
                 released = True
                 released_reason = "never_started"
+                break
+            if time.time() - started > STALL_CAP:
+                try:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=60)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait(timeout=30)
+                except OSError:
+                    pass
+                released = True
+                released_reason = "stalled"
                 break
         code = proc.returncode if proc.returncode is not None else -1
     return {"arm": arm, "seed": seed, "port": port, "turns_asked": turns, "tag": tag,
@@ -129,14 +150,40 @@ def finished_but_silent(trace: Path, turns_asked: int, quiet_seconds: float,
         return False
 
 
-def never_started(log: Path, trace: Path, quiet_seconds: float,
+def _proxy_users(port: int) -> int | None:
+    """Сколько клиентов вошло в слот — по странице живости соседнего прокси (7000 + сдвиг).
+
+    Живость и вход живут на странице прокси, а не на игровом порту (правило 45). Здесь это не
+    удобство, а признак: он отделяет «плечо внутри мира, просто ещё не написало строку трассы» от
+    «плечу не дали партию». Не ответил — возвращаем None, и решение не принимается вовсе.
+    """
+    import re
+    import urllib.request
+    proxy = 7000 + (int(port) - 6000)
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{proxy}/pubstatus", timeout=5) as fh:
+            text = fh.read().decode("utf-8", "replace")
+    except Exception:  # noqa: BLE001
+        return None
+    m = re.search(r"Logged in users \(count (\d+)\)", text)
+    return int(m.group(1)) if m else None
+
+
+def never_started(log: Path, trace: Path, quiet_seconds: float, port: int | None = None,
                   now: float | None = None) -> bool:
-    """Признак «плечо вообще не начало партию»: ни хода в трассе, ни роста своей записи.
+    """Признак «плечо вообще не начало партию»: ни хода в трассе, ни роста записи, И НЕТ ВХОДА В МИР.
 
     Дополняет `finished_but_silent`, а не заменяет его. Тот отпускает плечо, записавшее ВСЕ ходы
     (зависло на уборке); этот — плечо, которое не написало НИ ОДНОГО хода и молчит: так выглядит
     слот, отдающий `BeginTurnTimeoutException` (измерено: порты 6002, 6003 на этом стенде).
     Середину партии по-прежнему не гасим: неполные данные дороже потерянного времени.
+
+    **Поправка по данным (серия §13.117).** Пустой трассы и молчащей записи НЕДОСТАТОЧНО: 09.10 на
+    пилоте 9220 сторож так снял плечо A (`released_reason='never_started'`, код 143), а плечо при
+    этом было ВОШЕДШИМ в мир — прокси 7000 показывал `Logged in users (count 1)`, и рядом плечо B
+    за ту же пару написало 22 МБ трассы. Значит обязателен третий признак — спрос у мира: если в
+    слоте есть вошедшие, плечо не гасится НИКОГДА. Если прокси не ответил, признак не срабатывает
+    (решение не принимается по незнанию).
 
     Пометка в записи отдельная (`released_reason`), чтобы отпущенное плечо нельзя было принять за
     отработавшее.
@@ -151,6 +198,10 @@ def never_started(log: Path, trace: Path, quiet_seconds: float,
             if trace.stat().st_size > 0:
                 return False
             if stamp_now - trace.stat().st_mtime <= float(quiet_seconds):
+                return False
+        if port is not None:
+            users = _proxy_users(int(port))
+            if users is None or users > 0:
                 return False
         return True
     except OSError:
@@ -274,12 +325,25 @@ def cmd_judge(args: argparse.Namespace) -> int:
         print(f"нет файла опыта {OUT} — судить нечего")
         return 1
     per: dict[int, dict[str, float]] = {}
+    dropped: list[str] = []
     for line in OUT.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
         rec = json.loads(line)
+        why = ""
+        if str(rec.get("released_reason") or "") in ("never_started", "stalled"):
+            why = f"плечо не начало партию ({rec.get('released_reason')})"
+        elif int(rec.get("turns") or 0) <= 0:
+            why = "ноль записанных ходов"
+        if why:
+            dropped.append(f"пара {rec.get('pair')} плечо {rec.get('arm')}: {why}")
+            continue
         per.setdefault(int(rec["pair"]), {})[str(rec["arm"])] = float(rec.get("score") or 0.0)
     pairs = sorted(p for p, arms in per.items() if "A" in arms and "B" in arms)
+    if dropped:
+        print(f"отброшено строк: {len(dropped)} — стенд не дал партию, в вердикт такие не идут:")
+        for d in dropped[:10]:
+            print("   ", d)
     if not pairs:
         print("в файле нет ни одной ПОЛНОЙ пары (нужны оба плеча) — вердикт не ставится")
         return 1
