@@ -38,6 +38,10 @@ def _parse_cli(argv):
                    help="слот с уже идущей игрой (наблюдателя пускают в живую партию)")
     p.add_argument("--reset-timeout", type=int, default=300)
     p.add_argument("--out", default=None, help="куда сложить снимки обзора")
+    p.add_argument("--poll", type=float, default=0.0,
+                   help="снимать обзор по часам (секунды между снимками), а не шагами хода")
+    p.add_argument("--minutes", type=float, default=0.0,
+                   help="сколько минут снимать обзор в режиме часов")
     args, rest = p.parse_known_args(argv)
     sys.argv = [sys.argv[0]] + rest   # остальное — civrealm (он читает sys.argv)
     return args
@@ -163,6 +167,47 @@ def main() -> int:
                       "не отдаёт наблюдателю больше (проверять по ходам, а не по одному снимку).")
         except Exception as exc:  # noqa: BLE001
             print(f"  [!] снимок после наблюдения не получен: {exc!r}")
+
+    # Режим часов: у наблюдателя нет своего хода, поэтому мир не «шагается», а
+    # опрашивается — сервер сам присылает состояние каждый ход. Иначе снимок
+    # пришлось бы делать шагами хода, которых у наблюдателя не бывает.
+    if ARGS.poll > 0:
+        import time as _time
+        deadline = _time.time() + max(1.0, ARGS.minutes) * 60
+        empty_streak = 0
+        print(f"\n  режим часов: опрос каждые {ARGS.poll} с, "
+              f"{ARGS.minutes} мин (мир может стартовать позже)")
+        while _time.time() < deadline:
+            _time.sleep(ARGS.poll)
+            try:
+                info2, obs2 = ctl.get_info_and_observation()
+            except Exception as exc:  # noqa: BLE001
+                print(f"    [!] опрос не удался: {exc!r}")
+                empty_streak += 1
+                if empty_streak >= 4:
+                    print("  мир не отвечает — прекращаю опрос")
+                    break
+                continue
+            view = _view(obs2)
+            snapshots.append({"stage": f"опрос (ход {info2.get('turn')})",
+                              "turn": info2.get("turn"), **view})
+            foreign = sorted(set(view.get("unit_owners", []) + view.get("city_owners", []))
+                             - {getattr(pctl, "my_player_id", None)})
+            print(f"    ход {info2.get('turn')}: игроков {view['player']}, "
+                  f"юнитов {view['unit']}, городов {view['city']}, "
+                  f"чужих владельцев {foreign}")
+            empty_streak = 0
+        if ARGS.out:
+            path = pathlib.Path(ARGS.out)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(snapshots, ensure_ascii=False, indent=2),
+                            encoding="utf-8")
+            print(f"\n  снимки обзора сохранены: {path}")
+        try:
+            env.close()
+        except Exception:  # noqa: BLE001
+            pass
+        return 0
 
     # Прогон по ходам: как ведёт себя обзор дальше.
     print(f"\n  ходов на наблюдение: {ARGS.turns}")
