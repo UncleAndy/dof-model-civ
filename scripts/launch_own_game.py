@@ -73,10 +73,11 @@ def main() -> int:
     procs: list[tuple[str, subprocess.Popen]] = []
     if args.observer == "yes":
         log = tmp / f"{args.tag}_{slot}_observer.log"
-        cmd = [PY, "-u", str(ROOT / "scripts" / "probe_observer.py"),
+        # Всевидящая линейка читает мир из кэшей клиента (у наблюдателя ходов нет, §13.129).
+        cmd = [PY, "-u", str(ROOT / "scripts" / "observer_ruler.py"),
                "--slot", str(slot), "--aifill", "0", "--minp", str(args.players),
                "--poll", "20", "--minutes", str(args.observer_minutes),
-               "--out", str(ROOT / "knowledge" / f"observer_{args.tag}_{slot}.json")]
+               "--out", str(ROOT / "knowledge" / f"observer_ruler_{args.tag}_{slot}.jsonl")]
         procs.append(("observer", _spawn(cmd, log)))
         print(f"  наблюдатель: pid {procs[-1][1].pid}  (лог {log})")
         time.sleep(max(0.0, args.launch_gap))
