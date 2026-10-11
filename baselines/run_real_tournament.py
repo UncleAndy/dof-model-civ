@@ -1233,6 +1233,32 @@ def _improvement_names(env) -> dict:
     return out
 
 
+def _military_type_names(env) -> set:
+    """Типы юнитов с наступательной силой — из правил КЛИЕНТА.
+
+    Нужно для переноса их правила опасности (§13.161): военные типы предлагаются
+    городу только по нужде. Силу берём у самих правил (`attack_strength`), а не из
+    списка имён: список имён — наша догадка, а сила — свойство мира.
+    """
+    out: set = set()
+    try:
+        ctl = getattr(getattr(env, "unwrapped", None), "civ_controller", None)
+        rules = getattr(ctl, "rule_ctrl", None)
+        for _tid, spec in dict(getattr(rules, "unit_types", None) or {}).items():
+            if not isinstance(spec, dict):
+                continue
+            name = spec.get("name")
+            try:
+                attack = float(spec.get("attack_strength") or 0)
+            except (TypeError, ValueError):
+                attack = 0.0
+            if name and attack > 0.0:
+                out.add(str(name))
+    except Exception:  # noqa: BLE001
+        return set()
+    return out
+
+
 def _publish_improvement_names(extractor, env) -> int:
     """Опубликовать имена построек фактами `improvement.<индекс>.name`.
 
@@ -1818,6 +1844,8 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                     obs, info, dof, extractor, avail,
                     type_names=(_unit_type_names(env_getter())
                                 if env_getter is not None else None),
+                    military_names=(_military_type_names(env_getter())
+                                    if env_getter is not None else None),
                     gold=lambda: _gold_of(obs, extractor))
                 if decided:
                     return wire

@@ -297,6 +297,7 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
                   exclude_actors: set | None = None,
                   info_gain: Callable[[tuple[int, int]], float] | None = None,
                   type_names: dict | None = None,
+                  military_names: set | None = None,
                   gold: Any = None,
                   ) -> LiveContext:
     """Собрать состояние и оценки прогноза из живого наблюдения.
@@ -527,6 +528,26 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
                                == int((info or {}).get("turn")))
         except (TypeError, ValueError):
             built_this_turn = False
+        # Войско — только по нужде (§13.161). Перенос их правила опасности
+        # (`ai/default/daimilitary.c:77 assess_danger`, `dai_assess_danger_player`):
+        # при нулевой опасности военные юниты у них не «хотелка» вовсе. Без этого
+        # наша цена ставила Warriors в очередь в мирное время, и город метался между
+        # войском и поселенцем (§13.159). Признаки берём из мира, коэффициент не
+        # вводим: чужой юнит в поле зрения ИЛИ у города нет защитника.
+        military = set(military_names or ())
+        enemy_seen = False
+        for _rec in _as_dict(obs.get("unit")).values():
+            if isinstance(_rec, dict) and _num(_rec.get("owner"), -1) != _num(my_id, -2):
+                enemy_seen = True
+                break
+        garrison = 0
+        city_x, city_y = rec.get("x"), rec.get("y")
+        if city_x is not None and city_y is not None:
+            for _rec in units.values():
+                if (_rec.get("x") is not None and _rec.get("y") is not None
+                        and _num(_rec.get("x"), -1) == _num(city_x, -2)
+                        and _num(_rec.get("y"), -1) == _num(city_y, -2)):
+                    garrison += 1
         if shields <= 0.0:
             return []
         out: list[tuple[str, float, int]] = []
@@ -538,6 +559,11 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
             # сущность, а растут опциями города. Здесь пропускаются, иначе одно и
             # то же здание предлагалось бы дважды и считалось дважды.
             if type_name in spec_improvements and type_name not in live_by_type:
+                continue
+            # Войско — только по нужде (§13.161, их правило опасности): в мирное
+            # время у города-без-защитника военный тип ещё уместен, у защищённого —
+            # «хотелки» на него нет вовсе.
+            if military and type_name in military and not (enemy_seen or garrison <= 0):
                 continue
             # Правило встроенного ИИ (`ai/default/daidomestic.c:488`,
             # `domestic_advisor_choose_build`): город берётся за того, кого прокормит, —
