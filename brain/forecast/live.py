@@ -621,6 +621,32 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
                     and not built_this_turn):
                 switch_penalty = max(0.0, 1.0 - min(1.0, stock / max(1e-9, float(cost))))
             out.append((type_name, value * switch_penalty, turns))
+
+        # ── «НЕ МЕНЯТЬ ТО, ЧТО УЖЕ СТРОИТСЯ» (§13.168) ────────────────────────
+        # Мир не повторяет текущую постановку в списке предложений, поэтому в
+        # сравнении участвовали только ЧУЖИЕ предметы: город выбирал лучшее из
+        # альтернатив и на следующем ходу выбирал снова — измерено 42 переключения
+        # за 25 ходов (Settlers ↔ Warriors, §13.159–13.167), город не достраивал
+        # ничего, а золото уходило в покупки. Правило: постановка меняется ТОЛЬКО
+        # если предложенный предмет строго лучше того, что уже стоит в очереди, —
+        # той же мерой, которой сравнивает поиск (дисконт `γ^срок`), и без новых
+        # коэффициентов. Иначе кандидата на смену нет вовсе, и действие не
+        # отправляется: город продолжает начатое.
+        if current_name and out:
+            _priced_now = type_price(current_name)
+            if _priced_now is not None:
+                from .search import FORECAST_GAMMA as _gamma
+                _now_turns = max(1.0, _num(rec.get("turns_to_prod_complete"), 1.0))
+                _now_value = float(_priced_now[0]) * (_gamma ** _now_turns)
+                kept = [c for c in out
+                        if c[0] != current_name
+                        and c[1] * (_gamma ** c[2]) > _now_value]
+                if not kept and out:
+                    notes.append(
+                        f"город {city_id}: в очереди {current_name} "
+                        f"(ценность с дисконтом {_now_value:.4f}), ни один предложенный "
+                        f"предмет не лучше — постановку не меняем (§13.168)")
+                out = kept
         return out
 
     player = _player_record(obs, my_id)
