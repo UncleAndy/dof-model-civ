@@ -1323,6 +1323,7 @@ def _gold_of(obs, extractor) -> float:
 
 
 def _forecast_decide(obs, info, dof, extractor, avail, *, type_names=None,
+                     military_names=None,
                      gold=None) -> tuple[bool, tuple | None]:
     """Прогноз решает ход: `(взял_ли_решение, действие)`.
 
@@ -1339,7 +1340,8 @@ def _forecast_decide(obs, info, dof, extractor, avail, *, type_names=None,
         ctx = build_context(obs, info, dof, extractor,
                             exclude_actors=set(_USED_ACTORS[0])
                             if _USED_ACTORS else None,
-                            type_names=type_names, gold=gold)
+                            type_names=type_names,
+                            military_names=military_names, gold=gold)
         if ARGS.dump_candidates and len(_BUY_DIAG_PRINTED) < 4:
             rec = {}
             for city in (obs.get("city") or {}).values():
