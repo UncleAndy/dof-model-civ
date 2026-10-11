@@ -74,9 +74,12 @@ def main() -> int:
     if args.observer == "yes":
         log = tmp / f"{args.tag}_{slot}_observer.log"
         # Всевидящая линейка читает мир из кэшей клиента (у наблюдателя ходов нет, §13.129).
+        # Терпение входа длинное: игра не начинается, пока не подключатся все N мест, а по умолчанию
+        # клиент ждёт пакет хода всего 30 с и умирает ровно на этом ожидании (§13.130).
         cmd = [PY, "-u", str(ROOT / "scripts" / "observer_ruler.py"),
                "--slot", str(slot), "--aifill", "0", "--minp", str(args.players),
                "--poll", "20", "--minutes", str(args.observer_minutes),
+               "--server_timeout", "600", "--begin_turn_timeout", "600",
                "--out", str(ROOT / "knowledge" / f"observer_ruler_{args.tag}_{slot}.jsonl")]
         procs.append(("observer", _spawn(cmd, log)))
         print(f"  наблюдатель: pid {procs[-1][1].pid}  (лог {log})")
