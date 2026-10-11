@@ -500,7 +500,22 @@ def city_options(city_obs: dict[str, Any], garrison: int = 0,
     granary = num(city_obs.get('granary_size', 0), 0)
     improvements = as_list(city_obs.get('improvements'))
     improvements_count = sum(1 for v in improvements if truthy(v))
-    m1 = 1.0 + vals['CITY_M1_FOOD'] * max(0.0, surplus_food)
+    # Свобода роста (§13.157/(а)) — в ЕДЕ, а не в размере: у города, которому есть куда
+    # расти, запас еды покупает опции (жителей), а у предела не покупает ничего — еда
+    # пропадает. Так рост виден мере (первая версия складывала размер со свободными
+    # местами, а их сумма всегда равна пределу, и рост стал неразличим: 8 городов по
+    # одному жителю). Предел — из правил мира; поднятый постройками учтён здесь же.
+    growth_limit = num(vals.get('city.growth_base_limit'), 0.0)
+    for _idx, _flag in enumerate(improvements):
+        if not truthy(_flag):
+            continue
+        _name = str(vals.get(f'improvement.{_idx}.name') or '')
+        if _name in ('Aqueduct', 'Sewer System'):
+            growth_limit = max(growth_limit, 12.0)
+    growth_open = size < growth_limit
+    m1 = 1.0
+    if growth_open:
+        m1 += vals['CITY_M1_FOOD'] * max(0.0, surplus_food)
     if granary > 0:
         m1 += vals['CITY_M1_GRANARY'] * min(1.0, food_stock / granary)
     m1 += vals['CITY_M1_IMPROV'] * improvements_count
@@ -540,30 +555,6 @@ def city_options(city_obs: dict[str, Any], garrison: int = 0,
     garrison_factor = 1.0 + vals['GARRISON_W'] * max(0, garrison)
 
     base = vals['CITY_BASE'] + vals['CITY_POP'] * size
-    # Слагаемое роста (§13.157, решение владельца «(а)»). Город, которому есть куда
-    # расти, держит больше возможностей, чем город у потолка: каждый ещё возможный
-    # житель — это ещё одно распределение по клеткам. Считается тем же коэффициентом,
-    # которым оценён уже живущий житель (`CITY_POP`), — новых коэффициентов нет.
-    # Потолок берётся из правил мира (`city.growth_base_limit`, из `cities.ruleset`),
-    # а не назначается: выше него город от запаса еды не растёт, и «возможность»
-    # там была бы мнимой. Предел, поднятый постройками, учтён ниже.
-    # Предел, поднятый постройками (§13.158). Правила мира называют его словами:
-    # «An Aqueduct is first required for a city to grow larger than size 8»,
-    # «Sewer System — Allows a city to grow larger than size 12». Постройки города
-    # приходят битовой маской БЕЗ имён, поэтому имена публикует клиент фактами
-    # `improvement.<индекс>.name`. Выше 12 правила числа не называют — держим
-    # последнее названное, чтобы не выдумывать предел от себя.
-    growth_limit = num(vals.get('city.growth_base_limit'), 0.0)
-    for _idx, _flag in enumerate(improvements):
-        if not truthy(_flag):
-            continue
-        _name = str(vals.get(f'improvement.{_idx}.name') or '')
-        if _name == 'Aqueduct':
-            growth_limit = max(growth_limit, 12.0)
-        elif _name == 'Sewer System':
-            growth_limit = max(growth_limit, 12.0)
-    growth_room = max(0.0, growth_limit - size)
-    base += vals['CITY_POP'] * growth_room
     if disorder:
         # "Only existence" (§6): no economy, no happiness, but the city is not a
         # collapsed entity — disorder is recoverable, and the game keeps its
