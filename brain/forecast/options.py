@@ -221,7 +221,7 @@ def candidates(state: ForecastState, vals: Valuations, *,
                     })
                 # Ход стоит ценности только если преемник её даёт — ИЛИ если он ведёт
                 # к цели (тогда ценность даёт не клетка, а приближение к площадке).
-                if value <= current and progress <= 0.0:
+                if value + gain <= current and progress <= 0.0:
                     move_diag["отброшено_по_ценности"] += 1
                     continue
                 move_diag["оставлено"] += 1

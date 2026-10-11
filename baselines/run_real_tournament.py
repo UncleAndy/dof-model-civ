@@ -1312,7 +1312,7 @@ def _forecast_decide(obs, info, dof, extractor, avail, *, type_names=None,
                 if str(_name) in banned:
                     ctx.probe_offers.pop(_name, None)
         _learn_type_cost(ctx, obs)      # вторая половина прошлого замера
-        if not _FORECAST_NOTES_PRINTED and ctx.notes:
+        if (not _FORECAST_NOTES_PRINTED or ARGS.trace) and ctx.notes:
             _FORECAST_NOTES_PRINTED.append(True)
             for note in ctx.notes:
                 print(f"        [прогноз] {note}", flush=True)

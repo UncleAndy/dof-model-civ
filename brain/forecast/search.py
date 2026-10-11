@@ -20,6 +20,8 @@
 """
 from __future__ import annotations
 
+import os
+
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -117,6 +119,17 @@ def choose(state: ForecastState, vals: Valuations, *,
     kinds: dict[str, int] = {}
     for cand in root_cands:
         kinds[cand.kind] = kinds.get(cand.kind, 0) + 1
+    # Диагностика по требованию: чем правило меряет кандидатов в ЭТОМ ходу.
+    # Включается переменной окружения, меры не меняет — только печатает.
+    if os.environ.get("DOF_TRACE_CANDIDATES"):
+        top = sorted(root_cands, key=lambda c: float(c.effect.delta),
+                     reverse=True)[:8]
+        print(f"        [кандидаты] всего {len(root_cands)}; сильнейшие:",
+              flush=True)
+        for cand in top:
+            flag = "обратим" if cand.effect.reversible else "НЕОБРАТИМ"
+            print(f"          {cand.kind:22s} дельта {float(cand.effect.delta):+.4f} "
+                  f"{flag}  {cand.action}", flush=True)
 
     for _depth in range(max(1, horizon)):
         nxt: list[_Node] = []
