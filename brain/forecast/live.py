@@ -36,6 +36,7 @@ from env.site_eval import evaluate_site
 
 from .info import gap_index as jensen_gap_index
 from .info import gap_options as jensen_gap_options
+from . import transitions as tr
 from .options import Valuations
 from .state import ForecastState
 
@@ -1077,6 +1078,51 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
         options, _cost = priced
         return [("city_buy_production", str(name), float(options), float(cost_gold))]
 
+    # Цена приближения к неизвестному (§13.149). Шаг к туману получает цену:
+    # ИЗМЕРЕННАЯ плотность годных площадок в видимом окне, умноженная на
+    # ИЗМЕРЕННУЮ ценность основания города (дельта самого правила на лучшей
+    # видимой годной площадке). Оба числа берутся из живого мира в этом же ходу —
+    # назначенных коэффициентов тут нет. Нужна потому, что шаг на равноценную
+    # клетку стоит ровно ноль, знакомой цели у носителя нет, и поселенец не может
+    # выйти из столицы: замерено — 4 кандидата-шага за 30 ходов, все 0.0000,
+    # городов 1 при 38 годных площадках из 48 достижимых.
+    _fog_cache: dict = {}
+
+    def _fog_goal(unit_id: str, here: tuple[int, int]):
+        """Ближайшая нераскрытая клетка карты и цена пути к ней (R) — или None."""
+        goals: dict = _fog_cache.setdefault("goal", {})
+        if unit_id in goals:
+            return goals[unit_id]
+        reward = _fog_cache.get("reward")
+        if reward is None:
+            window = [t for t in reach(unit_id) if t in state.revealed]
+            good = [t for t in window if site_viable(t)]
+            density = (len(good) / len(window)) if window else 0.0
+            found_value = 0.0
+            for t in good:
+                try:
+                    value = float(tr.found_city(
+                        state, unit_id, city_dof=float(city_dof(t))).delta)
+                except Exception:  # noqa: BLE001 - оценка не рушит выбор
+                    continue
+                found_value = max(found_value, value)
+            reward = density * found_value
+            _fog_cache["reward"] = reward
+        if reward <= 0.0:
+            goals[unit_id] = None
+            return None
+        best_tile, best_d = None, None
+        for tile in tiles:
+            if tile in state.revealed:
+                continue
+            d = _wrap_distance(here, tile, shape)
+            if d <= 0:
+                continue
+            if best_d is None or d < best_d:
+                best_d, best_tile = d, tile
+        goals[unit_id] = None if best_tile is None else (best_tile, float(reward))
+        return goals[unit_id]
+
     def goal_credit(unit_id: str, here: tuple[int, int],
                     target: tuple[int, int]) -> float:
         """Сколько опций сохраняет ШАГ к цели: `R / N` (§10.38, V2).
@@ -1086,21 +1132,26 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
         Весь путь к площадке возвращает ровно `R` (телескопирование суммы долей).
         Шаг, который НЕ приближает к цели, стоит ноль: «ходить без причины» правило
         не разрешает.
+
+        Если знакомой цели нет, целью становится ближайшая нераскрытая клетка, а `R`
+        — измеренная плотность годных площадок × измеренная ценность основания
+        (§13.149). Иначе носитель не может выйти из столицы вовсе.
         """
-        if extractor is None:
-            return 0.0
-        finder = getattr(extractor, "carrier_walk_goal", None)
-        if finder is None:
-            return 0.0
-        try:
-            goal = finder(obs, unit_id)
-        except Exception:  # noqa: BLE001
-            return 0.0
-        if not goal:
-            return 0.0
-        goal_tile, rate = goal
-        if rate <= 0.0:
-            return 0.0
+        goal_tile = None
+        rate = 0.0
+        finder = getattr(extractor, "carrier_walk_goal", None) if extractor else None
+        if finder is not None:
+            try:
+                goal = finder(obs, unit_id)
+            except Exception:  # noqa: BLE001
+                goal = None
+            if goal:
+                goal_tile, rate = goal
+        if goal_tile is None or float(rate) <= 0.0:
+            fog = _fog_goal(unit_id, here)
+            if fog is None:
+                return 0.0
+            goal_tile, rate = fog
         d_here = _wrap_distance(here, goal_tile, shape)
         d_next = _wrap_distance(target, goal_tile, shape)
         if d_here <= 0 or d_next >= d_here:
