@@ -57,6 +57,10 @@ def main() -> int:
                    help="политики по местам через запятую (перекрывает --policy)")
     p.add_argument("--slot", type=int, default=None)
     p.add_argument("--tag", default="own")
+    p.add_argument("--aifill", type=int, default=None,
+                   help="сколько мест заполнить встроенным ИИ (по умолчанию 0)")
+    p.add_argument("--minp", type=int, default=None,
+                   help="сколько наших мест должно подключиться (по умолчанию все)")
     p.add_argument("--observer", default="yes", choices=["yes", "no"])
     p.add_argument("--observer-minutes", type=float, default=14.0)
     p.add_argument("--launch-gap", type=float, default=45.0,
@@ -104,8 +108,9 @@ def main() -> int:
                "--episodes", "1", "--turns", str(args.turns),
                "--no-auto-port", "--port", str(slot), "--output", str(out),
                "--duel", "--settle", "0", "--timeout", str(args.match_timeout),
-               "--username", f"{args.tag.replace('_', '')}{stamp}{i}"[:12], "--aifill", "0",
-               "--minp", str(args.players),
+               "--username", f"{args.tag.replace('_', '')}{stamp}{i}"[:12], "--aifill",
+               str(args.aifill if args.aifill is not None else 0),
+               "--minp", str(args.minp if args.minp is not None else args.players),
                "--begin_turn_timeout", str(args.begin_turn_timeout),
                "--server_timeout", "120", "--follower_take_player", "true"]
         if args.trace:
