@@ -137,6 +137,10 @@ RULESET_PRIORS: dict[str, Any] = {
     'rules.border_city_radius_sq': 17.0,
     'rules.foodbox': 100.0,
     'rules.add_to_size_limit': 8.0,
+    #: Предел роста города по правилам мира: `add_to_size_limit = 8` в наборе правил
+    #: с комментарием «cities >= this cannot be added to» — город такого размера не
+    #: растёт от запаса еды. Взято из `cities.ruleset` (не выдумано).
+    'city.growth_base_limit': 8.0,
     'rules.base_tech_cost': 20.0,
 }
 

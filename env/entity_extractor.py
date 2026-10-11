@@ -540,6 +540,16 @@ def city_options(city_obs: dict[str, Any], garrison: int = 0,
     garrison_factor = 1.0 + vals['GARRISON_W'] * max(0, garrison)
 
     base = vals['CITY_BASE'] + vals['CITY_POP'] * size
+    # Слагаемое роста (§13.157, решение владельца «(а)»). Город, которому есть куда
+    # расти, держит больше возможностей, чем город у потолка: каждый ещё возможный
+    # житель — это ещё одно распределение по клеткам. Считается тем же коэффициентом,
+    # которым оценён уже живущий житель (`CITY_POP`), — новых коэффициентов нет.
+    # Потолок берётся из правил мира (`city.growth_base_limit`, из `cities.ruleset`),
+    # а не назначается: выше него город от запаса еды не растёт, и «возможность»
+    # там была бы мнимой. Потолок, поднятый водопроводом, здесь пока не учтён —
+    # мир публикует постройки битовой маской без имён (§13.157, долг).
+    growth_room = max(0.0, num(vals.get('city.growth_base_limit'), 0.0) - size)
+    base += vals['CITY_POP'] * growth_room
     if disorder:
         # "Only existence" (§6): no economy, no happiness, but the city is not a
         # collapsed entity — disorder is recoverable, and the game keeps its

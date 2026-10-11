@@ -129,6 +129,23 @@ def _num(value: Any, default: float = 0.0) -> float:
         return default
 
 
+def _type_food_upkeep(records: Any) -> float | None:
+    """Содержание еды типа юнита — только если оно ИЗМЕРЕНО на живом юните.
+
+    Мир публикует `upkeep_food` у живого юнита, но не у типа. Если юнита такого
+    типа мы ещё не видели, возвращаем `None` (неизвестно), а не ноль: ноль был бы
+    утверждением «даром», и правило прокорма запрещало бы не то, что надо.
+    """
+    if not isinstance(records, dict) or not records:
+        return None
+    known = [
+        _num(rec.get("upkeep_food"), 0.0)
+        for rec in records.values()
+        if isinstance(rec, dict) and rec.get("upkeep_food") is not None
+    ]
+    return max(known) if known else None
+
+
 def _wrap_distance(a: tuple[int, int], b: tuple[int, int],
                    shape: tuple[int, int] | None) -> int:
     """Расстояние в шагах по карте-цилиндру (X замыкается, Y нет) — §10.38, V2.
@@ -487,6 +504,8 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
         offered = _offered_for(offered_city, city_id)
         stock = _num(rec.get("shield_stock"), 0.0)
         shields = _num(rec.get("prod_shield"), 0.0)
+        surplus_food = rec.get("surplus_food")
+        surplus_food = None if surplus_food is None else _num(surplus_food, 0.0)
         if shields <= 0.0:
             return []
         out: list[tuple[str, float, int]] = []
@@ -499,6 +518,16 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
             # то же здание предлагалось бы дважды и считалось дважды.
             if type_name in spec_improvements and type_name not in live_by_type:
                 continue
+            # Правило встроенного ИИ (`ai/default/daidomestic.c:488`,
+            # `domestic_advisor_choose_build`): город берётся за того, кого прокормит, —
+            # `surplus[O_FOOD] >= upkeep_food` этого типа. Мир публикует содержание еды
+            # у ЖИВОГО юнита (`upkeep_food`), у типа, которого мы ещё не видели, оно
+            # неизвестно — тогда правило не применяется: «незнание ≠ отсутствие
+            # возможностей», и запрет по неизвестному числу был бы выдумкой.
+            upkeep_food = _type_food_upkeep(live_by_type.get(type_name))
+            if upkeep_food is not None and surplus_food is not None:
+                if surplus_food < upkeep_food:
+                    continue
             priced = type_price(type_name)
             if priced is None:
                 unpriced.add(type_name)
