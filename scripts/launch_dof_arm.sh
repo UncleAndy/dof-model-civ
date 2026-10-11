@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # Рука DoF: четыре наших агента, по одной ветви принципа DoF на место.
-# Подбирает порт сам: пул выдаёт и испорченные, а стенд отклоняет вход на слоте,
-# где уже побывала партия. Правило пробы: не начинать, если вход отклонён.
 #
-# Запуск (в фоне):  bash scripts/launch_dof_arm.sh
+# ВАЖНО (§13.142): порт годен ТОЛЬКО для первой партии после рождения движка.
+# Поэтому порт нельзя «проверять» короткой пробой — проба его и сжигает.
+# Здесь проверка одна: запускаем настоящую руку и смотрим, взяты ли державы.
+#
+# Запуск:  PORTS="6314 6315 6316" bash scripts/launch_dof_arm.sh
 set -u
 
 cd "$(dirname "$0")/.." || exit 1
@@ -12,28 +14,27 @@ source /home/hermes/v011env.sh 2>/dev/null
 POLICIES="dof_defensive dof_economic dof_technological dof_expansionist"
 TURNS="${TURNS:-150}"
 MATCH_TIMEOUT="${MATCH_TIMEOUT:-20000}"
+PORTS="${PORTS:-6314 6315 6316 6317 6318 6319 6320}"
 
 stop_ours() { .venv/bin/python scripts/_stop_own_games.py >/dev/null 2>&1 || true; }
 
 try_port() {
-  local P="$1" n=0 pol log
+  local P="$1" n=0 pol rej nations
   echo "── слот $P ──"
   for pol in $POLICIES; do
     n=$((n + 1))
-    log="/tmp/AdofF_${P}_${pol}.log"
     .venv/bin/python baselines/run_real_tournament.py \
       --only "$pol" --episodes 1 --turns "$TURNS" \
-      --no-auto-port --port "$P" --output "/tmp/AdofF_${P}_${pol}.json" \
+      --no-auto-port --port "$P" --output "/tmp/AdofG_${P}_${pol}.json" \
       --duel --settle 0 --timeout "$MATCH_TIMEOUT" \
-      --username "f$n" --aifill 0 --minp 4 \
+      --username "g$n" --aifill 0 --minp 4 \
       --begin_turn_timeout 380 --server_timeout 120 \
-      --follower_take_player true >"$log" 2>&1 &
-    echo "   $pol: имя f$n, pid $!"
+      --follower_take_player true >"/tmp/AdofG_${P}_${pol}.log" 2>&1 &
+    echo "   $pol: имя g$n, pid $!"
   done
-  sleep 170
-  local rej nations
-  rej=$(grep -hcE "Log in rejected|Could not authenticate" /tmp/AdofF_${P}_*.log 2>/dev/null | paste -sd+ - | bc 2>/dev/null || echo 0)
-  nations=$(grep -h "держава взята" /tmp/AdofF_${P}_*.log 2>/dev/null | wc -l)
+  sleep 200
+  rej=$(grep -hcE "Log in rejected|Could not authenticate" /tmp/AdofG_${P}_*.log 2>/dev/null | paste -sd+ - | bc 2>/dev/null || echo 0)
+  nations=$(grep -h "держава взята" /tmp/AdofG_${P}_*.log 2>/dev/null | wc -l)
   echo "   отказов входа: $rej   держав взято: $nations"
   if [ "${nations:-0}" -ge 1 ]; then
     echo "РУКА ПОШЛА на слоте $P (держав $nations, отказов $rej)"
@@ -46,8 +47,7 @@ try_port() {
   return 1
 }
 
-stop_ours
-for P in 6313 6319 6320 6321 6322 6323 6324 6325; do
+for P in $PORTS; do
   if try_port "$P"; then exit 0; fi
 done
 echo "ГОДНЫЙ СЛОТ НЕ НАЙДЕН"
