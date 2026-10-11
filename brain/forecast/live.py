@@ -638,6 +638,19 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
                 from .search import FORECAST_GAMMA as _gamma
                 _now_turns = max(1.0, _num(rec.get("turns_to_prod_complete"), 1.0))
                 _now_value = float(_priced_now[0]) * (_gamma ** _now_turns)
+                # §13.170: правило нужды (§13.161) распространяется и на ТЕКУЩУЮ
+                # постановку. Прежде оно было только фильтром предложений, а хранитель
+                # (§13.168) держал уже начатое: город, начавший Warriors, продолжал их
+                # вечно — измерено, войско 23–27 юнитов при мирной земле. У их советника
+                # ненужный военный тип не имеет «хотелки» ВООБЩЕ, поэтому и у нас его
+                # ценность здесь — ноль: тогда смена постановки проходит, и конвейер
+                # защитников рассыпается.
+                if (military and current_name in military
+                        and not (enemy_seen or garrison <= 0)):
+                    if "город в очереди держит ненужное войско" not in notes:
+                        notes.append("город в очереди держит ненужное войско — "
+                                     "ценность текущей постановки обнулена (§13.170)")
+                    _now_value = 0.0
                 kept = [c for c in out
                         if c[0] != current_name
                         and c[1] * (_gamma ** c[2]) > _now_value]
