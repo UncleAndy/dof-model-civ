@@ -506,6 +506,13 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
         shields = _num(rec.get("prod_shield"), 0.0)
         surplus_food = rec.get("surplus_food")
         surplus_food = None if surplus_food is None else _num(surplus_food, 0.0)
+        # Что стоит в очереди города СЕЙЧАС: только этой постановке принадлежат
+        # накопленные щиты (см. ниже, §13.159).
+        current_name = None
+        try:
+            current_name = (type_names or {}).get(int(rec.get("production_value")))
+        except (TypeError, ValueError):
+            current_name = None
         if shields <= 0.0:
             return []
         out: list[tuple[str, float, int]] = []
@@ -548,10 +555,18 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
                     probe_offers[type_name] = ("city", actor, name)
                 continue
             options, cost = priced
+            # Смена производства ТЕРЯЕТ накопленные щиты, поэтому запас принадлежит
+            # ровно той постановке, что стоит в очереди (§13.159). Пока запас
+            # засчитывался каждому кандидату, «быстрым» выглядел любой чужой тип, и
+            # агент переключался каждый ход: измерено на стенде — 42 переключения за
+            # 25 ходов (Settlers ↔ Warriors), город не достроил ничего. Имя текущей
+            # постановки берём из таблицы типов клиента; если имени нет (таблицы не
+            # дали) — считаем как раньше, чтобы не менять поведение вслепую.
+            own_stock = stock if (current_name is None or current_name == type_name) else 0.0
             # Срок не бывает нулевым: при `stock == стоимость` сервер отвечает
             # «1 ход» (измерено), то есть он считает и текущий ход. Без нижней
             # границы прогноз обещал бы юнит «сейчас», а его не будет.
-            turns = max(1, int(math.ceil(max(0.0, cost - stock) / shields)))
+            turns = max(1, int(math.ceil(max(0.0, cost - own_stock) / shields)))
             out.append((type_name, float(options), turns))
         return out
 

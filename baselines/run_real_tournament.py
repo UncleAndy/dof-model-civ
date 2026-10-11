@@ -176,7 +176,7 @@ from env.entity_extractor import GameStateExtractor, as_dict, compute_total_dof_
 from env.experiments import note_choice
 from env import food_gate
 from env.wedged import record_wedged
-from env.world_model import FALSE_CLAIM_MARKER
+from env.world_model import FALSE_CLAIM_MARKER, Provenance
 from brain.generator.heuristics import ALL_STRATEGIES, DEFENSIVE, HeuristicGenerator
 from metrics.tracker import MatchMetrics, agent_turns
 
@@ -1198,6 +1198,56 @@ def _dump_tech_numbers(obs, extractor, info) -> None:
               flush=True)
 
 
+def _improvement_names(env) -> dict:
+    """Таблица «индекс постройки → имя» из правил КЛИЕНТА.
+
+    Нужна потому, что постройки города приходят в наблюдении БИТОВОЙ МАСКОЙ без имён,
+    а по имени только и можно узнать, что город построил водопровод (предел роста 8 → 12)
+    или канализацию (сверх 12). Индексы берём списком по id, как у типов юнитов: словарь
+    `improvements` бывает неполным, и тогда нужная постройка просто отсутствует.
+    """
+    out: dict = {}
+    try:
+        ctl = getattr(getattr(env, "unwrapped", None), "civ_controller", None)
+        rules = getattr(ctl, "rule_ctrl", None)
+        names = getattr(rules, "improvements_list", None) or []
+        for iid, name in enumerate(list(names)):
+            if name:
+                out[int(iid)] = str(name)
+        for iid, spec in dict(getattr(rules, "improvements", None) or {}).items():
+            name = spec.get("name") if isinstance(spec, dict) else None
+            if name:
+                try:
+                    out.setdefault(int(iid), str(name))
+                except (TypeError, ValueError):
+                    continue
+        if not out:
+            total = int((getattr(rules, "ruleset_control", None) or {})
+                        .get("num_impr_types") or 0)
+            for iid in range(total):
+                spec = (getattr(rules, "improvements", None) or {}).get(iid)
+                if isinstance(spec, dict) and spec.get("name"):
+                    out[int(iid)] = str(spec["name"])
+    except Exception:  # noqa: BLE001
+        return {}
+    return out
+
+
+def _publish_improvement_names(extractor, env) -> int:
+    """Опубликовать имена построек фактами `improvement.<индекс>.name`.
+
+    Мир этого не публикует (битовая маска), правила клиента — публикуют. Без имён
+    предел роста остаётся базовым (8), и водопровод не получает цены: он бы поднимал
+    предел, о котором формулы не знают.
+    """
+    names = _improvement_names(env)
+    for iid, name in sorted(names.items()):
+        extractor.model.observe(f'improvement.{iid}.name', name, 0,
+                                source=Provenance.RULESET,
+                                evidence=f'improvement id {iid} from the client rules')
+    return len(names)
+
+
 def _unit_type_names(env) -> dict:
     """Таблица «id типа юнита → имя» из правил КЛИЕНТА.
 
@@ -1748,6 +1798,14 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
 
         class DofAgent(BaseAgent):
             def act(self, obs, info):
+                # Имена построек — один раз, как только доступны правила клиента:
+                # без них предел роста города остаётся базовым и водопровод немой.
+                if not getattr(self, "_impr_published", False) and env_getter is not None:
+                    try:
+                        if _publish_improvement_names(extractor, env_getter()):
+                            self._impr_published = True
+                    except Exception:  # noqa: BLE001
+                        self._impr_published = True
                 dof = extractor.extract(obs, info, info.get("turn", 0))
                 avail = info.get("available_actions", {})
 
