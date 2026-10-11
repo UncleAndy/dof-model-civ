@@ -53,6 +53,8 @@ def main() -> int:
     p.add_argument("--players", type=int, default=6, help="сколько наших игроков (мест)")
     p.add_argument("--turns", type=int, default=20)
     p.add_argument("--policy", default="random", help="политика всех наших игроков")
+    p.add_argument("--policies", default="",
+                   help="политики по местам через запятую (перекрывает --policy)")
     p.add_argument("--slot", type=int, default=None)
     p.add_argument("--tag", default="own")
     p.add_argument("--observer", default="yes", choices=["yes", "no"])
@@ -66,6 +68,10 @@ def main() -> int:
     args = p.parse_args()
 
     slot = args.slot if args.slot else _slot_from_pool()
+    # Свежие имена на каждый запуск: стенд отклоняет имя, для которого запись уже
+    # есть с другим паролем («Could not authenticate user», §13.144).
+    stamp = time.strftime("%H%M")
+    pol_by_seat = [x.strip() for x in args.policies.split(",") if x.strip()]
     tmp = pathlib.Path("/tmp")
     print(f"слот: {slot}   игроков: {args.players}   ходов: {args.turns}   "
           f"политика: {args.policy}   наблюдатель: {args.observer}")
@@ -93,10 +99,12 @@ def main() -> int:
         log = tmp / f"{args.tag}_{slot}_{i}.log"
         out = tmp / f"{args.tag}_{slot}_{i}.json"
         cmd = [PY, "-u", str(ROOT / "baselines" / "run_real_tournament.py"),
-               "--only", args.policy, "--episodes", "1", "--turns", str(args.turns),
+               "--only", (pol_by_seat[(i - 1) % len(pol_by_seat)]
+                          if pol_by_seat else args.policy),
+               "--episodes", "1", "--turns", str(args.turns),
                "--no-auto-port", "--port", str(slot), "--output", str(out),
                "--duel", "--settle", "0", "--timeout", str(args.match_timeout),
-               "--username", f"{args.tag}{i}"[:12], "--aifill", "0",
+               "--username", f"{args.tag.replace('_', '')}{stamp}{i}"[:12], "--aifill", "0",
                "--minp", str(args.players),
                "--begin_turn_timeout", str(args.begin_turn_timeout),
                "--server_timeout", "120", "--follower_take_player", "true"]
