@@ -1506,16 +1506,19 @@ class GameStateExtractor:
         return self._carrier_rate(self._carrier_site(unit_obs, map_obs, vals), capital)
 
     def _site_vals(self) -> dict[str, Any]:
-        """Значения модели с порогом площадки для ПЕРВОГО города (§10.27).
+        """Значения модели с порогом площадки, падающим с ходом (§10.27; §13.165).
 
         Одно правило на проект: прогноз берёт порог из `first_city_food_gate` в
         `brain/forecast/live.py`, прежний путь — здесь. Расхождение означало бы, что
         один путь основывает город на бедном старте, а второй стоит вечно, и A/B
         сравнивал бы разные правила вместо разных политик.
+
+        Убывание действует для ВСЕХ городов (решение Andy 2026-10-12): пока оно
+        касалось только первого, на бедной земле все последующие города были
+        запрещены — годных площадок 0 из 48 (измерено, §13.165).
         """
         vals = dict(self.model.values())
-        if getattr(self, "_no_cities", False):
-            vals["SITE_MIN_FOOD"] = _first_city_food_gate(getattr(self, "_turn", 1))
+        vals["SITE_MIN_FOOD"] = _first_city_food_gate(getattr(self, "_turn", 1))
         return vals
 
     def _carrier_site(self, unit_obs: dict[str, Any], map_obs: dict[str, Any],
