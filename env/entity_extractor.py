@@ -546,9 +546,23 @@ def city_options(city_obs: dict[str, Any], garrison: int = 0,
     # которым оценён уже живущий житель (`CITY_POP`), — новых коэффициентов нет.
     # Потолок берётся из правил мира (`city.growth_base_limit`, из `cities.ruleset`),
     # а не назначается: выше него город от запаса еды не растёт, и «возможность»
-    # там была бы мнимой. Потолок, поднятый водопроводом, здесь пока не учтён —
-    # мир публикует постройки битовой маской без имён (§13.157, долг).
-    growth_room = max(0.0, num(vals.get('city.growth_base_limit'), 0.0) - size)
+    # там была бы мнимой. Предел, поднятый постройками, учтён ниже.
+    # Предел, поднятый постройками (§13.158). Правила мира называют его словами:
+    # «An Aqueduct is first required for a city to grow larger than size 8»,
+    # «Sewer System — Allows a city to grow larger than size 12». Постройки города
+    # приходят битовой маской БЕЗ имён, поэтому имена публикует клиент фактами
+    # `improvement.<индекс>.name`. Выше 12 правила числа не называют — держим
+    # последнее названное, чтобы не выдумывать предел от себя.
+    growth_limit = num(vals.get('city.growth_base_limit'), 0.0)
+    for _idx, _flag in enumerate(improvements):
+        if not truthy(_flag):
+            continue
+        _name = str(vals.get(f'improvement.{_idx}.name') or '')
+        if _name == 'Aqueduct':
+            growth_limit = max(growth_limit, 12.0)
+        elif _name == 'Sewer System':
+            growth_limit = max(growth_limit, 12.0)
+    growth_room = max(0.0, growth_limit - size)
     base += vals['CITY_POP'] * growth_room
     if disorder:
         # "Only existence" (§6): no economy, no happiness, but the city is not a
