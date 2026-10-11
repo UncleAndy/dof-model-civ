@@ -76,10 +76,14 @@ def main() -> int:
         # Всевидящая линейка читает мир из кэшей клиента (у наблюдателя ходов нет, §13.129).
         # Терпение входа длинное: игра не начинается, пока не подключатся все N мест, а по умолчанию
         # клиент ждёт пакет хода всего 30 с и умирает ровно на этом ожидании (§13.130).
+        # Имя наблюдателя обязано начинаться с `observer` — так входит наблюдатель у самого стенда
+        # (civ_monitor: `observer{port}{время}`). Под обычным именем соединение занимает МЕСТО ИГРОКА,
+        # игра не начинается, а обзора всей карты всё равно нет (§13.132).
         cmd = [PY, "-u", str(ROOT / "scripts" / "observer_ruler.py"),
                "--slot", str(slot), "--aifill", "0", "--minp", str(args.players),
                "--poll", "20", "--minutes", str(args.observer_minutes),
                "--server_timeout", "600", "--begin_turn_timeout", "600",
+               "--username", f"observer{slot}",
                "--out", str(ROOT / "knowledge" / f"observer_ruler_{args.tag}_{slot}.jsonl")]
         procs.append(("observer", _spawn(cmd, log)))
         print(f"  наблюдатель: pid {procs[-1][1].pid}  (лог {log})")
