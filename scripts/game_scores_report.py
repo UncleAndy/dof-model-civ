@@ -81,11 +81,13 @@ def _report_dir(d: pathlib.Path, show_war: bool) -> dict:
     war = {k: _last(evals.get(k, {})) for k in WAR_KEYS}
     killed = sum(int(v or 0) for v in war["units_killed"].values())
     lost = sum(int(v or 0) for v in war["units_lost"].values())
-    fighting = sorted(pid for pid, v in war["units_killed"].items() if (v or 0) > 0)
+    killers = sorted(pid for pid, v in war["units_killed"].items() if (v or 0) > 0)
     print()
     print(f"  война по объявленному правилу (любое нападение): "
           f"{'БЫЛА' if killed else 'не было'}; убито чужих юнитов {killed}, "
-          f"потеряно своих {lost}; нападавшие игроки: {fighting or '—'}")
+          f"потеряно своих {lost}; у кого есть убитые чужие "
+          f"(НЕ признак нападения: сюда входят и убийства в обороне): "
+          f"{killers or '—'}")
     if show_war:
         for key in WAR_KEYS:
             by_turn = {}
@@ -102,7 +104,7 @@ def _report_dir(d: pathlib.Path, show_war: bool) -> dict:
         "score_sum": sum(values),
         "score_mean": st.mean(values),
         "score_spread": {"min": lo, "max": hi, "range": rng, "std": sd},
-        "war": {"killed": killed, "lost": lost, "fighting_players": fighting},
+        "war": {"killed": killed, "lost": lost, "killer_players": killers},
     }
 
 
