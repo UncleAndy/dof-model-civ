@@ -68,6 +68,8 @@ def main() -> int:
     p.add_argument("--begin-turn-timeout", type=int, default=380)
     p.add_argument("--match-timeout", type=int, default=900)
     p.add_argument("--trace", action="store_true")
+    p.add_argument("--no-curiosity", dest="no_curiosity", action="store_true",
+                   help="передать раннеру выключенное любопытство (для контроля)")
     p.add_argument("--wait", action="store_true", help="дождаться конца и свести сводку")
     args = p.parse_args()
 
@@ -115,6 +117,8 @@ def main() -> int:
                "--server_timeout", "120", "--follower_take_player", "true"]
         if args.trace:
             cmd.append("--trace")
+        if args.no_curiosity:
+            cmd.append("--no-curiosity")
         procs.append((f"player{i}", _spawn(cmd, log)))
         print(f"  игрок {i}: pid {procs[-1][1].pid}  (лог {log})")
 

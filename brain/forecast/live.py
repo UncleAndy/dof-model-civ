@@ -513,6 +513,20 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
             current_name = (type_names or {}).get(int(rec.get("production_value")))
         except (TypeError, ValueError):
             current_name = None
+        # Род текущей постановки (VUT_UTYPE = 6, VUT_IMPROVEMENT = 3 — из fc_types
+        # клиента) и не достроено ли что-то в ЭТОТ же ход: в такой ход мир щиты не
+        # теряет, и штраф за смену не берётся (правило их кода, см. ниже).
+        current_kind = rec.get("production_kind")
+        try:
+            current_kind = None if current_kind is None else int(current_kind)
+        except (TypeError, ValueError):
+            current_kind = None
+        try:
+            built_this_turn = (rec.get("turn_last_built") is not None
+                               and int(rec.get("turn_last_built"))
+                               == int((info or {}).get("turn")))
+        except (TypeError, ValueError):
+            built_this_turn = False
         if shields <= 0.0:
             return []
         out: list[tuple[str, float, int]] = []
@@ -567,7 +581,22 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
             # «1 ход» (измерено), то есть он считает и текущий ход. Без нижней
             # границы прогноз обещал бы юнит «сейчас», а его не будет.
             turns = max(1, int(math.ceil(max(0.0, cost - own_stock) / shields)))
-            out.append((type_name, float(options), turns))
+            value = float(options)
+            # Цена САМОЙ СМЕНЫ — правило встроенного ИИ (§13.160,
+            # `ai/default/daicity.c:1873`, «Would it mean losing shields?»): когда в
+            # очереди стоит ЮНИТ, «хотелка» нового предмета уменьшается на вложенные
+            # щиты (`v -= shield_stock * SHIELD_WEIGHTING / 15`), и только если в этот
+            # же ход что-то уже достроено (`turn_last_built != turn`) — тогда щиты не
+            # теряются. Их «хотелки» и наши опции — разные шкалы, поэтому переносим
+            # СТРУКТУРУ правила, а число берём из наших же величин: теряется та доля
+            # ценности предмета, что уже вложена (`запас / стоимость`). Новых
+            # коэффициентов нет — это отношение двух чисел мира.
+            switch_penalty = 1.0
+            if (current_name is not None and current_name != type_name
+                    and current_kind == 6            # VUT_UTYPE (из fc_types клиента)
+                    and not built_this_turn):
+                switch_penalty = max(0.0, 1.0 - min(1.0, stock / max(1e-9, float(cost))))
+            out.append((type_name, value * switch_penalty, turns))
         return out
 
     player = _player_record(obs, my_id)
