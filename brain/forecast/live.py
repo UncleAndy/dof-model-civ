@@ -363,6 +363,10 @@ def _as_list(value: Any) -> list:
         return []
 
 
+#: Счётчики ветвей-экспериментов (печатаются по DOF_TRACE_FILTERS).
+_EXPERIMENT_STATS: dict[str, int] = {}
+
+
 def _num(value: Any, default: float = 0.0) -> float:
     try:
         return float(value)
@@ -875,6 +879,20 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
             # Улучшения — ОТДЕЛЬНОЕ семейство (`improvements`): они не создают
             # сущность, а растут опциями города. Здесь пропускаются, иначе одно и
             # то же здание предлагалось бы дважды и считалось дважды.
+            # ВЕТВЬ ЭКСПЕРИМЕНТА (§13.262): малому городу улучшения не предлагаются — только
+            # единицы. Проверка стоит ДО отбора по `live_by_type`, потому что казарма в него
+            # входит (у нас есть её цена), и прошлая попытка из-за этого ветвь не подключала:
+            # отправки шли (ход 1, актёр 121), а признак молчал.
+            if os.environ.get("DOF_SMALL_CITY_UNITS_ONLY") == "1" \
+                    and type_name in spec_improvements \
+                    and 0 < int(_num(rec.get("size"), 0) or 0) <= 2:
+                _EXPERIMENT_STATS["small_city_improvements_skipped"] = \
+                    _EXPERIMENT_STATS.get("small_city_improvements_skipped", 0) + 1
+                if os.environ.get("DOF_TRACE_FILTERS") == "1":
+                    print(f"        [ветвь] город {city_id} размера "
+                          f"{int(_num(rec.get('size'), 0) or 0)}: улучшение {type_name} не "
+                          f"предлагается (§13.262)", flush=True)
+                continue
             if type_name in spec_improvements and type_name not in live_by_type:
                 continue
             # Войско — только по нужде, и нужда теперь считается правилом ВСТРОЕННОГО ИИ
@@ -1120,6 +1138,19 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
           30-м ходу 50-ходовой игры, отрабатывает остаток горизонта.
         """
         rec = city_records.get(city_id) or {}
+        # ВЕТВЬ ЭКСПЕРИМЕНТА (§13.262): городам размера ≤ 2 улучшения не предлагаются вовсе —
+        # только единицы (поселенец, рабочий, защитник). Проверяем объявленное: казарма съедает
+        # выход малого города (33 решения из 63), отчего город стоит без роста 20–30 ходов.
+        # Действует всю партию (у контекста нет номера хода) — это различие объявлено.
+        if os.environ.get("DOF_SMALL_CITY_UNITS_ONLY") == "1":
+            _sz_scuo = int(_num(rec.get("size"), 0) or 0)
+            if 0 < _sz_scuo <= 2:
+                _EXPERIMENT_STATS["small_city_improvements_skipped"] = \
+                    _EXPERIMENT_STATS.get("small_city_improvements_skipped", 0) + 1
+                if os.environ.get("DOF_TRACE_FILTERS") == "1":
+                    print(f"        [ветвь] городу {city_id} размера {_sz_scuo} улучшения "
+                          f"не предлагаются (§13.262)", flush=True)
+                return []
         offered = _offered_for(offered_city, city_id)
         stock = _num(rec.get("shield_stock"), 0.0)
         # Значения берём из модели, а если её нет (проба/синтетика) — из config:
