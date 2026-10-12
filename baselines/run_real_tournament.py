@@ -29,6 +29,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import signal
 import sys
 import time
@@ -2026,7 +2027,7 @@ def _forecast_decide(obs, info, dof, extractor, avail, *, type_names=None,
             # (поймал привратник годности серии, §13.245).
             _walk: list[str] = []
             _units_seen = 0
-            for _u in as_dict(obs.get("unit")).values():
+            for _ukey, _u in as_dict(obs.get("unit")).items():
                 if not isinstance(_u, dict):
                     continue
                 _units_seen += 1
@@ -2036,9 +2037,26 @@ def _forecast_decide(obs, info, dof, extractor, avail, *, type_names=None,
                 _tname = str(_u.get("type_rule_name") or _u.get("type") or "?")
                 _counts[_tname] = _counts.get(_tname, 0) + 1
                 if "Settler" in _tname or "Engineer" in _tname:
-                    # Объявленный замер (§13.244-13.245): поселенец достраивается, а город не
-                    # основывает — значит нужно видеть его ПУТЬ, а не только наличие.
-                    _walk.append(f"{_tname}@{_u.get('x')},{_u.get('y')}")
+                    # Объявленный замер (§13.244-13.246): ПОСТРОЕННЫЙ поселенец стоит на месте.
+                    # Нужен не только путь, но и РЕШЕНИЕ: что предлагал стенд и что выбрали —
+                    # иначе «хода нет» и «хода не было в предложении» неразличимы.
+                    _m = re.search(r"(\d+)$", str(_ukey))
+                    _uid = int(_m.group(1)) if _m else None
+                    _off_unit = ((info or {}).get("available_actions", {}) or {}).get("unit", {}) or {}
+                    _acts = (_off_unit.get(_uid) if _uid is not None else None)
+                    if _acts is None and _uid is not None:
+                        _acts = _off_unit.get(str(_uid))
+                    _acts = _acts or {}
+                    _act_names = (sorted(_acts)[:8] if isinstance(_acts, dict)
+                                  else [str(x) for x in (_acts or [])][:8])
+                    _all_names = sorted(_acts) if isinstance(_acts, dict) else []
+                    _interesting = [n for n in _all_names
+                                    if any(k in str(n) for k in ("goto", "found", "build",
+                                                                 "city", "fortify", "irrigate",
+                                                                 "mine", "road"))]
+                    _walk.append(f"{_tname}#{_uid}@{_u.get('x')},{_u.get('y')} "
+                                 f"предложено {len(_all_names)}, ходовых "
+                                 f"{len(_interesting)}: {_interesting[:10]}")
             _cities = [c for c in as_dict(obs.get("city")).values()
                        if isinstance(c, dict)
                        and (_my_id is None or str(c.get("owner")) == str(_my_id))]
