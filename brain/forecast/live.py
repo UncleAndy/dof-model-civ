@@ -225,6 +225,29 @@ def _allowed_production_types(rec: dict, type_names: dict | None = None) -> set[
     return out
 
 
+def _improvement_type_names(rec: dict, type_names: dict | None = None) -> set[str]:
+    """Имена ПОСТРОЕК, доступных городу, по маске мира `can_build_improvement`.
+
+    Маска улучшений лежит без сдвига: ключ в таблице имён и есть номер улучшения (юниты сдвинуты
+    выше — см. `_production_names`). Нужен отдельный набор от `allowed_types`, где единицы и
+    постройки вместе: ветвь §13.262–13.263 отсекает именно постройки.
+    """
+    mask = rec.get("can_build_improvement")
+    if not isinstance(mask, (list, tuple)):
+        return set()
+    out: set[str] = set()
+    for iid in range(len(mask)):
+        try:
+            if not mask[iid]:
+                continue
+        except (TypeError, IndexError):
+            continue
+        name = (type_names or {}).get(int(iid))
+        if name:
+            out.add(str(name))
+    return out
+
+
 def _effects_price(name: str, city_rec: dict, city_records: dict,
                    units=()) -> tuple[float, float] | None:
     """(ценность, цена) типа из ЕГО оценки эффектов и правил мира.
@@ -863,10 +886,24 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
         # §13.201: только то, что город МОЖЕТ строить — по его же маскам мира,
         # как перебирает цели встроенный ИИ (`daicity.c:1860`). Масок нет — не режем.
         allowed_types = _allowed_production_types(rec, type_names)
+        # ВЕТВЬ ЭКСПЕРИМЕНТА (§13.262-13.263): малому городу постройки не предлагаются.
+        # Признак «это постройка» берём у МИРА (маска улучшений), а не из наших наборов: две
+        # прошлые попытки отсеять по `spec_improvements`/`live_by_type` не подключались вовсе —
+        # казармы в них нет, отправка шла мимо, а признак молчал.
+        _impr_names = _improvement_type_names(rec, type_names)
+        _branch_on = os.environ.get("DOF_SMALL_CITY_UNITS_ONLY") == "1"
+        _branch_size = int(_num(rec.get("size"), 0) or 0)
         for name, params in offered.items():
             if not params or not name.startswith("produce_"):
                 continue
             type_name = name[len("produce_"):]
+            if _branch_on and _branch_size <= 2 and type_name in _impr_names:
+                _EXPERIMENT_STATS["small_city_improvements_skipped"] = \
+                    _EXPERIMENT_STATS.get("small_city_improvements_skipped", 0) + 1
+                if os.environ.get("DOF_TRACE_FILTERS") == "1":
+                    print(f"        [ветвь] город {city_id} размера {_branch_size}: постройка "
+                          f"{type_name} не предлагается (§13.262)", flush=True)
+                continue
             if allowed_types is not None and type_name not in allowed_types:
                 continue
             # Юнит, забирающий население, в городе, где населения ровно столько же, НЕ
@@ -879,21 +916,8 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
             # Улучшения — ОТДЕЛЬНОЕ семейство (`improvements`): они не создают
             # сущность, а растут опциями города. Здесь пропускаются, иначе одно и
             # то же здание предлагалось бы дважды и считалось дважды.
-            # ВЕТВЬ ЭКСПЕРИМЕНТА (§13.262): малому городу улучшения не предлагаются — только
-            # единицы. Проверка стоит ДО отбора по `live_by_type`, потому что казарма в него
-            # входит (у нас есть её цена), и прошлая попытка из-за этого ветвь не подключала:
-            # отправки шли (ход 1, актёр 121), а признак молчал.
-            if os.environ.get("DOF_SMALL_CITY_UNITS_ONLY") == "1" \
-                    and type_name in spec_improvements \
-                    and 0 < int(_num(rec.get("size"), 0) or 0) <= 2:
-                _EXPERIMENT_STATS["small_city_improvements_skipped"] = \
-                    _EXPERIMENT_STATS.get("small_city_improvements_skipped", 0) + 1
-                if os.environ.get("DOF_TRACE_FILTERS") == "1":
-                    print(f"        [ветвь] город {city_id} размера "
-                          f"{int(_num(rec.get('size'), 0) or 0)}: улучшение {type_name} не "
-                          f"предлагается (§13.262)", flush=True)
-                continue
             if type_name in spec_improvements and type_name not in live_by_type:
+                continue
                 continue
             # Войско — только по нужде, и нужда теперь считается правилом ВСТРОЕННОГО ИИ
             # (§13.190): опасность = чужие, способные напасть и дойти; защитник нужен,
