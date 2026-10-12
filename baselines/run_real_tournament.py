@@ -2350,7 +2350,8 @@ _CMA_SET_PID = 257
 _CMA_CLEAR_PID = 258
 
 
-def _city_manager_params(size: int, food_surplus: int) -> dict:
+def _city_manager_params(size: int, food_surplus: int,
+                         granary_is_full: bool = False) -> dict:
     """Требования управляющему: числа мира (`set_default_city_manager`, cityturn.c:313-360).
 
     Порядок выходов у мира: food, shield, trade, gold, luxury, science. Еда — как у него
@@ -2364,14 +2365,16 @@ def _city_manager_params(size: int, food_surplus: int) -> dict:
     флаг в одной партии был False 36 раз из 36 при 79 отправках и без единого сбоя, тогда как
     с его значением 1 — True 25 раз из 26. Выдумывать вместо его числа здесь нечего.
     """
-    food_factor = 20 if size <= 1 else 15
+    from brain.ai_default.city_manager import food_factor as _his_food_factor
+
     return {
-        "minimal_surplus": [int(food_surplus), 1, 0, -2147483647, 0, 0],
+        "minimal_surplus": [(0 if granary_is_full else int(food_surplus)), 1, 0,
+                            -2147483647, 0, 0],
         "max_growth": False,
         "require_happy": False,
         "allow_disorder": False,
         "allow_specialists": True,
-        "factor": [food_factor, 5, 0, 2, 0, 2],
+        "factor": [_his_food_factor(size, granary_is_full), 5, 0, 2, 0, 2],
         "happy_factor": 0,
     }
 
@@ -2402,8 +2405,12 @@ def _send_city_manager(env_getter, obs, extractor) -> int:
             cid = rec.get("id")
             size = int(rec.get("size") or 1)
             # Его число, а не наше (§13.243): более строгое требование мир отвергает целиком.
+            # Ветка «житница полна» — из записи города, а не догадкой (§13.253).
             req = 1
-            key = (size, req)
+            _gran, _stock = rec.get("granary_size"), rec.get("food_stock")
+            full = (_gran is not None and _stock is not None
+                    and float(_stock) >= float(_gran))
+            key = (size, req, full)
             # Мир СНИМАЕТ настройку управляющего: измерено (§13.240) — `cma_enabled` стал True
             # сразу после отправки и вернулся в False на следующем ходу у города 121. Пока
             # признак виден и он False, отправляем снова; если признак недоступен (None),
@@ -2416,7 +2423,7 @@ def _send_city_manager(env_getter, obs, extractor) -> int:
             elif said == key:
                 continue
             ws.send_request({"pid": _CMA_SET_PID, "id": int(cid),
-                             "cm_parameter": _city_manager_params(size, req)})
+                             "cm_parameter": _city_manager_params(size, req, full)})
             _CMA_SENT[str(cid)] = key
             sent += 1
         if sent and os.environ.get("DOF_TRACE_FILTERS") == "1":

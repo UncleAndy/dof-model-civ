@@ -50,6 +50,33 @@ def test_packet_numbers_are_the_ones_verified_twice():
     assert _const(tree, "_CMA_CLEAR_PID") == 258, "номер PACKET_WEB_CMA_CLEAR обязан быть 258"
 
 
+def test_food_factor_is_worlds_branch_not_the_unreachable_one():
+    """Вес пищи при размере > 1 — 10, а НЕ 15: ветвь 15 при `notradesize = 0` недостижима.
+
+    Найдено §13.253: прогон брал 15, то есть отправлял управляющему не его числа. Причина
+    ошибки — строка `food_factor = 20 if size <= 1 else 15`, читающая недостижимую ветвь.
+    Здесь и число, и то, что прогон берёт его из порта, а не из своей копии.
+    """
+    import sys
+    sys.path.insert(0, str(ROOT))
+    from brain.ai_default.city_manager import food_factor as his_factor
+
+    assert his_factor(1, False) == 20, "размер 1 — «рост до второго размера — высший приоритет»"
+    assert his_factor(2, False) == 10, "размер > 1 при неполной житнице — вес 10"
+    assert his_factor(5, False) == 10, "и на большем размере тоже 10, а не 15"
+    assert his_factor(2, True) == 0, "полная житница — «еды больше не нужно», вес 0"
+
+    seg = _params_segment(ast.parse(RUNNER.read_text(encoding="utf-8")))
+    assert "his_food_factor" in seg, (
+        "прогон снова считает вес пищи своей копией чисел: обязан брать его функцию из "
+        "`brain/ai_default/city_manager.py` (§13.253)"
+    )
+    for line in seg.splitlines():
+        assert "else 15" not in line, (
+            f"вернулась недостижимая ветвь веса пищи: {line.strip()!r} (§13.253)"
+        )
+
+
 def test_parameters_use_the_worlds_numbers_and_axis_order():
     seg = _params_segment(ast.parse(RUNNER.read_text(encoding="utf-8")))
     assert seg, "функция `_city_manager_params` не найдена — сторож ослеп"
