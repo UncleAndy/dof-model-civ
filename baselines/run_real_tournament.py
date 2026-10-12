@@ -1973,6 +1973,40 @@ def _forecast_decide(obs, info, dof, extractor, avail, *, type_names=None,
     """
     if not ARGS.forecast:
         return False, None
+    if os.environ.get("DOF_TRACE_UNITS") == "1":
+        # Покадровый состав: без него нельзя ответить, достраивается ли предмет
+        # (например `Settlers`) и что делает вышедший поселенец. Дамп состояния для
+        # этого непригоден — он повторяет первый ход во всех кадрах (измерено, §13.230).
+        try:
+            _tn = int((info or {}).get("turn") or (info or {}).get("turn_played") or -1)
+        except (TypeError, ValueError):
+            _tn = -1
+        if _tn not in _UNIT_TRACE_TURNS:
+            _UNIT_TRACE_TURNS.add(_tn)
+            _my_id = getattr(extractor, "my_player_id", None)
+            _counts: dict[str, int] = {}
+            _units_seen = 0
+            for _u in as_dict(obs.get("unit")).values():
+                if not isinstance(_u, dict):
+                    continue
+                _units_seen += 1
+                if _my_id is not None and _u.get("owner") is not None \
+                        and str(_u.get("owner")) != str(_my_id):
+                    continue
+                _tname = str(_u.get("type_rule_name") or _u.get("type") or "?")
+                _counts[_tname] = _counts.get(_tname, 0) + 1
+            _cities = [c for c in as_dict(obs.get("city")).values()
+                       if isinstance(c, dict)
+                       and (_my_id is None or str(c.get("owner")) == str(_my_id))]
+            _queue = []
+            for _c in _cities:
+                _qname = (type_names or {}).get(int(_c.get("production_value") or -1))
+                _queue.append(f"{_c.get('id')}:{_qname or _c.get('production_value')}"
+                              f"(разм.{_c.get('size')},ед.+{_c.get('surplus_food')},"
+                              f"до готовности {_c.get('turns_to_prod_complete')})")
+            print(f"        [наши юниты] ход {_tn}: городов {len(_cities)} | юниты всего "
+                  f"{_units_seen}, наших {sum(_counts.values())} "
+                  f"{dict(sorted(_counts.items()))} | очередь {_queue}", flush=True)
     try:
         from brain.forecast import choose
         from brain.forecast.live import _player_record, build_context
@@ -2171,6 +2205,9 @@ def _to_wire_action(action: tuple[str, str, str], avail: dict) -> tuple | None:
 
 
 #: Диагностика прогноза: сколько решений он принял и сколько отклонил.
+# Ходы, по которым покадровый след состава уже напечатан (по одному на ход).
+_UNIT_TRACE_TURNS: set = set()
+
 _FORECAST_STATS: dict[str, int] = {"decisions": 0, "acted": 0, "declined": 0,
                                    "unmappable": 0, "probes": 0, "idle": 0}
 _FORECAST_ERRORS: list[str] = []
