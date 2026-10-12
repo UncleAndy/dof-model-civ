@@ -2416,6 +2416,25 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                                                    c.get("is_reversible", True)))
                         _wire = _to_action(_pick)
                         if _wire is not None:
+                            if os.environ.get("DOF_TRACE_FILTERS") == "1":
+                                # `_to_action` отдаёт КОРТЕЖ (имя, полезная нагрузка), а не
+                                # словарь: обращение через `.get` уже один раз уронило прогон
+                                # (`AttributeError: 'tuple' object has no attribute 'get'`,
+                                # 0 ходов, ошибка в отчёте). Печатаем форму, а не поле.
+                                # Кортеж стенда: (род контроллера, имя действия, полезная
+                                # нагрузка). Раньше печатался только род — «unit», «city» —
+                                # и по такому следу нельзя было понять, ЧТО мы делаем.
+                                # Форма кортежа стенда: (род, НОМЕР актёра, имя действия).
+                                # Второй элемент — номер, а не имя: по нему состав действий не
+                                # читается (проверено замером: «unit/118», «city/127»), поэтому
+                                # печатаем третий.
+                                if isinstance(_wire, tuple) and len(_wire) >= 3:
+                                    _name = f"{_wire[0]}/{_wire[2]} (актёр {_wire[1]})"
+                                else:
+                                    _name = getattr(_wire, "action_name", _wire)
+                                print(f"  [без DoF] отправляю {_name} (кандидатов "
+                                      f"{len(descore)}, предпочтение "
+                                      f"{gen._preference_score(_pick):.3f})", flush=True)
                             if not getattr(self, "_nodof_said", False):
                                 self._nodof_said = True
                                 print("        [без DoF] выбор только предпочтением стратегии"
