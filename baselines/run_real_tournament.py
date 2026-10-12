@@ -2436,8 +2436,14 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
                     _TURN_ACTIONS.setdefault(turns_played + 1, []).append(
                         [str(p) for p in action[:3]] + [_verdict_of(action)])
                     if trace:
+                        # Параметры действия печатаем: без них не отличить «отправили
+                        # постановку» от «отправили её так, что сервер её отверг»
+                        # (подозрение — сдвиг значения юнита, измеряется здесь).
+                        _prm = action[3] if len(action) > 3 else None
                         print(f"      turn {turns_played + 1}: "
-                              f"{action[0]}/{action[1]}/{action[2]}", flush=True)
+                              f"{action[0]}/{action[1]}/{action[2]}"
+                              + (f" параметры={_prm!r}" if _prm is not None else ""),
+                              flush=True)
                 else:
                     end_turn = True
                     # Вторая половина замера: действия БЫЛИ предложены, а выбора
