@@ -263,6 +263,58 @@ def allocate_port(wait: int = 120, bad_slots: set | None = None):
         signal.signal(signal.SIGALRM, previous)
 
 
+def _hold_production_candidates(cands: list, obs: dict, type_names: dict | None) -> list:
+    """Правило владельца §13.196 в ОБЩЕМ пути: запущенное производство идёт до конца.
+
+    Почему здесь, а не только в прогнозе: измерено §13.205 — на пути без прогноза
+    постановка менялась КАЖДЫЙ ход (`Granary ↔ Hanging Gardens`), потому что правило
+    удержания жило лишь в одном решателе. Решение владельца: смена — только по
+    исключительному поводу, иначе начатое доводится до конца.
+
+    Текущее имя читается по РОДУ (`production_kind` + `production_value`), как читает
+    встроенный ИИ (`daicity.c:1868/1915/1996`); таблица имён — общая, из
+    `_production_names`. Если текущего предмета в предложении нет вовсе, город не
+    фильтруется: иначе он остался бы без постановки вообще.
+    """
+    cities = (obs or {}).get("city") if isinstance(obs, dict) else None
+    if not isinstance(cities, dict) or not cities or not type_names:
+        return cands
+    now: dict[str, str] = {}
+    for cid, city in cities.items():
+        if not isinstance(city, dict):
+            continue
+        try:
+            name = (type_names or {}).get(int(city.get("production_value")))
+        except (TypeError, ValueError):
+            name = None
+        if name:
+            now[str(city.get("id", cid))] = str(name)
+    if not now:
+        return cands
+    # Что город реально держит и что ему вообще предлагают сменить.
+    offered_now: set[str] = set()
+    for c in cands:
+        action = _to_action(c)
+        if action and str(action[0]) == "city" and str(action[2]).startswith("produce_"):
+            offered_now.add(f"{action[1]}|{str(action[2])[len('produce_'):]}")
+    held = {f"{cid}|{name}" for cid, name in now.items()}
+    keep: list = []
+    for c in cands:
+        action = _to_action(c)
+        if action is None:
+            keep.append(c)
+            continue
+        ctrl, actor, name = action
+        if ctrl != "city" or not str(name).startswith("produce_"):
+            keep.append(c)
+            continue
+        want = f"{actor}|{str(name)[len('produce_'):]}"
+        cur = now.get(str(actor))
+        if cur is None or want in held or f"{actor}|{cur}" not in offered_now:
+            keep.append(c)
+    return keep
+
+
 def _to_action(candidate: dict):
     """Candidate -> the (ctrl_type, actor_id, action_name) tuple env.step wants.
 
@@ -1909,7 +1961,10 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                     # (`HeuristicGenerator._preference_score`). Нужен, чтобы отделить
                     # САМУ ИГРУ (основание городов, рост, производство) от наших
                     # надстроек: пока игра не идёт не хуже его, индекс накладывать не на что.
-                    descore = gen.generate_candidates(dof.state, avail)
+                    descore = _hold_production_candidates(
+                        gen.generate_candidates(dof.state, avail), obs,
+                        _production_names(env_getter())
+                        if env_getter is not None else None)
                     if descore:
                         _pick = max(descore,
                                     key=lambda c: (gen._preference_score(c),
@@ -1972,7 +2027,9 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                                   f"обратимое — простой стоил бы позиции)", flush=True)
                         return _to_action(_best)
 
-                cands = gen.generate_candidates(dof.state, avail)
+                cands = _hold_production_candidates(
+                    gen.generate_candidates(dof.state, avail), obs,
+                    _production_names(env_getter()) if env_getter is not None else None)
                 if ARGS.ban_produce and cands:
                     # Тот же инструмент для ПРЕЖНЕГО пути (серия A: «обратный запрет»).
                     # Запрет действует только на постановку в очередь и только у того
