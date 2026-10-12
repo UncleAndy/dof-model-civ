@@ -2003,6 +2003,9 @@ def _forecast_decide(obs, info, dof, extractor, avail, *, type_names=None,
                 _qname = (type_names or {}).get(int(_c.get("production_value") or -1))
                 _queue.append(f"{_c.get('id')}:{_qname or _c.get('production_value')}"
                               f"(разм.{_c.get('size')},ед.+{_c.get('surplus_food')},"
+                              f"запас еды {_c.get('food_stock')}, житница "
+                              f"{_c.get('granary_size')}/{_c.get('granary_turns')}, "
+                              f"рост через {_c.get('growth_in')}, "
                               f"до готовности {_c.get('turns_to_prod_complete')})")
             print(f"        [наши юниты] ход {_tn}: городов {len(_cities)} | юниты всего "
                   f"{_units_seen}, наших {sum(_counts.values())} "
@@ -2133,6 +2136,28 @@ def _forecast_decide(obs, info, dof, extractor, avail, *, type_names=None,
             print(f"        [прогноз] выбрал {choice.action}, но сервер такого "
                   f"не предлагает — ход без действия", flush=True)
         return True, None
+    # Удержание решения по КЛЕТКЕ: обратный ход к нашему же прошлому действию не отправляем.
+    # Иначе житель снимается и ставится обратно каждый ход: прирост еды +2 → +0, город
+    # перестаёт расти, а производство сбрасывает щиты. Обратный ход — не «новое решение»
+    # (новое решение это ДРУГАЯ клетка), поэтому отказ здесь не мешает переназначению.
+    if isinstance(wire, tuple) and len(wire) >= 3 and str(wire[0]) == "city":
+        _nm = str(wire[2])
+        if _nm.startswith("city_work_") or _nm.startswith("city_unwork_"):
+            _bench = _nm[len("city_unwork_"):] if _nm.startswith("city_unwork_") \
+                else _nm[len("city_work_"):]
+            _prev = _LAST_TILE_ACTION.get(str(wire[1]))
+            if _prev:
+                _prev_bench = (_prev[len("city_unwork_"):]
+                               if str(_prev).startswith("city_unwork_")
+                               else str(_prev)[len("city_work_"):])
+                if _prev_bench == _bench and (
+                        (str(_prev).startswith("city_unwork_") != _nm.startswith("city_unwork_"))):
+                    if os.environ.get("DOF_TRACE_FILTERS") == "1":
+                        print(f"        [прогноз] отказ от обратного хода по клетке "
+                              f"{wire[1]}/{_nm} — только что было {_prev}", flush=True)
+                    _FORECAST_STATS["tile_hold"] = _FORECAST_STATS.get("tile_hold", 0) + 1
+                    return True, None
+            _LAST_TILE_ACTION[str(wire[1])] = _nm
     _FORECAST_STATS["acted"] += 1
     if os.environ.get("DOF_TRACE_FILTERS") == "1":
         # У основного пути следа отправок НЕ БЫЛО (§13.228: за 31 ход «прогноз» 5 раз, а что
@@ -2207,6 +2232,12 @@ def _to_wire_action(action: tuple[str, str, str], avail: dict) -> tuple | None:
 #: Диагностика прогноза: сколько решений он принял и сколько отклонил.
 # Ходы, по которым покадровый след состава уже напечатан (по одному на ход).
 _UNIT_TRACE_TURNS: set = set()
+
+# Последнее действие по клетке, ОТПРАВЛЕННОЕ нами, по городам: `{город: имя действия}`.
+# Нужна, чтобы город не дёргал жителя туда-обратно (измерено §13.232: `city_unwork_18_1_2`
+# и `city_work_18_1_2` чередуются каждый ход, прирост еды становится +0, мир отдаёт
+# «рост через 1000000000 turns», а счётчик производства сбрасывается).
+_LAST_TILE_ACTION: dict = {}
 
 _FORECAST_STATS: dict[str, int] = {"decisions": 0, "acted": 0, "declined": 0,
                                    "unmappable": 0, "probes": 0, "idle": 0}
