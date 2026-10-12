@@ -1358,6 +1358,16 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
             # законный источник, без замера и без постановки производства.
             cost = spec_costs.get(name)
         if cost is None:
+            # Третий законный источник — ПРАВИЛА МИРА (`build_cost` в `units.ruleset` /
+            # `buildings.ruleset`, прочитано один раз `scripts/read_rules_costs.py`).
+            # Указание владельца: цена — характеристика мира, её достаточно узнать один
+            # раз из кода и хранить в картине мира; пробы в бою для этого не нужны.
+            try:
+                from env.rules_costs import build_cost_of as _rules_cost
+                cost = _rules_cost(name)
+            except Exception:  # noqa: BLE001
+                cost = None
+        if cost is None:
             return None
         options = world.options(name)
         if options:

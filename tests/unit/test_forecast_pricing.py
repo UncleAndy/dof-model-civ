@@ -132,33 +132,53 @@ class TestProductionPricing:
     def test_an_unpriced_improvement_is_not_a_probe(self):
         """Постановка улучшения роняет контроллер — это не замер, а поломка.
 
-        Класс типа из наблюдения не выводится: каталог улучшений неполон (`Barracks`
-        в нём нет, хотя город этот тип предлагает). Поэтому замер разрешён только
-        типам с ДОКАЗАТЕЛЬСТВОМ, что они юниты.
+        Класс типа из наблюдения не выводится: каталог улучшений неполон. Поэтому замер
+        разрешён только типам с ДОКАЗАТЕЛЬСТВОМ, что они юниты. Имя ниже нет ни в правилах
+        мира, ни в каталоге — только тогда оно остаётся без цены вовсе.
         """
         facts = MeasuredFacts("/tmp/нет-такого.json")
-        ctx = self._context(offered={"produce_Barracks": True}, facts=facts,
-                            dof_units={}, improvements={"Barracks": 3.0})
+        ctx = self._context(offered={"produce_Неведомая Постройка": True}, facts=facts,
+                            dof_units={}, improvements={"Неведомая Постройка": 3.0})
         ctx.vals.productions("city_121")
-        assert "Barracks" in ctx.unpriced
+        assert "Неведомая Постройка" in ctx.unpriced
         assert ctx.probe_action() is None
 
-    def test_a_catalogue_unit_is_probeable(self):
-        """Тип из каталога юнитов — доказанный юнит: его мерить безопасно."""
+    @pytest.mark.xfail(
+        reason="цена из правил мира уже есть (указание 3), но ЦЕННОСТЬ типа (опции) ещё не "
+               "считается из эффектов мира по весам его кода (указание 2) — пока опций нет, "
+               "тип остаётся в непокрытых. Тест сторожит целевое состояние: когда указание 2 "
+               "ляжет, он станет зелёным.",
+        strict=False)
+    def test_a_type_with_a_price_from_the_world_rules_is_not_probed(self):
+        """Цена из правил мира — цена мира: зонд не нужен (указание владельца).
+
+        «Цена — это характеристика мира. Её достаточно узнать один раз, например, из кода
+        и сохранить в картине мира.» Значит тип, чья цена прочитана из `units.ruleset` /
+        `buildings.ruleset`, не должен попадать ни в непокрытые, ни в замер.
+        """
         facts = MeasuredFacts("/tmp/нет-такого.json")
         ctx = self._context(offered={"produce_Battleship": True}, facts=facts,
-                            dof_units={"Battleship": 7.85})
-        ctx.vals.productions("city_121")
-        assert ctx.probe_action() == ("city", "121", "produce_Battleship")
-
-    def test_a_type_learned_alive_is_probeable(self):
-        """Тип, который уже видели живьём, тоже доказанный юнит (склад помнит класс)."""
-        facts = MeasuredFacts("/tmp/нет-такого.json")
-        facts.observe_type("Horsemen", options=5.0, kind="unit")
-        ctx = self._context(offered={"produce_Horsemen": True}, facts=facts,
                             dof_units={})
         ctx.vals.productions("city_121")
-        assert ctx.probe_action() == ("city", "121", "produce_Horsemen")
+        assert "Battleship" not in ctx.unpriced
+        assert ctx.probe_action() is None
+
+    def test_a_catalogue_unit_without_a_price_is_probeable(self):
+        """Юнит без цены в правилах и в складе — доказанный юнит: мерить безопасно."""
+        facts = MeasuredFacts("/tmp/нет-такого.json")
+        ctx = self._context(offered={"produce_Боевой Кот": True}, facts=facts,
+                            dof_units={"Боевой Кот": 7.85})
+        ctx.vals.productions("city_121")
+        assert ctx.probe_action() == ("city", "121", "produce_Боевой Кот")
+
+    def test_a_type_learned_alive_is_probeable(self):
+        """Тип без цены в правилах, но виденный живьём, — доказанный юнит (склад помнит класс)."""
+        facts = MeasuredFacts("/tmp/нет-такого.json")
+        facts.observe_type("Боевой Кот", options=5.0, kind="unit")
+        ctx = self._context(offered={"produce_Боевой Кот": True}, facts=facts,
+                            dof_units={})
+        ctx.vals.productions("city_121")
+        assert ctx.probe_action() == ("city", "121", "produce_Боевой Кот")
 
     def test_a_type_that_wedged_a_match_is_never_probed_again(self, tmp_path,
                                                               monkeypatch):
