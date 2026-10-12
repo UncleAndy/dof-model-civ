@@ -176,6 +176,13 @@ def _parse_cli(argv: list[str]) -> argparse.Namespace:
 
 ARGS = _parse_cli(sys.argv[1:])
 
+# Флаг «без ходов на клетки» обязан доходить и до ПРОГНОЗА: его кандидаты клеток строятся в
+# `brain/forecast/options.py`, мимо общего фильтра решения. Прежде переменную ставил САМ общий
+# фильтр, а в пути прогноза он не вызывается — и в прогоне с флагом оставались 9 отправок по
+# клеткам (измерено: «изменение не подключено»). Ставим здесь, один раз при разборе аргументов.
+if getattr(ARGS, "no_tile_actions", False):
+    os.environ["DOF_NO_TILE_ACTIONS"] = "1"
+
 import gymnasium
 from civrealm.configs import fc_args
 from civrealm.agents import RandomAgent, BaseAgent
@@ -826,6 +833,10 @@ def _apply_common_rules(cands: list, obs: dict, extractor, env_getter,
     kept = _hold_military_candidates(
         held, obs, getattr(extractor, "my_player_id", None), military, type_names)
     if getattr(ARGS, "no_tile_actions", False):
+        # Флаг обязан доходить и до ПРОГНОЗА: его кандидаты клеток строятся в
+        # `brain/forecast/options.py`, мимо общего фильтра (измерено: с флагом в прогоне
+        # оставались 8 отправок по клеткам — «изменение не подключено»).
+        os.environ.setdefault("DOF_NO_TILE_ACTIONS", "1")
         _tile_free = []
         for _c in kept:
             _act = _to_action(_c)

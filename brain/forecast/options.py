@@ -12,6 +12,7 @@
 нет вовсе (синтетика в тестах) — и там оно честно называется верхней границей.
 """
 from __future__ import annotations
+import os
 
 import math
 from dataclasses import dataclass, field
@@ -313,6 +314,14 @@ def candidates(state: ForecastState, vals: Valuations, *,
     #     сразу; цена считается формулой города (Δопций), замером подтверждена.
     for city_id in vals.city_ids():
         if city_id not in state.dof:
+            continue
+        if os.environ.get("DOF_NO_TILE_ACTIONS") == "1":
+            # Раскладку жителей выбирает городской управляющий СЕРВЕРА тем же
+            # `set_default_city_manager`, чьи числа мы портировали, и перекрывает наш приказ
+            # на следующем обновлении города (`server/cityturn.c:366`, измерено §13.234:
+            # приказ живёт один ход). Ходы на клетки дублируют мир — не предлагаем их вовсе,
+            # а освободившиеся ходы идут в основание и дороги. Это ОТДЕЛЬНАЯ ветвь прогноза:
+            # общий фильтр решения (`_apply_common_rules`) этих кандидатов не видит.
             continue
         for action, gain in vals.tiles(city_id):
             effect = tr.work(state, city_id=city_id, tile_delta=float(gain),
