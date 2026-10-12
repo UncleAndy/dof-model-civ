@@ -73,11 +73,16 @@ def _city(shield_stock=3, prod_shield=3, size=1):
 
 class TestProductionPricing:
     def _context(self, *, offered, facts=None, dof_units=(), obs_units=None,
-                 improvements=None, type_names=None, military_names=None, city_size=1):
+                 improvements=None, type_names=None, military_names=None, city_size=1,
+                 current_production=None):
         info_dict = {"available_actions": {
             "city": {"121": {"produce_Settlers": True, **offered}},
             "unit": {}, "tech": {}}}
-        return build_context(_obs(city=_city(size=city_size), units=obs_units or _settler()),
+        city = _city(size=city_size)
+        if current_production is not None:
+            # Начатая постановка: без неё удержание (§13.196) не проверяется вовсе.
+            city["121"]["production_value"] = current_production
+        return build_context(_obs(city=city, units=obs_units or _settler()),
                             info_dict,
                             _dof_state(units=dof_units, improvements=improvements),
                             _extractor(),
@@ -109,6 +114,47 @@ class TestProductionPricing:
         # целиком уходило в прежний генератор со старым правилом.
         assert "Warriors" not in names
         assert "Settlers" in names
+
+    def test_a_grown_city_may_reconsider_but_a_steady_one_holds(self):
+        """Рост города — исключительный повод пересмотреть постановку (§13.242).
+
+        Удержание начатого (§13.196) закрыло дёргание (§13.229), но запирало город на том, что
+        он начал в размере 1 — а там поселенец невозможен вовсе (§13.239), и наши города
+        оставались двумя против 5–7 у встроенного ИИ (§13.242). Обе половины правила обязаны
+        держаться: при росте — пересмотр, без роста — удержание. Иначе либо снова дёргание,
+        либо снова запирание.
+
+        Проверка РАЗЛИЧАЮЩАЯ: предметов два, и оба с ценой (живые юниты). У пути удержания есть
+        немое условие — без цены текущего предмета он не работает вовсе, и первая редакция этого
+        сторожа «проходила» на пустом списке (тот же урок, что в §13.230).
+        """
+        import brain.forecast.live as live
+
+        two_units = {"7": {"type_rule_name": "Settlers", "owner": 0, "x": 2, "y": 2,
+                           "type_build_cost": 40, "type_move_rate": 1, "type_hp": 20,
+                           "health": 20},
+                     "9": {"type_rule_name": "Warriors", "owner": 0, "x": 3, "y": 2,
+                           "type_build_cost": 10, "type_move_rate": 1, "type_hp": 10,
+                           "health": 10, "type_attack_strength": 1}}
+        kinds = {7: "Settlers", 9: "Warriors"}
+        offer = {"produce_Warriors": True}
+
+        live._PROD_SIZE_AT_CHOICE.pop("city_121", None)
+        small = self._context(offered=offer, obs_units=two_units, type_names=kinds,
+                              city_size=1, current_production=9).vals.productions("city_121")
+        assert [n for n, _o, _t in small] == ["Warriors"], (
+            "в размере 1 поселенец невозможен (§13.239), и постановка держится (§13.196)"
+        )
+        grown = self._context(offered=offer, obs_units=two_units, type_names=kinds,
+                              city_size=2, current_production=9).vals.productions("city_121")
+        assert "Settlers" in [n for n, _o, _t in grown], (
+            "город вырос — повод пересмотреть постановку не сработал (§13.242)"
+        )
+        steady = self._context(offered=offer, obs_units=two_units, type_names=kinds,
+                               city_size=2, current_production=9).vals.productions("city_121")
+        assert [n for n, _o, _t in steady] == ["Warriors"], (
+            "размер не менялся — постановка обязана удерживаться, иначе вернётся дёргание (§13.229)"
+        )
 
     def test_a_size_one_city_is_not_offered_a_population_cost_unit(self):
         """Мир запрещает ставить юнит, чей `pop_cost` не меньше размера города.
