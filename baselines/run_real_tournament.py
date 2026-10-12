@@ -1905,7 +1905,35 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                                     if env_getter is not None else None),
                     gold=lambda: _gold_of(obs, extractor))
                 if decided:
-                    return wire
+                    if wire is not None:
+                        return wire
+                    # §13.203: ход НЕ ПРОПУСКАЕТСЯ. Прогноз осмотрел всё и не нашёл
+                    # действия с положительным приростом — но мир не останавливается, а
+                    # мера у нас ОТНОСИТЕЛЬНАЯ: пропущенный ход стоит всей позиции.
+                    # Берём лучшее ОБРАТИМОЕ действие из предложенных (обратимое вложение
+                    # не сжигает опции, Axiom 3), при равенстве — шаг (`goto`), то есть
+                    # раскрытие тумана: без него годная площадка не появится никогда.
+                    # У встроенного ИИ такого простоя нет вовсе: его поселенец всегда
+                    # идёт к лучшей из известных целей (`ai/default/daisettler.c`).
+                    _forced = [c for c in gen.generate_candidates(dof.state, avail)
+                               if c.get("is_reversible")]
+                    if _forced:
+                        def _rank(c):
+                            _d = sum(c.get("projected_dof_delta", {}).values())
+                            _move = str(c.get("action_name", "")).startswith("goto")
+                            # Положительный прирост решает сам за себя; при неположительном
+                            # предпочитается ШАГ (`goto`) — раскрытие тумана, потому что
+                            # «постоять» (+0.000, `keep_activity`) не меняет мира вовсе,
+                            # а без раскрытия годная площадка не появится.
+                            return (True, _d, _move) if _d > 0.0 else (False, _move, _d)
+                        _best = max(_forced, key=_rank)
+                        self._forced = getattr(self, "_forced", 0) + 1
+                        if self._forced <= 5 or self._forced % 25 == 0:
+                            print(f"        [вынужденный ход {self._forced}] "
+                                  f"{_best.get('action_name')} "
+                                  f"(прирост {sum(_best.get('projected_dof_delta', {}).values()):+.3f}, "
+                                  f"обратимое — простой стоил бы позиции)", flush=True)
+                        return _to_action(_best)
 
                 cands = gen.generate_candidates(dof.state, avail)
                 if ARGS.ban_produce and cands:
