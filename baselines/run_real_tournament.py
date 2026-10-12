@@ -107,6 +107,11 @@ def _parse_cli(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--no-forecast", dest="forecast", action="store_false",
                         help="прежний путь: ядро оценивает один шаг по сегодняшнему "
                              "меню (для сравнения, а не для результатов)")
+    parser.add_argument("--no-tile-actions", dest="no_tile_actions",
+                        action="store_true", default=False,
+                        help="не тратить ходы на клетки: раскладку жителей выбирает "
+                             "управляющий СЕРВЕРА (auto_arrange_workers, cityturn.c:366) "
+                             "теми же числами, а наш приказ живёт один ход (§13.234)")
     parser.add_argument("--no-dof", dest="no_dof", action="store_true", default=False,
                         help="ВЫКЛЮЧИТЬ DoF: ни прогноза, ни индекса, ни вето ядра — "
                              "выбор только предпочтением стратегии. Указание владельца: "
@@ -820,6 +825,16 @@ def _apply_common_rules(cands: list, obs: dict, extractor, env_getter,
         military = set()
     kept = _hold_military_candidates(
         held, obs, getattr(extractor, "my_player_id", None), military, type_names)
+    if getattr(ARGS, "no_tile_actions", False):
+        _tile_free = []
+        for _c in kept:
+            _act = _to_action(_c)
+            _nm = str(_act[2]) if _act else ""
+            if _nm.startswith(("city_work_", "city_unwork_")):
+                continue
+            _tile_free.append(_c)
+        if _tile_free or not kept:
+            kept = _tile_free
     if os.environ.get("DOF_TRACE_FILTERS") == "1":
         city_ish = [c for c in cands
                     if str((_to_action(c) or ("", "", ""))[2]).startswith("produce_")]
@@ -2167,7 +2182,11 @@ def _forecast_decide(obs, info, dof, extractor, avail, *, type_names=None,
             _shown = f"{wire[0]}/{wire[2]} (актёр {wire[1]})"
         else:
             _shown = str(wire)
-        print(f"        [прогноз] отправляю {_shown}", flush=True)
+        try:
+            _sn_tn = int((info or {}).get("turn") or (info or {}).get("turn_played") or -1)
+        except (TypeError, ValueError):
+            _sn_tn = -1
+        print(f"        [прогноз] отправляю (ход {_sn_tn}) {_shown}", flush=True)
     return True, wire
 
 
