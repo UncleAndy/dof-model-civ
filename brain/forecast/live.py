@@ -26,6 +26,7 @@
 from __future__ import annotations
 
 import math
+import os
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -124,6 +125,12 @@ class LiveContext:
 
 def _as_dict(value: Any) -> dict:
     return value if isinstance(value, dict) else {}
+
+
+#: След сравнения постановок (§13.195): включается средой `DOF_TRACE_PRODUCTION=1`.
+#: Нужен потому, что «качели» постановки (Поселенец ↔ Храм, 76 смен за 60 ходов) видны
+#: в решениях, но не видно, КАКАЯ сторона сравнения переворачивается.
+_PROD_TRACE: bool = bool(os.environ.get("DOF_TRACE_PRODUCTION"))
 
 
 def _as_list(value: Any) -> list:
@@ -723,15 +730,41 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
                         notes.append("город в очереди держит ненужное войско — "
                                      "ценность текущей постановки обнулена (§13.170)")
                     _now_value = 0.0
-                kept = [c for c in out
-                        if c[0] != current_name
-                        and c[1] * (_gamma ** c[2]) > _now_value]
-                if not kept and out:
-                    notes.append(
-                        f"город {city_id}: в очереди {current_name} "
-                        f"(ценность с дисконтом {_now_value:.4f}), ни один предложенный "
-                        f"предмет не лучше — постановку не меняем (§13.168)")
-                out = kept
+                # §13.196 (решение владельца): смена постановки — ТОЛЬКО по исключительному
+                # поводу. Без повода запущенное идёт до конца. Прежде здесь сравнивались
+                # ценности каждый ход, и город метался (Поселенец ↔ Храм, 76 смен за 60
+                # ходов; замер следа: текущая постановка нулевой ценности держалась 193
+                # решения, а challenger был «строго лучше») — не достраивалось ничего.
+                _exception = ""
+                if _PROD_TRACE:
+                    _top = sorted((c for c in out if c[0] != current_name),
+                                  key=lambda c: c[1] * (_gamma ** c[2]), reverse=True)[:3]
+                    print(f"[прогноз] постановка {city_id}: в очереди {current_name} "
+                          f"(срок {_now_turns:.0f}, ценность с дисконтом {_now_value:.4f}); "
+                          f"лучшие: "
+                          + ", ".join(f"{n} {v:.4f} за {t:.0f} ход. (с диск. "
+                                      f"{v * (_gamma ** t):.4f})" for n, v, t in _top),
+                          flush=True)
+                if military and need_defender and current_name not in military:
+                    _exception = "рядом опасность — переходим на защитника"
+                elif military and current_name in military and not need_defender:
+                    _exception = "в очереди ненужное войско — освобождаем очередь (§13.170)"
+                if _exception:
+                    kept = [c for c in out
+                            if c[0] != current_name
+                            and c[1] * (_gamma ** c[2]) > _now_value]
+                    if kept:
+                        notes.append(f"город {city_id}: смена постановки — {_exception}")
+                        out = kept
+                else:
+                    # Повода нет: держим начатое. Прочие предложения убираются из
+                    # кандидатов, чтобы поиск не мог сменить постановку «по мелочи».
+                    held = [c for c in out if c[0] == current_name]
+                    if held:
+                        if "смена постановки только по исключительному поводу" not in notes:
+                            notes.append("смена постановки только по исключительному поводу "
+                                         "(§13.196): запущенное идёт до конца")
+                        out = held
         return out
 
     player = _player_record(obs, my_id)
