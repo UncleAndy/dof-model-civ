@@ -41,8 +41,12 @@ from .options import Valuations
 from .state import ForecastState
 
 #: Действия работы → экстра, которую они ставят (для связи с измеренной таблицей).
+#: Имена действий — из мира (`classic/actions.ruleset`: `Cultivate`, `Mine`, `Plant`,
+#: `Road`, …), и `Cultivate` ставит ровно ту же экстру `Irrigation`, что и прежнее
+#: `irrigation` (§13.177): в правилах земли она даёт `irrigation_food_incr = 1`.
 WORK_ACTION_EXTRA = {
-    "irrigation": "Irrigation", "irrigate": "Irrigation", "mine": "Mine",
+    "irrigation": "Irrigation", "irrigate": "Irrigation", "cultivate": "Irrigation",
+    "mine": "Mine",
     "build_road": "Road", "road": "Road", "railroad": "Railroad",
     "farmland": "Farmland",
 }
@@ -460,7 +464,11 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
     # где сервер сам предлагает работу, и только с ИЗМЕРЕННЫМ эффектом.
     work_gains: dict[str, dict[str, float]] = {}
     try:
-        work_gains, _report = extractor._terrain_work_gains(obs, values, map_obs)
+        # §13.177: кто может работать — решает предложение мира, а не флаг типа.
+        work_gains, _report = extractor._terrain_work_gains(
+            obs, values, map_obs,
+            available=_as_dict(_as_dict(info.get("available_actions")).get("unit")),
+            work_actions=tuple(WORK_ACTION_EXTRA))
     except Exception as exc:  # noqa: BLE001
         notes.append(f"работы не подключены: {type(exc).__name__}")
 

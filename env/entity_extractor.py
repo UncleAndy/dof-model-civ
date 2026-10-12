@@ -1760,7 +1760,12 @@ class GameStateExtractor:
         return city_options(probe, garrison=0, model=self.model) + site.option_bonus
 
     def _terrain_work_gains(self, obs: dict[str, Any], vals: dict[str, Any],
-                            map_obs: dict[str, Any]) -> tuple[
+                            map_obs: dict[str, Any],
+                            available: Optional[dict[str, Any]] = None,
+                            work_actions: tuple[str, ...] = (
+                                "irrigation", "irrigate", "mine", "build_road",
+                                "road", "railroad", "farmland", "cultivate",
+                                "plant", "fortify_terrain")) -> tuple[
             dict[str, dict[str, float]], dict[str, dict[str, Any]]]:
         """Сколько опций принесёт городу работа рабочего на его клетке.
 
@@ -1769,6 +1774,13 @@ class GameStateExtractor:
         в область которого попадает клетка** (21 клетка, радиус 2). Считается
         она той же формулой города, что и всё остальное: сравниваются два снимка
         города — с текущими излишками и со сдвинутыми на измеренный эффект.
+
+        КТО МОЖЕТ РАБОТАТЬ — решает сам мир, а не наш признак (§13.177): критерий
+        теперь «сервер предлагает этому юниту работу» (`available`). Прежде здесь
+        стоял флаг `worker` из спецификации типа, и он молча обнулял ВСЁ: у поселенцев
+        этого флага в правилах мира нет (их список — `Settlers`, `Cities`, …), а работы
+        им сервер при этом предлагает. Измерено: 183 предложения работ, у всех цена
+        ровно 0.0000, и город из-за этого не орошал землю и не рос.
 
         Если экстра на клетке уже стоит, работа бессмысленна (0). Если эффект не
         измерен или города рядом нет — тоже 0: правдоподобное число вместо
@@ -1792,8 +1804,16 @@ class GameStateExtractor:
             x, y = unit_obs.get('x'), unit_obs.get('y')
             if x is None or y is None:
                 continue
-            if not truthy(spec_field(unit_obs, 'worker', False)):
-                continue  # работы ставит рабочий, не любой юнит
+            if available is not None:
+                uid = str(unit_id).split("_", 1)[-1]
+                offered = as_dict(available.get(int(uid))
+                                  if str(uid).isdigit() else None) or as_dict(
+                    available.get(uid)) or as_dict(available.get(str(unit_id)))
+                can_work = any(offered.get(name) for name in work_actions)
+                if not can_work:
+                    continue  # мир сам не предлагает этому юниту работу
+            elif not truthy(spec_field(unit_obs, 'worker', False)):
+                continue  # запасной путь, когда предложений в наблюдении нет
             terrain, extras = tile_terrain_extras(map_obs, int(x), int(y))
             per_extra: dict[str, float] = {}
             for extra in sorted(set(WORK_ACTION_EXTRA.values())):
