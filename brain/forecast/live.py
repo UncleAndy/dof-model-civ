@@ -718,8 +718,7 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
                 # ненужный военный тип не имеет «хотелки» ВООБЩЕ, поэтому и у нас его
                 # ценность здесь — ноль: тогда смена постановки проходит, и конвейер
                 # защитников рассыпается.
-                if (military and current_name in military
-                        and not (enemy_seen or garrison <= 0)):
+                if (military and current_name in military and not need_defender):
                     if "город в очереди держит ненужное войско" not in notes:
                         notes.append("город в очереди держит ненужное войско — "
                                      "ценность текущей постановки обнулена (§13.170)")

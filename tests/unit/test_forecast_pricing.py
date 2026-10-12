@@ -68,7 +68,7 @@ def _city(shield_stock=3, prod_shield=3):
 
 class TestProductionPricing:
     def _context(self, *, offered, facts=None, dof_units=(), obs_units=None,
-                 improvements=None):
+                 improvements=None, type_names=None, military_names=None):
         info_dict = {"available_actions": {
             "city": {"121": {"produce_Settlers": True, **offered}},
             "unit": {}, "tech": {}}}
@@ -76,7 +76,33 @@ class TestProductionPricing:
                             info_dict,
                             _dof_state(units=dof_units, improvements=improvements),
                             _extractor(),
-                            world_model=facts or MeasuredFacts("/tmp/нет-такого.json"))
+                            world_model=facts or MeasuredFacts("/tmp/нет-такого.json"),
+                            type_names=type_names, military_names=military_names)
+
+    def test_the_queue_holding_unwanted_military_does_not_crash_the_forecast(self):
+        """Ворота военного типа — ОДНА переменная `need_defender` (§13.194).
+
+        Здесь осталась ссылка на `enemy_seen`, которую к тому времени уже убрали из
+        вычислений. Прогноз падал `NameError` на КАЖДОМ решении о городе и молча уходил
+        в прежний генератор, где правило военного типа осталось старым (§13.161) — то есть
+        перенос правил встроенного ИИ не работал вовсе, и выглядело это как «эффекта нет».
+        Ни один из 658 тестов этого не видел: ошибка была только в трассе живого прогона.
+        """
+        warrior = {"9": {"type_rule_name": "Warriors", "owner": 0, "x": 2, "y": 2,
+                         "type_build_cost": 10, "type_move_rate": 1, "type_hp": 10,
+                         "health": 10, "type_attack_strength": 1}}
+        city = _city()
+        city["121"]["production_value"] = 0
+        ctx = self._context(offered={"produce_Warriors": True}, obs_units=warrior,
+                            type_names={0: "Warriors"}, military_names={"Warriors"})
+        priced = ctx.vals.productions("city_121")   # здесь и падало NameError
+        names = [name for name, _o, _t in priced]
+        assert isinstance(priced, list)
+        # Ворота работают: угроз нет, гарнизон в городе есть — ненужное войско из
+        # предложений уходит. До правки здесь был `NameError`, и решение о городе
+        # целиком уходило в прежний генератор со старым правилом.
+        assert "Warriors" not in names
+        assert "Settlers" in names
 
     def test_turns_come_from_the_world_numbers(self):
         """Живой юнит даёт и опции, и стоимость: срок = ceil((40−3)/3) = 13."""
