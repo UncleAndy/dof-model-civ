@@ -2031,6 +2031,11 @@ def _forecast_decide(obs, info, dof, extractor, avail, *, type_names=None,
                     continue
                 _tname = str(_u.get("type_rule_name") or _u.get("type") or "?")
                 _counts[_tname] = _counts.get(_tname, 0) + 1
+                if "Settler" in _tname or "Engineer" in _tname:
+                    # Объявленный замер (§13.244-13.245): поселенец достраивается, а город не
+                    # основывает — значит нужно видеть его ПУТЬ, а не только наличие.
+                    _walk.append(f"{_tname}@{_u.get('x')},{_u.get('y')}")
+            _walk: list[str] = []
             _cities = [c for c in as_dict(obs.get("city")).values()
                        if isinstance(c, dict)
                        and (_my_id is None or str(c.get("owner")) == str(_my_id))]
@@ -2047,7 +2052,8 @@ def _forecast_decide(obs, info, dof, extractor, avail, *, type_names=None,
                               f"до готовности {_c.get('turns_to_prod_complete')})")
             print(f"        [наши юниты] ход {_tn}: городов {len(_cities)} | юниты всего "
                   f"{_units_seen}, наших {sum(_counts.values())} "
-                  f"{dict(sorted(_counts.items()))} | очередь {_queue}", flush=True)
+                  f"{dict(sorted(_counts.items()))} | очередь {_queue}"
+                  + (f" | путь {_walk}" if _walk else ""), flush=True)
     try:
         from brain.forecast import choose
         from brain.forecast.live import _player_record, build_context
