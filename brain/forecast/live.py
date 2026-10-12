@@ -198,11 +198,30 @@ def _effects_price(name: str, city_rec: dict, city_records: dict) -> tuple[float
     cost = _rules_cost(name)
     if cost is None:
         return None
-    unhappy = _num((city_rec or {}).get("ppl_unhappy"), 0.0) \
-        + _num((city_rec or {}).get("ppl_angry"), 0.0)
+    rec = city_rec or {}
+    unhappy = _num(rec.get("ppl_unhappy"), 0.0) + _num(rec.get("ppl_angry"), 0.0)
     cities = len([1 for row in (city_records or {}).values() if isinstance(row, dict)])
-    options = _fx.type_options(_world_effects, name, c=1, unhappy=unhappy,
-                               num_cities=max(1, cities), cities=cities)
+    prod = {
+        "food": _num(rec.get("prod_food"), 0.0),
+        "shields": _num(rec.get("prod_shield"), 0.0),
+        "trade": _num(rec.get("prod_trade"), 0.0),
+        "science": _num(rec.get("science"), _num(rec.get("bulbs"), 0.0)),
+        "gold": _num(rec.get("prod_gold"), 0.0),
+        "luxury": _num(rec.get("luxury"), 0.0),
+    }
+    # Ставки деления торговли — из самого города (отношения наблюдённых величин), не выдуманы.
+    trade = prod["trade"]
+    trade_split = None
+    if trade > 0.0:
+        trade_split = (min(1.0, prod["science"] / trade),
+                       min(1.0, prod["gold"] / trade),
+                       min(1.0, prod["luxury"] / trade))
+    held = frozenset(str(x) for x in _as_list(rec.get("improvements")))
+    options = _fx.improvement_value(
+        _world_effects, name, prod=prod,
+        worked_tiles=int(_num(rec.get("size"), 0.0)),
+        unhappy=unhappy, num_cities=max(1, cities), cities=cities,
+        trade_split=trade_split, held=held)
     if options <= 0.0:
         return None
     return float(options), float(cost)
@@ -766,13 +785,9 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
             if upkeep_food is not None and surplus_food is not None:
                 if surplus_food < upkeep_food:
                     continue
-            priced = type_price(type_name)
-            if priced is None:
-                # Второй законный источник ценности — ЕГО оценка эффектов этого типа
-                # (указание владельца: код встроенного ИИ тоже наблюдение). Для улучшений
-                # она даёт ценность без проб; юниты он оценивает иначе, их этот источник
-                # не покрывает.
-                priced = _effects_price(type_name, rec, city_records)
+            # Цену типа спрашиваем С ГОРОДОМ: у улучшений она считается по его эффектам
+            # и по этому городу (выходы, недовольные), у юнитов — как раньше.
+            priced = type_price(type_name, rec)
             if priced is None:
                 unpriced.add(type_name)
                 # Запоминаем предложение для самозамера — но ТОЛЬКО если тип
@@ -1367,7 +1382,7 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
         "improvement": _as_dict(getattr(bridge, "improvement_options", None)),
     }
 
-    def type_price(name: str) -> tuple[float, float] | None:
+    def type_price(name: str, city_rec: dict | None = None) -> tuple[float, float] | None:
         """(опции типа, стоимость) или None, если цены нет — тогда тип не предлагаем.
 
         Живой юнит типа даёт оба числа сразу (`type_*` + `unit_options`) — и, что
@@ -1411,6 +1426,12 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
             options = _num(catalogue[kind].get(name), 0.0)
             if options > 0.0:
                 return options, float(cost)
+        # Последний законный источник — ЕГО оценка эффектов этого типа: у улучшений она
+        # берёт эффекты из правил мира и веса его кода. Живёт ЗДЕСЬ, а не у вызывающего:
+        # иначе наружу (в общий путь без прогноза) улучшения приходили без цены вовсе —
+        # измерено: из 120 типов оценивались только 8 юнитов.
+        if city_rec is not None:
+            return _effects_price(name, city_rec, city_records)
         return None
 
     # Цена раскрытия: разрыв Дженсена по ИЗМЕРЕННОМУ разбросу ценностей площадок.

@@ -406,7 +406,7 @@ def _filters_trace() -> bool:
 
 
 def _production_candidate(obs: dict, info: dict, dof_state, extractor,
-                          type_names, military_names, gold) -> dict | None:
+                          type_names, military_names, gold, avail=None) -> dict | None:
     """Постановка города — ЕГО числами, без оценки DoF (§13.210).
 
     Почему это нужно в общем пути: стенд действия постановки городу НЕ предлагает вовсе
@@ -468,12 +468,45 @@ def _production_candidate(obs: dict, info: dict, dof_state, extractor,
         if shields <= 0.0:
             continue
         stock = float(rec.get("shield_stock") or 0.0)
+        # Предохранитель 1: ставим только то, что СТЕНД СЕЙЧАС ПРЕДЛАГАЕТ городу.
+        # Синтезированный приказ по имени, которого нет в списке законных, вешает контроллер:
+        # измерено — `timeout: wedged on city/produce_Library at turn 1`, и то же с
+        # `produce_Factory`. Список — из наблюдения, а не из маск: маски говорят «может»,
+        # предложение — «принимается сейчас».
+        offered: set[str] = set()
+        if isinstance(avail, dict):
+            for ctrl, actors in avail.items():
+                if str(ctrl) not in ("city", "city_ctrl") or not isinstance(actors, dict):
+                    continue
+                for actor_id, acts in actors.items():
+                    if str(actor_id) not in (str(cid), str(rec.get("id"))):
+                        continue
+                    if isinstance(acts, dict):
+                        offered.update(str(a) for a in acts.keys())
+        # Предохранитель 2: клины уважаем — имя, которое однажды повесило матч, не повторяем.
+        try:
+            from env.wedged import is_wedged as _is_wedged
+        except Exception:  # noqa: BLE001
+            def _is_wedged(_ctrl, _name):  # type: ignore[misc]
+                return False
         best: tuple[float, str, int] | None = None
+        scored: list[tuple[float, str, int]] = []
         for name in sorted(allowed):
+            action_name = f"produce_{name}"
+            if action_name not in offered:
+                # Строго: нет в предложении — не отправляем. Прежняя мягкая версия
+                # («если список непуст») пропускала всё при пустом списке, и матч клинило:
+                # измерено — `wedged on city/produce_Marketplace` уже ПОСЛЕ этой правки.
+                if _filters_trace() and not offered:
+                    print(f"  [постановка] город {cid}: предложение стенда пусто — "
+                          f"постановку не ставим вовсе", flush=True)
+                continue
+            if _is_wedged("city", action_name):
+                continue          # это имя уже клинило матч (реестр `env/wedged.py`)
             got = None
             if getattr(ctx, "type_price_of", None) is not None:
                 try:
-                    got = ctx.type_price_of(str(name))
+                    got = ctx.type_price_of(str(name), rec)
                 except Exception:  # noqa: BLE001
                     got = None
             if got is None:
@@ -482,6 +515,7 @@ def _production_candidate(obs: dict, info: dict, dof_state, extractor,
             own_stock = stock if (current is None or str(current) == str(name)) else 0.0
             turns = max(1, int(math.ceil(max(0.0, cost - own_stock) / shields)))
             value = options * (_gamma ** turns)
+            scored.append((value, str(name), turns))
             if best is None or value > best[0]:
                 best = (value, str(name), turns)
         if best is None:
@@ -490,9 +524,11 @@ def _production_candidate(obs: dict, info: dict, dof_state, extractor,
                       f"ни один не оценён — постановку не меняем", flush=True)
             continue
         if _filters_trace():
-            print(f"  [постановка] город {cid}: маски {len(allowed)} типов; лучший "
-                  f"{best[1]} (ценность {best[0]:.3f} за {best[2]} ход.); в очереди "
-                  f"{current!r}", flush=True)
+            _top = sorted(scored, key=lambda r: r[0], reverse=True)[:5]
+            print(f"  [постановка] город {cid}: маски {len(allowed)} типов; оценено "
+                  f"{len(scored)}; лучший {best[1]} (ценность {best[0]:.3f} за {best[2]} ход.); "
+                  f"в очереди {current!r}; верх: "
+                  + ", ".join(f"{n} {v:.2f}/{t}х" for v, n, t in _top), flush=True)
         if current and best[1] == str(current):
             continue          # повода менять нет: запущенное идёт до конца (§13.196)
         return {"ctrl_type": "city", "actor_id": cid,
@@ -2206,7 +2242,7 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                         if env_getter is not None else None,
                         _military_type_names(env_getter())
                         if env_getter is not None else None,
-                        _gold_of(obs, extractor))
+                        _gold_of(obs, extractor), avail)
                     if _prod is not None:
                         if os.environ.get("DOF_TRACE_FILTERS") == "1":
                             print(f"  [постановка] отправляю {_prod['action_name']} "

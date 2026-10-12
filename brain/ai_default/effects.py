@@ -135,12 +135,32 @@ def effect_value(effect: str, amount: int, *, c: int = 1, unhappy: float = 0.0,
     return 0.0
 
 
+#: Замечания оценки (почему слагаемое пропущено) — для отчёта, а не для тишины.
+NOTES: list[str] = []
+
+
 #: Виды эффектов, для которых порт ещё не имеет ветки — считаются нулём и перечисляются
 #: вызывающим, чтобы пробел был виден, а не растворялся в сумме.
 UNKNOWN: set[str] = set()
 
 
-def type_options(effects: list[tuple[str, int, str, str, str]], target: str, *,
+def requirements_met(row: tuple, held: frozenset[str]) -> bool:
+    """Выполнены ли требования эффекта, кроме самого адресата.
+
+    У `[effect_oracle]` эффект делает Храм счастливым, но требует ещё и `Oracle`; без этой
+    проверки ценность Храма завышалась (измерено на правилах мира: три раздела
+    `Make_Content`, из них один — про Оракула, другой — про `Mysticism`).
+    """
+    if len(row) < 8:
+        return True
+    for requirement in row[7] or ():
+        if str(requirement) not in held:
+            return False
+    return True
+
+
+def type_options(effects: list[tuple], target: str, *,
+                 held: frozenset[str] = frozenset(),
                  c: int = 1, unhappy: float = 0.0, entertainers: float = 0.0,
                  units_supported: int = 0, num_cities: int = 1, cities: int = 0,
                  empire_size_base: float = 0.0, empire_size_step: float = 0.0,
@@ -151,8 +171,11 @@ def type_options(effects: list[tuple[str, int, str, str, str]], target: str, *,
     (`(эффект, величина, род цели, имя цели, охват)`).
     """
     total = 0.0
-    for effect, amount, _kind, name, _range in effects:
+    for row in effects:
+        effect, amount, name = row[0], row[1], row[3]
         if str(name) != str(target):
+            continue
+        if not requirements_met(row, held):
             continue
         value = effect_value(str(effect), int(amount), c=c, unhappy=unhappy,
                              entertainers=entertainers, units_supported=units_supported,
@@ -163,3 +186,142 @@ def type_options(effects: list[tuple[str, int, str, str, str]], target: str, *,
             UNKNOWN.add(str(effect))
         total += value
     return total
+
+
+# ── ЕГО ПРИОРИТЕТЫ ВЫХОДОВ (`server/advisors/advdata.c:492-512`) ─────────────────
+#: «Никогда не ставьте нули: веса обычно умножаются на эти значения» — его же слова.
+FOOD_PRIORITY = 30.0          # advdata.c:499 = FOOD_WEIGHTING (advbuilding.h)
+SHIELD_PRIORITY = 17.0        # advdata.c:500 = SHIELD_WEIGHTING
+SCIENCE_PRIORITY = 18.0 * 1.2  # advdata.c:503 = TRADE_WEIGHTING * 1.2
+LUXURY_PRIORITY_SCIENCE = 1.0  # advdata.c:502 (ветка «царство хочет науку»)
+LUXURY_PRIORITY_OTHER = 18.0   # advdata.c:505 (иначе роскошь тянет как торговля)
+SCIENCE_PRIORITY_OTHER = 1.0   # advdata.c:506
+GOLD_PRIORITY = 18.0          # advdata.c:508 = TRADE_WEIGHTING
+POLLUTION_PRIORITY = 20.0     # advdata.c:512 = POLLUTION_WEIGHTING
+HAPPY_PRIORITY = 1.0          # advdata.c:509
+UNHAPPY_PRIORITY = 18.0       # advdata.c:510 («опасность»)
+ANGRY_PRIORITY = 54.0         # advdata.c:511 («серьёзная опасность»)
+INFRA_PRIORITY = 13.5         # advdata.c:513 = INFRA_WEIGHTING = TRADE_WEIGHTING * 0.75
+
+
+def city_want(*, food: float, shields: float, science: float, gold: float,
+              luxury: float = 0.0, pollution: float = 0.0, tax_rate: float | None = None,
+              wants_science: bool = True) -> float:
+    """`dai_city_want` (`daicity.c:1496`) — хотение города по его весам.
+
+    Формула его, слагаемое в слагаемое:
+        еда × 30
+        щиты × 17 − загрязнение × 20   (только если щиты не нулевые)
+        роскошь × приоритет
+        наука × приоритет
+        золото × 18                    (при налоге > 50 — ещё × (налог − 40) / 14)
+
+    Приоритеты роскоши и науки зависят от его же ветки «царство хочет науку»
+    (`adv_wants_science`, `advdata.c:501`), поэтому они в параметре, а не в константе.
+    """
+    luxury_priority = LUXURY_PRIORITY_SCIENCE if wants_science else LUXURY_PRIORITY_OTHER
+    science_priority = SCIENCE_PRIORITY if wants_science else SCIENCE_PRIORITY_OTHER
+
+    want = float(food) * FOOD_PRIORITY
+    if float(shields) != 0.0:
+        want += float(shields) * SHIELD_PRIORITY - float(pollution) * POLLUTION_PRIORITY
+    want += float(luxury) * luxury_priority
+    want += float(science) * science_priority
+    if tax_rate is not None and float(tax_rate) > 50.0:
+        want += float(gold) * GOLD_PRIORITY * (float(tax_rate) - 40.0) / 14.0
+    else:
+        want += float(gold) * GOLD_PRIORITY
+    return want
+
+
+#: Семантика видов прироста — из `common/effects.h` (строки 48-56), не моя догадка:
+#:   Output_Add_Tile  — «добавить к КАЖДОЙ обрабатываемой клетке» (абсолют)
+#:   Output_Inc_Tile  — «добавить к каждой обрабатываемой клетке, где выход уже есть»
+#:   Output_Per_Tile  — «увеличить выход клетки на данный процент»
+#:   Output_Bonus     — процентный бонус к выходу города (он складывает их в
+#:                      `get_final_city_output_bonus`, `daicity.c:1459`)
+OUTPUT_PRIORITY: dict[str, str] = {
+    "Food": "food", "Shield": "shields", "Trade": "trade",
+    "Science": "science", "Gold": "gold", "Luxury": "luxury",
+}
+
+
+def output_delta(effects: list[tuple], target: str, *, prod: dict[str, float],
+                 worked_tiles: int) -> dict[str, float]:
+    """Прирост выходов от эффектов типа — по его семантике (`common/effects.h`).
+
+    `prod` — выходы города по видам (еда/щиты/торговля/наука/золото/роскошь). Значения
+    `Output_Per_Tile` и `Output_Bonus` — проценты, `Output_Add_Tile` — абсолют на клетку.
+    Виды, для которых нужен замер, которого у нас нет (`Output_Inc_Tile` — нужен выход
+    каждой клетки, `Output_Waste_*`, `Pollu_*`), в прирост не входят и попадают в `UNKNOWN`.
+    """
+    delta: dict[str, float] = {}
+    for row in effects:
+        if len(row) < 6:
+            continue
+        effect, amount, _kind, name, _range, output_kind = row[0], row[1], row[2], row[3], row[4], row[5]
+        if str(name) != str(target) or not output_kind:
+            continue
+        field = OUTPUT_PRIORITY.get(str(output_kind))
+        if field is None:
+            continue
+        if effect == "Output_Bonus":
+            delta[field] = delta.get(field, 0.0) + float(prod.get(field, 0.0)) * amount / 100.0
+        elif effect == "Output_Per_Tile":
+            # «увеличить выход клетки на N%»: суммарно — тот же процент от выхода города
+            delta[field] = delta.get(field, 0.0) + float(prod.get(field, 0.0)) * amount / 100.0
+        elif effect == "Output_Add_Tile":
+            delta[field] = delta.get(field, 0.0) + float(amount) * max(0, int(worked_tiles))
+        else:
+            UNKNOWN.add(str(effect))
+    return delta
+
+
+def improvement_value(effects: list[tuple], target: str, *, prod: dict[str, float],
+                      worked_tiles: int = 0, unhappy: float = 0.0,
+                      entertainers: float = 0.0, units_supported: int = 0,
+                      num_cities: int = 1, cities: int = 0,
+                      empire_size_base: float = 0.0, empire_size_step: float = 0.0,
+                      unhappy_free: bool = False, tax_rate: float | None = None,
+                      wants_science: bool = True,
+                      trade_split: tuple[float, float, float] | None = None,
+                      held: frozenset[str] = frozenset()) -> float:
+    """Ценность улучшения: прирост хотения города плюс ценность эффектов счастья.
+
+    Ровно так его `base_want` (`daicity.c:1495`) и устроен: «добавить постройку и сравнить
+    хотение города» (`dai_city_want`), а эффекты счастья он считает отдельно
+    (`dai_effect_value`). Обе половины — его.
+    """
+    effects = [row for row in effects if requirements_met(row, held)]
+    delta = output_delta(effects, target, prod=prod, worked_tiles=worked_tiles)
+    # ТОРГОВЛЯ у него не слагаемое: `dai_city_want` суммирует науку, золото и роскошь, а
+    # торговля делится между ними ставками. Ставки берём из самого города (отношения
+    # наблюдённых `science`/`prod_gold`/`luxury` к `prod_trade`), а не выдумываем; если их
+    # взять неоткуда — прирост торговли не засчитываем (и это видно в отчёте, а не в сумме).
+    if delta.get("trade"):
+        rates = trade_split
+        if not rates:
+            trade_amount = delta.pop("trade")
+            rendered_true = f"торговля +{trade_amount:.2f}"
+            NOTES.append(f"прирост торговли у «{target}» не оценён: нет ставок города "
+                         f"({rendered_true})")
+        else:
+            sci_rate, gold_rate, lux_rate = rates
+            trade_amount = delta.pop("trade")
+            delta["science"] = delta.get("science", 0.0) + trade_amount * sci_rate
+            delta["gold"] = delta.get("gold", 0.0) + trade_amount * gold_rate
+            delta["luxury"] = delta.get("luxury", 0.0) + trade_amount * lux_rate
+    base = city_want(food=delta.get("food", 0.0), shields=delta.get("shields", 0.0),
+                     science=delta.get("science", 0.0), gold=delta.get("gold", 0.0),
+                     luxury=delta.get("luxury", 0.0), tax_rate=tax_rate,
+                     wants_science=wants_science)
+    content = 0.0
+    for row in effects:
+        if len(row) < 6 or str(row[3]) != str(target):
+            continue
+        content += effect_value(str(row[0]), int(row[1]), c=1, unhappy=unhappy,
+                               entertainers=entertainers, units_supported=units_supported,
+                               num_cities=max(1, num_cities), cities=cities,
+                               empire_size_base=empire_size_base,
+                               empire_size_step=empire_size_step, unhappy_free=unhappy_free)
+    return base + content

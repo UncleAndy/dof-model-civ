@@ -134,9 +134,15 @@ def parse_buildings(text: str) -> dict[str, dict[str, object]]:
     return table
 
 
-def parse_effects(text: str) -> list[tuple[str, int, str, str, str]]:
-    """Эффекты мира: (эффект, величина, род цели, имя цели, охват)."""
-    out: list[tuple[str, int, str, str, str]] = []
+def parse_effects(text: str) -> list[tuple[str, int, str, str, str, str, str, tuple]]:
+    """Эффекты мира: (эффект, величина, род цели, имя цели, охват, ВИД ВЫХОДА, раздел).
+
+    Вид выхода (`OutputType`: Food/Shield/Trade/Gold/Luxury) нужен, чтобы приложить к эффекту
+    прироста вес его кода: `dai_city_want` (`daicity.c:1496`) считает хотение города как
+    `еда×30 + щиты×17 − загрязнение×20 + роскошь×1 + наука×18 + золото×18`. Без вида выхода
+    неизвестно, к какому слагаемому относится эффект.
+    """
+    out: list[tuple[str, int, str, str, str, str, str, tuple]] = []
     for name, body in sections(text):
         if not name.startswith("effect_"):
             continue
@@ -148,9 +154,24 @@ def parse_effects(text: str) -> list[tuple[str, int, str, str, str]]:
             amount = int(float(value))
         except ValueError:
             continue
-        for req_kind, req_name, req_range in reqs_targets(body):
-            if req_kind in ("Building", "Unit", "Extra", "Tech"):
-                out.append((_unquote(kind), amount, req_kind, req_name, req_range))
+        targets = reqs_targets(body)
+        output_kind = ""
+        for req_kind, req_name, _req_range in targets:
+            if req_kind == "OutputType":
+                output_kind = req_name
+        named = [(_unquote(req_name), req_kind)
+                 for req_kind, req_name, _req_range in targets
+                 if req_kind in ("Building", "Unit", "Extra", "Tech")]
+        for req_kind, req_name, req_range in targets:
+            if req_kind not in ("Building", "Unit", "Extra", "Tech"):
+                continue
+            target = _unquote(req_name)
+            # Требования эффекта, кроме самого адресата: у `[effect_oracle]` это ещё и
+            # `Building Oracle`, и без него эффект НЕ действует. Без этого поля ценность
+            # Храма завышалась бы (измерено: 3 раздела Make_Content, но третий — про Оракула).
+            requires = tuple(sorted(n for n, k in named if n != target))
+            out.append((_unquote(kind), amount, req_kind, target, req_range,
+                        output_kind, name, requires))
     return out
 
 
@@ -180,8 +201,10 @@ def main() -> None:
               "BUILDING_COST: dict[str, dict[str, object]] = {"]
     for name in sorted(buildings):
         lines.append(f"    {name!r}: {buildings[name]!r},")
-    lines += ["}", "", "#: эффекты мира: (эффект, величина, род цели, имя цели, охват)",
-              "EFFECTS: list[tuple[str, int, str, str, str]] = ["]
+    lines += ["}", "",
+              "#: эффекты мира: (эффект, величина, род цели, имя цели, охват, вид выхода,",
+              "#:                 раздел, требования — кроме самого адресата)",
+              "EFFECTS: list[tuple] = ["]
     for row in sorted(set(effects)):
         lines.append(f"    {row!r},")
     lines += ["]", "", "",
