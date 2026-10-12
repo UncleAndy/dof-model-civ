@@ -1811,6 +1811,12 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
                 found_value = max(found_value, value)
             reward = density * found_value
             _fog_cache["reward"] = reward
+            if os.environ.get("DOF_TRACE_FILTERS") == "1":
+                # Признак решения (§13.247): оба множителя и число годных площадок.
+                print(f"        [поселенец] юнит {unit_id}: площадок годных {len(good)} "
+                      f"из {len(window)} видимых, плотность {density:.3f}, "
+                      f"ценность основания {found_value:.4f}, цена шага {reward:.4f}",
+                      flush=True)
         if reward <= 0.0:
             goals[unit_id] = None
             return None
