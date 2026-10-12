@@ -77,7 +77,14 @@ def sign_test(wins: int, total: int) -> float:
 
 
 def report(category: str, limit: int, turn: int) -> None:
-    dirs = sorted((d for d in CHANNEL.iterdir() if d.is_dir()), key=lambda d: d.name)[-limit:]
+    """Отчёт по свежим партиям, но только по тем, что ДОЖИЛИ до среза.
+
+    Прежде брались просто `limit` самых свежих каталогов, и в выборку попадали чужие и
+    оборванные партии (по 1–7 ходов). Это дало ложную медиану −0.50 там, где честная
+    −3.00 (§13.239). Теперь каталог годится, только если его серия дотянула до среза.
+    """
+    dirs = sorted((d for d in CHANNEL.iterdir() if d.is_dir()), key=lambda d: d.name,
+                  reverse=True)
     picked: list[tuple[str, float, float, float, int]] = []
     for d in dirs:
         data = load(d)
@@ -87,8 +94,14 @@ def report(category: str, limit: int, turn: int) -> None:
         if got is None:
             continue
         ours, others, turns = got
+        if turns < turn:
+            # Партия не дожила до среза: её «разность» — не мера, а обрыв.
+            continue
         ai_median = median(others)
         picked.append((d.name, ours, ai_median, max(others), turns))
+        if len(picked) >= limit:
+            break
+    picked.reverse()
     if not picked:
         print(f"нет пригодных записей по категории {category}")
         return
