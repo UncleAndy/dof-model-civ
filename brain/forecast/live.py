@@ -103,6 +103,15 @@ class LiveContext:
     #: сам склад измеренных фактов — чтобы вызывающий мог ДОПИСАТЬ в него замер,
     #: сделанный в бою (постановка производства и чтение срока).
     facts: Any = None
+    #: Выбор постановки в городе — ЕГО числа без оценки DoF: city_id →
+    #: [(тип, опции, ходов)]. Открыт наружу, потому что стенд действия постановки
+    #: городу НЕ ПРЕДЛАГАЕТ вовсе (измерено §13.209: единственное городовое действие —
+    #: `city_unwork_*`), и путь без прогноза оставался без постановки: очередь
+    #: додерживала Warriors, войско копилось (8–16 при населении 2–4).
+    production_of: Any = None
+    #: Цена типа по имени — чтобы вызывающий сравнивал постановки ТОЙ ЖЕ мерой
+    #: (ценность с дисконтом γ^срок), а не своим коэффициентом.
+    type_price_of: Any = None
 
     def probe_action(self) -> tuple[str, str, str] | None:
         """Ход на замер: поставить неоцениваемый тип производства.
@@ -1632,4 +1641,5 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
                      "разрыв Дженсена, свободного веса нет")
     return LiveContext(state=state, vals=vals, my_id=my_id, notes=notes,
                        unpriced=unpriced, facts_summary=world.summary(),
-                       probe_offers=probe_offers, facts=world)
+                       probe_offers=probe_offers, facts=world,
+                       production_of=productions, type_price_of=type_price)

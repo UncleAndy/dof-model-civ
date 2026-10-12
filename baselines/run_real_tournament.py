@@ -400,6 +400,72 @@ def _hold_military_candidates(cands: list, obs: dict, my_id, military: set,
     return keep
 
 
+def _filters_trace() -> bool:
+    """Включён ли след общих правил (§13.209)."""
+    return os.environ.get("DOF_TRACE_FILTERS") == "1"
+
+
+def _production_candidate(obs: dict, info: dict, dof_state, extractor,
+                          type_names, military_names, gold) -> dict | None:
+    """Постановка города — ЕГО числами, без оценки DoF (§13.210).
+
+    Почему это нужно в общем пути: стенд действия постановки городу НЕ предлагает вовсе
+    (измерено §13.209 — единственное городовое действие `city_unwork_*`), поэтому до сих
+    пор постановку ставил ТОЛЬКО прогноз. Путь без прогноза очередь не ставил, она
+    додерживала `Warriors`, и сервер достраивал его снова: 8–16 военных при населении 2–4
+    (§13.207). Здесь берём ЕГО выбор (`live.build_context(...).production_of`, то есть его
+    правило `daicity.c:1860` с его весами) и синтезируем действие `produce_<имя>`;
+    сравнение — той же мерой, что у поиска (ценность с дисконтом `γ^срок`), своих
+    коэффициентов не вводим.
+
+    Если лучший выбор совпадает с тем, что уже стоит в очереди, кандидата нет: запущенное
+    идёт до конца (правило владельца §13.196).
+    """
+    try:
+        from brain.forecast import live as _live
+        from brain.forecast.search import FORECAST_GAMMA as _gamma
+    except Exception:  # noqa: BLE001
+        return None
+    try:
+        ctx = _live.build_context(obs, info, dof_state, extractor,
+                                  type_names=type_names or None,
+                                  military_names=military_names or None, gold=gold)
+    except Exception:  # noqa: BLE001
+        return None
+    if ctx is None or getattr(ctx, "production_of", None) is None:
+        if _filters_trace():
+            print("  [постановка] контекст не собран или выбор закрыт — пропуск", flush=True)
+        return None
+    cities = (obs or {}).get("city") or {}
+    for cid, rec in cities.items():
+        if not isinstance(rec, dict):
+            continue
+        try:
+            choices = ctx.production_of(str(cid)) or []
+        except Exception as _exc:  # noqa: BLE001
+            if _filters_trace():
+                print(f"  [постановка] город {cid}: выбор упал ({_exc!r})", flush=True)
+            continue
+        if _filters_trace():
+            print(f"  [постановка] город {cid}: годных предметов {len(choices)}; "
+                  f"в очереди {rec.get('production_value')!r}; лучшие "
+                  f"{[(c[0], round(float(c[1]), 3), c[2]) for c in sorted(choices, key=lambda c: float(c[1]) * (0.9747 ** float(c[2])), reverse=True)[:3]]}",
+                  flush=True)
+        if not choices:
+            continue
+        try:
+            current = (type_names or {}).get(int(rec.get("production_value")))
+        except (TypeError, ValueError):
+            current = None
+        best = max(choices, key=lambda c: float(c[1]) * (_gamma ** float(c[2])))
+        if current and str(best[0]) == str(current):
+            continue
+        return {"ctrl_type": "city", "actor_id": cid,
+                "action_name": f"produce_{best[0]}",
+                "projected_dof_delta": {}, "is_reversible": True}
+    return None
+
+
 def _apply_common_rules(cands: list, obs: dict, extractor, env_getter,
                         avail=None) -> list:
     """ОБЩИЕ правила, обязательные для любого решателя (§13.206–13.208).
@@ -2091,7 +2157,22 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                     # САМУ ИГРУ (основание городов, рост, производство) от наших
                     # надстроек: пока игра не идёт не хуже его, индекс накладывать не на что.
                     descore = _apply_common_rules(
-                        gen.generate_candidates(dof.state, avail), obs, extractor, env_getter, avail)
+                        gen.generate_candidates(dof.state, avail), obs, extractor,
+                        env_getter, avail)
+                    # §13.210: постановку в городе ставим МЫ — стенд этого действия не
+                    # предлагает вовсе (§13.209), и без него очередь додерживала Warriors.
+                    _prod = _production_candidate(
+                        obs, info, dof.state, extractor,
+                        _production_names(env_getter())
+                        if env_getter is not None else None,
+                        _military_type_names(env_getter())
+                        if env_getter is not None else None,
+                        _gold_of(obs, extractor))
+                    if _prod is not None:
+                        if os.environ.get("DOF_TRACE_FILTERS") == "1":
+                            print(f"  [постановка] отправляю {_prod['action_name']} "
+                                  f"городу {_prod['actor_id']}", flush=True)
+                        return _to_action(_prod)
                     if descore:
                         _pick = max(descore,
                                     key=lambda c: (gen._preference_score(c),
