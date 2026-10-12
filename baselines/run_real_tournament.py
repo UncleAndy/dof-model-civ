@@ -2021,6 +2021,10 @@ def _forecast_decide(obs, info, dof, extractor, avail, *, type_names=None,
             _UNIT_TRACE_TURNS.add(_tn)
             _my_id = getattr(extractor, "my_player_id", None)
             _counts: dict[str, int] = {}
+            # Путь поселенцев — для объявленного замера (§13.244). Объявлять ДО цикла:
+            # первая редакция стояла после него, и прогоны падали `UnboundLocalError`
+            # (поймал привратник годности серии, §13.245).
+            _walk: list[str] = []
             _units_seen = 0
             for _u in as_dict(obs.get("unit")).values():
                 if not isinstance(_u, dict):
@@ -2035,7 +2039,6 @@ def _forecast_decide(obs, info, dof, extractor, avail, *, type_names=None,
                     # Объявленный замер (§13.244-13.245): поселенец достраивается, а город не
                     # основывает — значит нужно видеть его ПУТЬ, а не только наличие.
                     _walk.append(f"{_tname}@{_u.get('x')},{_u.get('y')}")
-            _walk: list[str] = []
             _cities = [c for c in as_dict(obs.get("city")).values()
                        if isinstance(c, dict)
                        and (_my_id is None or str(c.get("owner")) == str(_my_id))]
