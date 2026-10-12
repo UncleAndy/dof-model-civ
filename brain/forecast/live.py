@@ -976,7 +976,7 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
             except Exception:  # noqa: BLE001
                 continue
             own = after - before
-            if sign < 0.0:
+            if sign < 0.0 and values.get("CITY_TILE_PAIR", _cfg.CITY_TILE_PAIR):
                 # §13.180: «снять жителя» — только ПЕРВЫЙ шаг пары (снять и поставить
                 # на другую клетку). Сам по себе он убыточен, и правило строгого
                 # улучшения его не делает, поэтому горожане не переставляются вовсе.
