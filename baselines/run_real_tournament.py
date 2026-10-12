@@ -2036,7 +2036,9 @@ def _forecast_decide(obs, info, dof, extractor, avail, *, type_names=None,
                     continue
                 _tname = str(_u.get("type_rule_name") or _u.get("type") or "?")
                 _counts[_tname] = _counts.get(_tname, 0) + 1
-                if "Settler" in _tname or "Engineer" in _tname:
+                if "Settler" in _tname or "Engineer" in _tname or "Worker" in _tname:
+                    # Рабочие добавлены §13.255: без них не видно, предлагает ли стенд работу
+                    # (`irrigate`/`mine`/`build_road`) и что мы из этого выбираем.
                     # Объявленный замер (§13.244-13.246): ПОСТРОЕННЫЙ поселенец стоит на месте.
                     # Нужен не только путь, но и РЕШЕНИЕ: что предлагал стенд и что выбрали —
                     # иначе «хода нет» и «хода не было в предложении» неразличимы.
@@ -2054,9 +2056,15 @@ def _forecast_decide(obs, info, dof, extractor, avail, *, type_names=None,
                                     if any(k in str(n) for k in ("goto", "found", "build",
                                                                  "city", "fortify", "irrigate",
                                                                  "mine", "road"))]
+                    # Работы по клетке — отдельным перечнем (§13.255): общий список режется
+                    # по алфавиту, и `irrigate`/`mine` в первые десять не попадают.
+                    _works = [n for n in _all_names
+                              if any(k in str(n) for k in ("irrigate", "mine", "road",
+                                                           "cultivate", "plant", "fortif"))]
                     _walk.append(f"{_tname}#{_uid}@{_u.get('x')},{_u.get('y')} "
                                  f"предложено {len(_all_names)}, ходовых "
-                                 f"{len(_interesting)}: {_interesting[:10]}")
+                                 f"{len(_interesting)}: {_interesting[:10]} "
+                                 f"работы {len(_works)}: {_works[:8]}")
             _cities = [c for c in as_dict(obs.get("city")).values()
                        if isinstance(c, dict)
                        and (_my_id is None or str(c.get("owner")) == str(_my_id))]
