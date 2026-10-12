@@ -107,6 +107,11 @@ def _parse_cli(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--no-forecast", dest="forecast", action="store_false",
                         help="прежний путь: ядро оценивает один шаг по сегодняшнему "
                              "меню (для сравнения, а не для результатов)")
+    parser.add_argument("--tile-every-turn", dest="tile_every_turn",
+                        action="store_true", default=False,
+                        help="подавать приказ по клетке КАЖДЫЙ ход: наш приказ живёт один ход "
+                             "(управляющий сервера перекрывает его, §13.234), но именно он даёт "
+                             "прирост еды (§13.235: без приказов городов 0–1 вместо 2–3)")
     parser.add_argument("--no-tile-actions", dest="no_tile_actions",
                         action="store_true", default=False,
                         help="не тратить ходы на клетки: раскладку жителей выбирает "
@@ -2040,11 +2045,43 @@ def _forecast_decide(obs, info, dof, extractor, avail, *, type_names=None,
         from brain.forecast import choose
         from brain.forecast.live import _player_record, build_context
 
+        _tile_first = None
         ctx = build_context(obs, info, dof, extractor,
                             exclude_actors=set(_USED_ACTORS[0])
                             if _USED_ACTORS else None,
                             type_names=type_names,
                             military_names=military_names, gold=gold)
+        if getattr(ARGS, "tile_every_turn", False):
+            # Приказ по клетке живёт ОДИН ход — управляющий сервера перекрывает его на
+            # следующем обновлении города (§13.234), но именно наш приказ даёт прирост еды, а
+            # раскладка мира даёт ноль (§13.235: без приказов 0–1 город против 2–3). Значит
+            # приказ надо подавать КАЖДЫЙ ход, а не только когда мир оставил жителя без работы.
+            try:
+                # Города и клетки живут в `vals` (Valuations), а не в самом контексте:
+                # `ctx.city_ids` такого поля нет — ветвь падала 126 раз и не исполнялась
+                # вовсе (измерено следом: `AttributeError: 'LiveContext' object has no
+                # attribute 'city_ids'`). «Эффекта нет» и «ветвь не исполняется» снова
+                # оказались неразличимы без следа.
+                _vals = getattr(ctx, "vals", None)
+                for _cid in ((_vals.city_ids() if _vals is not None else []) or []):
+                    for _a, _g in ((_vals.tiles(_cid) if _vals is not None else []) or []):
+                        if _g and float(_g) > 0 and (_tile_first is None
+                                                     or float(_g) > _tile_first[1]):
+                            _tile_first = (("city", _cid, str(_a)), float(_g))
+            except Exception as _exc:  # noqa: BLE001 - не рушим матч диагностикой
+                print(f"        [клетка каждый ход] сбой: {type(_exc).__name__}: {_exc}",
+                      flush=True)
+                _tile_first = None
+            if _tile_first is not None:
+                _wire_t = _to_wire_action(_tile_first[0], avail)
+                if _wire_t is not None:
+                    if os.environ.get("DOF_TRACE_FILTERS") == "1":
+                        print(f"        [клетка каждый ход] {_tile_first[0][2]} "
+                              f"(город {_tile_first[0][1]}, прирост {_tile_first[1]:.2f})",
+                              flush=True)
+                    _FORECAST_STATS["tile_every_turn"] = (
+                        _FORECAST_STATS.get("tile_every_turn", 0) + 1)
+                    return True, _wire_t
         if ARGS.dump_candidates and len(_BUY_DIAG_PRINTED) < 4:
             rec = {}
             for city in (obs.get("city") or {}).values():
