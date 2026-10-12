@@ -1928,3 +1928,56 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
                        unpriced=unpriced, facts_summary=world.summary(),
                        probe_offers=probe_offers, facts=world,
                        production_of=productions, type_price_of=type_price)
+
+def worker_work_choice(obs, info, extractor, my_id):
+    """Лучшая работа рабочего с ненулевой выгодой: `('unit', ключ, действие)` или None (§13.259).
+
+    Почему отдельным решением. У встроенного ИИ (`autoworkers.c`) работа по клетке — самостоятельный
+    вопрос, а не кандидат в общем списке: его рабочий не соревнуется с производством города. У нас
+    общая куча кандидатов, и там работа проигрывала ходу на два порядка (измерено §13.259), хотя
+    выгода по числам мира ненулевая. Здесь она берётся так, как её берёт он: есть работа с выгодой
+    больше нуля — рабочий её делает.
+
+    Кто может работать — решает ПРЕДЛОЖЕНИЕ мира (`available_actions`), а не наш признак типа
+    (§13.177). Выгода — из измеренного пути, который адресует её городу формулой города; ноль
+    остаётся нулём и действием не становится.
+    """
+    from env.terrain_work import WORK_ACTION_EXTRA
+
+    try:
+        units = as_dict(obs.get("unit"))
+    except Exception:  # noqa: BLE001
+        return None
+    workers = []
+    for ukey, u in units.items():
+        if not isinstance(u, dict):
+            continue
+        if my_id is not None and u.get("owner") is not None \
+                and str(u.get("owner")) != str(my_id):
+            continue
+        tname = str(u.get("type_rule_name") or u.get("type") or "")
+        if "Worker" in tname or "Engineer" in tname:
+            workers.append(ukey)
+    if not workers:
+        return None
+
+    try:
+        bridge = extractor.extract(obs, info, 1).state.bridge
+    except Exception:  # noqa: BLE001
+        return None
+    gains = getattr(bridge, "terrain_work_gain_by_unit", {}) or {}
+    offered_map = as_dict(as_dict(info.get("available_actions")).get("unit"))
+
+    best: tuple[float, tuple[str, str, str]] | None = None
+    for ukey in workers:
+        uid = ukey.split("_", 1)[1] if "_" in str(ukey) else str(ukey)
+        acts = as_dict(offered_map.get(int(uid)) if str(uid).isdigit() else None) \
+            or as_dict(offered_map.get(str(uid))) or as_dict(offered_map.get(str(ukey)))
+        per_unit = gains.get(ukey, {}) or {}
+        for action, extra in WORK_ACTION_EXTRA.items():
+            if not acts.get(action):
+                continue
+            value = float(per_unit.get(extra, 0.0) or 0.0)
+            if value > 0.0 and (best is None or value > best[0]):
+                best = (value, ("unit", str(ukey), str(action)))
+    return best[1] if best else None

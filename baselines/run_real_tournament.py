@@ -118,6 +118,9 @@ def _parse_cli(argv: list[str]) -> argparse.Namespace:
                         help="сказать городскому управляющему СЕРВЕРА наши требования "
                              "(PACKET_WEB_CMA_SET 257): раскладку жителей выбирает он, и без "
                              "наших требований берёт умолчание (§13.237)")
+    parser.add_argument("--no-worker-work", dest="worker_work", action="store_false",
+                        default=True,
+                        help="выключить отдельное решение рабочего (§13.259) — сверочная ветвь")
     parser.add_argument("--no-tile-actions", dest="no_tile_actions",
                         action="store_true", default=False,
                         help="не тратить ходы на клетки: раскладку жителей выбирает "
@@ -2010,6 +2013,28 @@ def _forecast_decide(obs, info, dof, extractor, avail, *, type_names=None,
     """
     if not ARGS.forecast:
         return False, None
+    # Отдельное решение рабочего (§13.259): как у встроенного ИИ, работа по клетке не соревнуется
+    # с ходом и производством города. Признак печатается — иначе «работы не было» и «решение не
+    # подключено» неразличимы.
+    if getattr(ARGS, "worker_work", True):
+        try:
+            from brain.forecast import live as _flive  # локально: модуль импортируют и в других местах
+            _ww = _flive.worker_work_choice(obs, info, extractor,
+                                            getattr(extractor, "my_player_id", None))
+        except Exception as _exc:  # noqa: BLE001 - не рушим матч диагностикой
+            _ww = None
+            if os.environ.get("DOF_TRACE_FILTERS") == "1":
+                print(f"        [рабочий] сбой решения: {type(_exc).__name__}: {_exc}", flush=True)
+        if _ww is not None:
+            _FORECAST_STATS["worker_work"] = _FORECAST_STATS.get("worker_work", 0) + 1
+            try:
+                _wtn = int((info or {}).get("turn") or (info or {}).get("turn_played") or -1)
+            except (TypeError, ValueError):
+                _wtn = -1
+            if os.environ.get("DOF_TRACE_FILTERS") == "1":
+                print(f"        [прогноз] отправляю (ход {_wtn}) работа: {_ww[2]} "
+                      f"(актёр {_ww[1]})", flush=True)
+            return True, _ww
     if os.environ.get("DOF_TRACE_UNITS") == "1":
         # Покадровый состав: без него нельзя ответить, достраивается ли предмет
         # (например `Settlers`) и что делает вышедший поселенец. Дамп состояния для
