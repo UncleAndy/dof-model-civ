@@ -4,7 +4,7 @@ from __future__ import annotations
 import pathlib
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-CAL = ROOT / "DOF_CALIBRATION.md"
+CAL = ROOT / "drafts" / "DOF_CALIBRATION.md"
 
 SECTION = """## 13.251. База знаний по игре и по коду — и первая находка из неё
 
