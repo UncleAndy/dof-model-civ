@@ -63,6 +63,11 @@ DIR_DY = (-1, -1, -1, 0, 0, 1, 1, 1)
 _POP_SKIP_SEEN: set = set()
 
 
+#: Размер города, при котором постановка была выбрана: `{город: размер}`. Нужен, чтобы рост
+#: города был ИСКЛЮЧИТЕЛЬНЫМ поводом пересмотреть постановку (§13.242), а не дёрганием.
+_PROD_SIZE_AT_CHOICE: dict = {}
+
+
 def _pop_cost(type_name: str) -> int:
     """Сколько населения забирает юнит — свойство МИРА (`classic/units.ruleset`).
 
@@ -988,7 +993,17 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
                           + ", ".join(f"{n} {v:.4f} за {t:.0f} ход. (с диск. "
                                       f"{v * (_gamma ** t):.4f})" for n, v, t in _top),
                           flush=True)
-                if military and need_defender and current_name not in military:
+                _size_now = int(_num(rec.get("size"), 1))
+                _size_then = _PROD_SIZE_AT_CHOICE.get(str(city_id), _size_now)
+                if _size_now != _size_then:
+                    # Рост города — исключительный повод: при размере 1 мир НЕ доводит юнит,
+                    # забирающий население (`pop_cost`, §13.239-13.240), поэтому поселенец
+                    # становится возможен только теперь. Без этого повода удержание (§13.196)
+                    # запирало город на том, что он начал в размере 1: измерено — наши города
+                    # доходили до 2-3 и дальше не росли, у встроенного 5-7 (§13.242).
+                    _exception = (f"город вырос {_size_then}→{_size_now} — пересматриваем "
+                                  f"постановку (поселенец стал доводим)")
+                elif military and need_defender and current_name not in military:
                     _exception = "рядом опасность — переходим на защитника"
                 elif military and current_name in military and not need_defender:
                     _exception = "в очереди ненужное войско — освобождаем очередь (§13.170)"
@@ -1023,6 +1038,7 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
                                          "(§13.196): запущенное идёт до конца (кандидата на "
                                          "текущий предмет в списке нет — не меняем)")
                         out = []
+        _PROD_SIZE_AT_CHOICE[str(city_id)] = int(_num(rec.get("size"), 1))
         return out
 
     player = _player_record(obs, my_id)
