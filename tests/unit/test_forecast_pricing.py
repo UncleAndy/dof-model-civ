@@ -59,8 +59,13 @@ def _settler(x=2, y=2):
                   "type_hp": 20, "health": 20}}
 
 
-def _city(shield_stock=3, prod_shield=3):
-    return {"121": {"id": 121, "owner": 0, "x": 2, "y": 2, "size": 1,
+def _city(shield_stock=3, prod_shield=3, size=1):
+    # Размер города — отдельная ручка. Мир ЗАПРЕЩАЕТ ставить юнит, чей `pop_cost` не меньше
+    # размера города (`Settlers` → 1, `classic/units.ruleset`), и правило §13.239 это
+    # повторяет. Поэтому проверки, где поселенец обязан быть среди кандидатов, строят город
+    # размера 2; остальные оставляют 1 — иначе их числа (цена улучшения зависит от размера)
+    # поехали бы молча.
+    return {"121": {"id": 121, "owner": 0, "x": 2, "y": 2, "size": size,
                     "shield_stock": shield_stock, "prod_shield": prod_shield}}
 
 
@@ -68,11 +73,11 @@ def _city(shield_stock=3, prod_shield=3):
 
 class TestProductionPricing:
     def _context(self, *, offered, facts=None, dof_units=(), obs_units=None,
-                 improvements=None, type_names=None, military_names=None):
+                 improvements=None, type_names=None, military_names=None, city_size=1):
         info_dict = {"available_actions": {
             "city": {"121": {"produce_Settlers": True, **offered}},
             "unit": {}, "tech": {}}}
-        return build_context(_obs(city=_city(), units=obs_units or _settler()),
+        return build_context(_obs(city=_city(size=city_size), units=obs_units or _settler()),
                             info_dict,
                             _dof_state(units=dof_units, improvements=improvements),
                             _extractor(),
@@ -94,7 +99,8 @@ class TestProductionPricing:
         city = _city()
         city["121"]["production_value"] = 0
         ctx = self._context(offered={"produce_Warriors": True}, obs_units=warrior,
-                            type_names={0: "Warriors"}, military_names={"Warriors"})
+                            type_names={0: "Warriors"}, military_names={"Warriors"},
+                            city_size=2)
         priced = ctx.vals.productions("city_121")   # здесь и падало NameError
         names = [name for name, _o, _t in priced]
         assert isinstance(priced, list)
@@ -104,9 +110,27 @@ class TestProductionPricing:
         assert "Warriors" not in names
         assert "Settlers" in names
 
+    def test_a_size_one_city_is_not_offered_a_population_cost_unit(self):
+        """Мир запрещает ставить юнит, чей `pop_cost` не меньше размера города.
+
+        `Settlers` забирает 1 население (`classic/units.ruleset`, прочитано в
+        `env.rules_costs.UNIT_STATS`), значит город размера 1 его не доведёт — и держать на
+        нём очередь значит стоять мёртвым ходом (§13.231: `до готовности 1` десятки ходов,
+        §13.239: ни одного нового города за 26 ходов). Правило введено §13.239; этот сторож
+        обязан упасть, если его уберут.
+        """
+        small = self._context(offered={}, city_size=1).vals.productions("city_121")
+        assert "Settlers" not in [name for name, _o, _t in small], (
+            "город размера 1 снова предлагает поселенца — правило §13.239 убрано"
+        )
+        big = self._context(offered={}, city_size=2).vals.productions("city_121")
+        assert "Settlers" in [name for name, _o, _t in big], (
+            "город размера 2 обязан видеть поселенца: иначе правило режет лишнее"
+        )
+
     def test_turns_come_from_the_world_numbers(self):
         """Живой юнит даёт и опции, и стоимость: срок = ceil((40−3)/3) = 13."""
-        ctx = self._context(offered={})
+        ctx = self._context(offered={}, city_size=2)
         priced = ctx.vals.productions("city_121")
         assert [name for name, _o, _t in priced] == ["Settlers"]
         option_count, turns = priced[0][1], priced[0][2]
@@ -232,7 +256,8 @@ class TestProductionPricing:
         только по `type_rule_name`. Пока ключ смотрел на `rule_name`, живые типы
         оставались без цены и производство не предлагалось вовсе.
         """
-        ctx = self._context(offered={}, dof_units={})   # каталог пуст намеренно
+        ctx = self._context(offered={}, dof_units={}, city_size=2)
+        # размер 2: поселенец обязан дойти до списка кандидатов (§13.239)
         priced = ctx.vals.productions("city_121")
         assert [name for name, _o, _t in priced] == ["Settlers"]
         assert ctx.unpriced == set()
@@ -249,12 +274,12 @@ class TestProductionPricing:
         info_dict = {"available_actions": {"city": {"121": {"produce_Settlers": True}},
                                            "unit": {}, "tech": {}}}
         # Первый ход: поселенец жив — тип опознан, оба числа попали в склад.
-        alive = build_context(_obs(city=_city(), units=_settler()), info_dict,
+        alive = build_context(_obs(city=_city(size=2), units=_settler()), info_dict,
                               _dof_state(), _extractor(), world_model=facts)
         assert alive.vals.productions("city_121"), "живой тип не оценён"
 
         # Второй ход: поселенца уже нет (основал город) — цена должна остаться.
-        gone = build_context(_obs(city=_city(), units={}), info_dict,
+        gone = build_context(_obs(city=_city(size=2), units={}), info_dict,
                              _dof_state(), _extractor(), world_model=facts)
         priced = gone.vals.productions("city_121")
         assert [name for name, _o, _t in priced] == ["Settlers"]

@@ -59,6 +59,32 @@ DIR_DX = (-1, 0, 1, -1, 1, -1, 0, 1)
 DIR_DY = (-1, -1, -1, 0, 0, 1, 1, 1)
 
 
+#: Что мы уже сказали про заведомо мёртвые постановки — чтобы признак был виден один раз.
+_POP_SKIP_SEEN: set = set()
+
+
+def _pop_cost(type_name: str) -> int:
+    """Сколько населения забирает юнит — свойство МИРА (`classic/units.ruleset`).
+
+    Прочитано `scripts/read_rules_costs.py` в `env.rules_costs.UNIT_STATS` (`Settlers` → 1).
+    Незнание не превращаем в запрет: нет данных — 0.
+    """
+    try:
+        from env.rules_costs import UNIT_STATS
+    except Exception:  # noqa: BLE001
+        return 0
+    return int((UNIT_STATS.get(str(type_name)) or {}).get("pop_cost") or 0)
+
+
+def _note_pop_skip(city_id: str, type_name: str) -> None:
+    """След признака: «эффекта нет» и «правило не подключено» иначе не различить."""
+    key = (str(city_id), str(type_name))
+    if key not in _POP_SKIP_SEEN:
+        _POP_SKIP_SEEN.add(key)
+        print(f"        [постановка] город {city_id}: {type_name} не доводится "
+              f"(населения не больше, чем забирает) — не ставим", flush=True)
+
+
 def direction_target(pos: tuple[int, int], dir8: int,
                      shape: tuple[int, int] | None) -> tuple[int, int] | None:
     """Клетка, на которую встанет юнит, выполнив `goto_<dir8>`, или None.
@@ -833,6 +859,13 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
                 continue
             type_name = name[len("produce_"):]
             if allowed_types is not None and type_name not in allowed_types:
+                continue
+            # Юнит, забирающий население, в городе, где населения ровно столько же, НЕ
+            # доводится: мир держит такую постановку до роста города (§13.231: `Settlers … до
+            # готовности 1` десятки ходов). Ставить его — заведомо мёртвый ход, и он запирал
+            # очередь поселенцев (§13.239: ни одного нового города за 26 ходов).
+            if _pop_cost(type_name) and int(_num(rec.get("size"), 1)) <= _pop_cost(type_name):
+                _note_pop_skip(city_id, type_name)
                 continue
             # Улучшения — ОТДЕЛЬНОЕ семейство (`improvements`): они не создают
             # сущность, а растут опциями города. Здесь пропускаются, иначе одно и
