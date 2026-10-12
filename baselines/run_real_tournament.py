@@ -421,16 +421,22 @@ def _production_candidate(obs: dict, info: dict, dof_state, extractor,
     Если лучший выбор совпадает с тем, что уже стоит в очереди, кандидата нет: запущенное
     идёт до конца (правило владельца §13.196).
     """
+    if _filters_trace():
+        print("  [постановка] вызов: строю выбор постановки", flush=True)
     try:
         from brain.forecast import live as _live
         from brain.forecast.search import FORECAST_GAMMA as _gamma
-    except Exception:  # noqa: BLE001
+    except Exception as _exc:  # noqa: BLE001
+        if _filters_trace():
+            print(f"  [постановка] импорт прогноза упал: {type(_exc).__name__}: {_exc}", flush=True)
         return None
     try:
         ctx = _live.build_context(obs, info, dof_state, extractor,
                                   type_names=type_names or None,
                                   military_names=military_names or None, gold=gold)
-    except Exception:  # noqa: BLE001
+    except Exception as _exc:  # noqa: BLE001
+        if _filters_trace():
+            print(f"  [постановка] сбор контекста упал: {type(_exc).__name__}: {_exc}", flush=True)
         return None
     if ctx is None or getattr(ctx, "production_of", None) is None:
         if _filters_trace():
@@ -440,28 +446,57 @@ def _production_candidate(obs: dict, info: dict, dof_state, extractor,
     for cid, rec in cities.items():
         if not isinstance(rec, dict):
             continue
+        # §13.212 (указание 1): кандидаты берём из МАСОК САМОГО ГОРОДА, а не из предложения
+        # стенда: постановку стенд не предлагает вовсе (§13.209), а маски он публикует и по
+        # ним же проверяет приказ. Функция та же, что у прогноза, — правило одно.
         try:
-            choices = ctx.production_of(str(cid)) or []
-        except Exception as _exc:  # noqa: BLE001
-            if _filters_trace():
-                print(f"  [постановка] город {cid}: выбор упал ({_exc!r})", flush=True)
-            continue
-        if _filters_trace():
-            print(f"  [постановка] город {cid}: годных предметов {len(choices)}; "
-                  f"в очереди {rec.get('production_value')!r}; лучшие "
-                  f"{[(c[0], round(float(c[1]), 3), c[2]) for c in sorted(choices, key=lambda c: float(c[1]) * (0.9747 ** float(c[2])), reverse=True)[:3]]}",
-                  flush=True)
-        if not choices:
+            allowed = _live._allowed_production_types(rec, type_names)
+        except Exception:  # noqa: BLE001
+            allowed = None
+        if allowed is None:
+            # Масок нет — это «незнание», а не запрет (правило проекта: «незнание ≠
+            # отсутствие возможностей»). Тогда берём ВЕСЬ каталог имён: отбор сделает цена —
+            # без цены тип не предлагается, а выдумывать её мы не будем.
+            allowed = {str(n) for n in (type_names or {}).values() if n}
+        if not allowed:
             continue
         try:
             current = (type_names or {}).get(int(rec.get("production_value")))
         except (TypeError, ValueError):
             current = None
-        best = max(choices, key=lambda c: float(c[1]) * (_gamma ** float(c[2])))
-        if current and str(best[0]) == str(current):
+        shields = float(rec.get("prod_shield") or 0.0)
+        if shields <= 0.0:
             continue
+        stock = float(rec.get("shield_stock") or 0.0)
+        best: tuple[float, str, int] | None = None
+        for name in sorted(allowed):
+            got = None
+            if getattr(ctx, "type_price_of", None) is not None:
+                try:
+                    got = ctx.type_price_of(str(name))
+                except Exception:  # noqa: BLE001
+                    got = None
+            if got is None:
+                continue
+            options, cost = float(got[0]), float(got[1])
+            own_stock = stock if (current is None or str(current) == str(name)) else 0.0
+            turns = max(1, int(math.ceil(max(0.0, cost - own_stock) / shields)))
+            value = options * (_gamma ** turns)
+            if best is None or value > best[0]:
+                best = (value, str(name), turns)
+        if best is None:
+            if _filters_trace():
+                print(f"  [постановка] город {cid}: маски дали {len(allowed)} типов, "
+                      f"ни один не оценён — постановку не меняем", flush=True)
+            continue
+        if _filters_trace():
+            print(f"  [постановка] город {cid}: маски {len(allowed)} типов; лучший "
+                  f"{best[1]} (ценность {best[0]:.3f} за {best[2]} ход.); в очереди "
+                  f"{current!r}", flush=True)
+        if current and best[1] == str(current):
+            continue          # повода менять нет: запущенное идёт до конца (§13.196)
         return {"ctrl_type": "city", "actor_id": cid,
-                "action_name": f"produce_{best[0]}",
+                "action_name": f"produce_{best[1]}",
                 "projected_dof_delta": {}, "is_reversible": True}
     return None
 
@@ -502,6 +537,10 @@ def _apply_common_rules(cands: list, obs: dict, extractor, env_getter,
               f"{sorted({str((_to_action(c) or ('?','',''))[0]) for c in cands})}; "
               f"стенд предложил городу "
               f"{sum(len(v) for k, v in (avail or {}).items() if str(k) in ('city', 'city_ctrl') and isinstance(v, dict))}; "
+              f"все имена с 'produc' в предложении "
+              f"{[str(a) for v in (avail or {}).values() if isinstance(v, dict) for acts in v.values() if isinstance(acts, dict) for a in acts.keys() if 'produc' in str(a)][:5]}; "
+              f"действий у города всего "
+              f"{[str(a) for v in (avail or {}).values() if isinstance(v, dict) for acts in v.values() if isinstance(acts, dict) for a in acts.keys() if str(a).startswith('city_')][:5]}; "
               f"имена городовых кандидатов "
               f"{[str((_to_action(c) or ('','',''))[2]) for c in cands if str((_to_action(c) or ('','',''))[0]) == 'city'][:3]}"
               f" / в предложении стенда "

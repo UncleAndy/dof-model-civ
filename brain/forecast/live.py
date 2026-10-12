@@ -179,6 +179,35 @@ def _allowed_production_types(rec: dict, type_names: dict | None = None) -> set[
     return out
 
 
+def _effects_price(name: str, city_rec: dict, city_records: dict) -> tuple[float, float] | None:
+    """(ценность, цена) типа из ЕГО оценки эффектов и правил мира.
+
+    Указание владельца: «код встроенного ИИ — это тоже наблюдение, можно использовать
+    значения из него и сохранить их в картине мира»; цена — характеристика мира, её
+    достаточно прочитать из правил (`scripts/read_rules_costs.py`).
+
+    Только УЛУЧШЕНИЯ: юнит он оценивает иначе (боевые характеристики, `daimilitary.c`), и
+    этот порт ещё не сделан. Недовольные города берём из наблюдения (`ppl_unhappy`,
+    `ppl_angry`) — в его `feel[CITIZEN_UNHAPPY]` входят и обозлённые.
+    """
+    try:
+        from brain.ai_default import effects as _fx
+        from env.rules_costs import EFFECTS as _world_effects, build_cost_of as _rules_cost
+    except Exception:  # noqa: BLE001
+        return None
+    cost = _rules_cost(name)
+    if cost is None:
+        return None
+    unhappy = _num((city_rec or {}).get("ppl_unhappy"), 0.0) \
+        + _num((city_rec or {}).get("ppl_angry"), 0.0)
+    cities = len([1 for row in (city_records or {}).values() if isinstance(row, dict)])
+    options = _fx.type_options(_world_effects, name, c=1, unhappy=unhappy,
+                               num_cities=max(1, cities), cities=cities)
+    if options <= 0.0:
+        return None
+    return float(options), float(cost)
+
+
 def _mask_len(value: Any) -> str:
     """Длина маски мира для следа: «—», если её нет (незнание ≠ пустая маска)."""
     if isinstance(value, (list, tuple)):
@@ -738,6 +767,12 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
                 if surplus_food < upkeep_food:
                     continue
             priced = type_price(type_name)
+            if priced is None:
+                # Второй законный источник ценности — ЕГО оценка эффектов этого типа
+                # (указание владельца: код встроенного ИИ тоже наблюдение). Для улучшений
+                # она даёт ценность без проб; юниты он оценивает иначе, их этот источник
+                # не покрывает.
+                priced = _effects_price(type_name, rec, city_records)
             if priced is None:
                 unpriced.add(type_name)
                 # Запоминаем предложение для самозамера — но ТОЛЬКО если тип
