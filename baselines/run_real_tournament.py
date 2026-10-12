@@ -1923,6 +1923,16 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                                       "; индекс, прогноз и вето ядра выключены (§13.204)",
                                       flush=True)
                             return _wire
+                    # Строгость режима: если предпочтение не выбрало ничего, ход всё
+                    # равно не пропускается (§13.203), но идёт он ОБРАТИМЫМ действием
+                    # из предложенных, а НЕ через прогноз: иначе «без DoF» мерился бы
+                    # вместе с DoF, и базовая линия владельца была бы не базовой.
+                    _fall = [c for c in descore if c.get("is_reversible")] or descore
+                    if _fall:
+                        _wire = _to_action(max(_fall, key=gen._preference_score))
+                        if _wire is not None:
+                            return _wire
+                    return None
 
                 decided, wire = _forecast_decide(
                     obs, info, dof, extractor, avail,
