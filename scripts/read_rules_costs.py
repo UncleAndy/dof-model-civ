@@ -154,9 +154,12 @@ def parse_buildings(text: str) -> dict[str, dict[str, object]]:
     for name, body in sections(text):
         if not name.startswith("building_"):
             continue
-        genus = scalar(body, "genus")
-        if genus and _unquote(genus) not in ("Improvement", "Special", "Wonder"):
-            continue
+        # Фильтра по роду НЕТ, и это исправление, а не послабление: здесь стоял белый
+        # список ("Improvement", "Special", "Wonder"), составленный мной по догадке, а
+        # правила мира говорят `GreatWonder` и `SmallWonder`. Из-за догадки из 68 построек
+        # в таблицу попадали 38 — молча пропадали все 28 великих чудес и малое чудо
+        # (`Colossus` с ценой 100 среди них). Молчаливый отбор мира — это потеря картины
+        # мира; род теперь ПИШЕТСЯ, а решает по нему тот, кто оценивает.
         row: dict[str, object] = {}
         for key in BUILDING_KEYS:
             raw = scalar(body, key)

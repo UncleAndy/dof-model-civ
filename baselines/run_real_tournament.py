@@ -534,6 +534,44 @@ def _my_units_classes(env_getter, my_id):
         return ()
 
 
+def _is_wonder_name(name: str) -> bool:
+    """Чудо ли это — по роду, прочитанному из правил мира.
+
+    Мир различает роды (`Improvement`, `GreatWonder`, `SmallWonder`, `Special`), поэтому
+    спрашиваем у мира, а не у списка имён: список имён чудо не выдаёт (измерено — `Colossus`
+    попадал в кандидаты как обычная постройка).
+    """
+    try:
+        from env.rules_costs import BUILDING_COST
+        genus = str((BUILDING_COST.get(str(name)) or {}).get("genus") or "")
+        return genus in ("GreatWonder", "SmallWonder")
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _wonder_city_id(obs) -> object:
+    """Город чудес — его правило (`server/advisors/advbuilding.c:195`).
+
+    Дословно у него (`ai/default/daicity.c:1972`): «Only wonder city should build wonders!» —
+    во ВСЕХ остальных городах желание строить чудо обнуляется (`building_want = 0`). Сам
+    город чудес он выбирает по `value = pcity->surplus[O_SHIELD]` (вдвое меньше, если рядом
+    океан; плюс «даунтаун» и города материка при носителе-помощнике; минус четверть при
+    угрозе на материке).
+
+    Из наблюдения читается ПЕРВОЕ слагаемое — щиты города; остальные требуют данных,
+    которых у нас нет. Это названный пробел, а не подстановка нуля: отсутствие «даунтауна»
+    не делает город чудес отсутствующим.
+    """
+    best_id, best_value = None, None
+    for cid, rec in ((obs or {}).get("city") or {}).items():
+        if not isinstance(rec, dict):
+            continue
+        value = float(rec.get("surplus_shield") or 0.0)
+        if best_value is None or value > best_value:
+            best_id, best_value = cid, value
+    return best_id
+
+
 def _production_candidate(obs: dict, info: dict, dof_state, extractor,
                           type_names, military_names, gold, avail=None,
                           env_getter=None) -> dict | None:
@@ -573,6 +611,11 @@ def _production_candidate(obs: dict, info: dict, dof_state, extractor,
             print("  [постановка] контекст не собран или выбор закрыт — пропуск", flush=True)
         return None
     cities = (obs or {}).get("city") or {}
+    # Его правило: чудеса строит ТОЛЬКО город чудес (`daicity.c:1972`). Без этой проверки
+    # наш город населением 3 ставил `Colossus` (измерено, игра 6001: `produce_Colossus` ×5) —
+    # вложение в 100 щитов, которое окупается позже конца партии, тогда как у него чудо
+    # получает ровно один город, и то по щитам.
+    wonder_city = _wonder_city_id(obs)
     for cid, rec in cities.items():
         if not isinstance(rec, dict):
             continue
@@ -661,6 +704,12 @@ def _production_candidate(obs: dict, info: dict, dof_state, extractor,
             # задаёт `allowed` выше.
             if _is_wedged("city", action_name):
                 continue          # это имя уже клинило матч (реестр `env/wedged.py`)
+            if _is_wonder_name(name) and str(cid) != str(wonder_city):
+                # «Only wonder city should build wonders!» Его правило, не наше.
+                if _filters_trace():
+                    print(f"  [постановка] {name}: чудо — строит только город чудес "
+                          f"({wonder_city}), а это {cid}", flush=True)
+                continue
             got = None
             if getattr(ctx, "type_price_of", None) is not None:
                 try:
