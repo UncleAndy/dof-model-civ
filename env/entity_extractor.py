@@ -1923,6 +1923,7 @@ class GameStateExtractor:
         спрятано.
         """
         player = player_record(obs, self.my_player_id)
+        from brain.ai_default import tech as _ai_tech   # импорт по месту: без цикла пакетов
         current_tech = player.get('researching')
         cost = num(player.get('researching_cost', 0), 0)
         bulbs = num(player.get('bulbs_researched', 0), 0)
@@ -1937,13 +1938,32 @@ class GameStateExtractor:
         per_turn = round(trade * rate / 100.0)
 
         gains: dict[str, float] = {}
+        # Свои города нужны правилу встроенного ИИ (§13.189): он ценит технологию по
+        # приросту того, что могут ЕГО города, а не по «что она открывает» вообще.
+        own_cities = [city for city in as_dict(obs.get('city')).values()
+                      if isinstance(city, dict)
+                      and str(city.get('owner', self.my_player_id)) == str(self.my_player_id)]
         for tech_id, tech_obs in as_dict(obs.get('tech')).items():
             if not isinstance(tech_obs, dict):
                 continue
             if num(tech_obs.get('inv_state', 0), 0) > 0.5:
                 continue  # already known: nothing left to research
-            unlocked = (tech_options(tech_obs, as_known=True, model=self.model)
-                        - self.model.values()['TECH_BASE_OPTIONS'])
+            tech_name = str(tech_obs.get('name') or tech_obs.get('rule_name') or '')
+            # Стенд сам отдаёт связи технологии: `sup_improvements` и `sup_units`
+            # (tech_state.py:74/78). Брать их точнее, чем нашу выгрузку из правил: это
+            # данные самого мира. Выгрузка остаётся запасным путём и сторожем.
+            rules_buildings, rules_units = _ai_tech.unlocked_by(tech_name) if tech_name else ((), ())
+            unlocked_buildings = tuple(tech_obs.get('sup_improvements') or rules_buildings)
+            if not tech_name and not unlocked_buildings:
+                # Ни имени, ни списка построек — связь взять неоткуда. Выдумывать её нельзя:
+                # такая технология в цены не попадает вовсе.
+                continue
+            unlocked = 0.0
+            for city in own_cities:
+                before = city_options(city, model=self.model)
+                after = _ai_tech.city_want_with(city_options, city, unlocked_buildings,
+                                                model=self.model)
+                unlocked += _ai_tech.tech_want(before, after)
             if unlocked <= 0.0:
                 continue
             if current_tech is not None and num(tech_id, -1) == num(current_tech, -2):

@@ -158,6 +158,37 @@ def mean_attack(obs: Mapping[str, Any], my_player_id: Any = 0) -> tuple[Optional
 COLLAPSE_HORIZON: int = SPEC_COLLAPSE_HORIZON_TURNS
 
 
+def mean_move_rate(obs: Mapping[str, Any], my_player_id: Any = 0) -> tuple[Optional[float], int]:
+    """Скорость чужого юнита, паспорта которого нет, — средним по известным.
+
+    То же правило, что и у `mean_attack`, и по той же причине: неизвестное моделируется
+    средним по известному, а не нулём. Скорость нужна правилу опасности (§13.190): юнит
+    опасен для города, только если может до него дойти, а «дойти» зависит от его хода.
+    Ноль здесь был бы утверждением «стоять не может» ровно потому, что мы этого не знаем.
+
+    Возвращает `(среднее, сколько наблюдений)`; `n` видно вызывающему, чтобы он знал
+    основу среднего.
+    """
+    seen: list[float] = []
+    for layer in ("unit", "player"):
+        recs = (obs or {}).get(layer) or {}
+        if not isinstance(recs, Mapping):
+            continue
+        for rec in recs.values():
+            if not isinstance(rec, Mapping):
+                continue
+            raw = rec.get("type_move_rate")
+            if raw is None:
+                continue
+            try:
+                seen.append(float(raw))
+            except (TypeError, ValueError):
+                continue
+    if not seen:
+        return None, 0
+    return sum(seen) / float(len(seen)), len(seen)
+
+
 def observed_attack(prev: Mapping[str, Any], cur: Mapping[str, Any],
                     my_player_id: Any = 0,
                     consumed_by_us: Iterable[str] = (),

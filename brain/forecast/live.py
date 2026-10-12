@@ -541,19 +541,50 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
         # войском и поселенцем (§13.159). Признаки берём из мира, коэффициент не
         # вводим: чужой юнит в поле зрения ИЛИ у города нет защитника.
         military = set(military_names or ())
-        enemy_seen = False
-        for _rec in _as_dict(obs.get("unit")).values():
-            if isinstance(_rec, dict) and _num(_rec.get("owner"), -1) != _num(my_id, -2):
-                enemy_seen = True
-                break
-        garrison = 0
+        # §13.190 — правило ВСТРОЕННОГО ИИ вместо нашего (§13.159). Прежнее правило
+        # ставило военный тип в очередь при одном факте «виден чужой юнит ИЛИ у города нет
+        # защитника». Измерено на канале стенда: мы держим 2.2 военных юнита там, где
+        # встроенный ИИ держит 0.1, и строим юнитов больше него. Его правило (daimilitary.c,
+        # `assess_danger_unit`): юнит опасен, если СПОСОБЕН напасть и ДОЙТИ; защитник нужен,
+        # когда опасность есть, а защиты нет (daicity.c:649/658).
+        from brain.ai_default import military as _ai_mil
+        from env import spec_threat as _spec_threat
+
         city_x, city_y = rec.get("x"), rec.get("y")
+        garrison = 0
         if city_x is not None and city_y is not None:
             for _rec in units.values():
                 if (_rec.get("x") is not None and _rec.get("y") is not None
                         and _num(_rec.get("x"), -1) == _num(city_x, -2)
                         and _num(_rec.get("y"), -1) == _num(city_y, -2)):
                     garrison += 1
+
+        # Паспорт чужого ищем по клетке: карта даёт его положение, секция `unit` — паспорт.
+        passports: dict[tuple[int, int], Any] = {}
+        for _rec in _as_dict(obs.get("unit")).values():
+            if isinstance(_rec, dict) and _rec.get("x") is not None:
+                passports[(int(_num(_rec.get("x"), -1)), int(_num(_rec.get("y"), -1)))] = _rec
+        # Сила чужого без паспорта — средним по известным (`spec_threat.mean_attack`), НЕ нулём:
+        # «незнание не есть отсутствие возможностей» (правило владельца, §10.70 п.3).
+        mean_att, _n_seen = _spec_threat.mean_attack(obs, my_id)
+        fill_attack = float(mean_att) if mean_att is not None else 1.0
+        mean_move, _n_move = _spec_threat.mean_move_rate(obs, my_id)
+        fill_move = float(mean_move) if mean_move is not None else 0.0
+
+        threats: list[Any] = []
+        if city_x is not None and city_y is not None:
+            for _owner, ux, uy in _spec_threat.foreign_units_from_map(obs, my_id):
+                _rec = passports.get((int(ux), int(uy))) or {}
+                attack = _num(_rec.get("type_attack_strength"), fill_attack)
+                hp = _num(_rec.get("type_hp"), 1.0)
+                firepower = _num(_rec.get("type_firepower"), 1.0)
+                move = _num(_rec.get("type_move_rate"), fill_move)
+                threats.append(_ai_mil.Threat(
+                    attack_strength=attack, hp=hp, firepower=firepower, move_rate=move,
+                    distance=int(max(abs(int(ux) - _num(city_x, 0)),
+                                     abs(int(uy) - _num(city_y, 0))))))
+        danger = _ai_mil.city_danger(threats)
+        need_defender = _ai_mil.needs_defender(danger, garrison)
         if shields <= 0.0:
             return []
         out: list[tuple[str, float, int]] = []
@@ -566,10 +597,11 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
             # то же здание предлагалось бы дважды и считалось дважды.
             if type_name in spec_improvements and type_name not in live_by_type:
                 continue
-            # Войско — только по нужде (§13.161, их правило опасности): в мирное
-            # время у города-без-защитника военный тип ещё уместен, у защищённого —
-            # «хотелки» на него нет вовсе.
-            if military and type_name in military and not (enemy_seen or garrison <= 0):
+            # Войско — только по нужде, и нужда теперь считается правилом ВСТРОЕННОГО ИИ
+            # (§13.190): опасность = чужие, способные напасть и дойти; защитник нужен,
+            # когда опасность есть, а защиты нет. Прежний признак «виден любой чужой»
+            # давал 2.2 наших военных против 0.1 у него.
+            if military and type_name in military and not need_defender:
                 continue
             # Правило встроенного ИИ (`ai/default/daidomestic.c:488`,
             # `domestic_advisor_choose_build`): город берётся за того, кого прокормит, —
