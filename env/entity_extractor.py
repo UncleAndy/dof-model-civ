@@ -1953,7 +1953,11 @@ class GameStateExtractor:
             # (tech_state.py:74/78). Брать их точнее, чем нашу выгрузку из правил: это
             # данные самого мира. Выгрузка остаётся запасным путём и сторожем.
             rules_buildings, rules_units = _ai_tech.unlocked_by(tech_name) if tech_name else ((), ())
-            unlocked_buildings = tuple(tech_obs.get('sup_improvements') or rules_buildings)
+            # `or rules_buildings` здесь нельзя: в живом потоке перечень может быть
+            # массивом numpy, у которого проверка на истинность не определена.
+            raw_sup = tech_obs.get('sup_improvements')
+            unlocked_buildings = (tuple(raw_sup) if raw_sup is not None and len(raw_sup)
+                                  else tuple(rules_buildings))
             if not tech_name and not unlocked_buildings:
                 # Ни имени, ни списка построек — связь взять неоткуда. Выдумывать её нельзя:
                 # такая технология в цены не попадает вовсе.

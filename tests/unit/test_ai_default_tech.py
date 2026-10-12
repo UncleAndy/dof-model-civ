@@ -59,3 +59,32 @@ class TestTechRule:
         # По правилу встроенного ИИ (через прирост оценки) технология роста не ниже военной:
         # он думает не «что открывает юнит», а «насколько больше могут города».
         assert (pottery - base) >= (bronze - base) - 1e-9
+
+    def test_arrays_from_the_live_stream_do_not_break_the_substitution(self):
+        """Живой поток отдаёт `improvements` МАССИВОМ numpy, а не списком.
+
+        Проверка «непустой ли он» у массива не определена и валит прогон
+        (`ValueError: truth value of an array with more than one element is ambiguous`).
+        В тестах были списки, поэтому дефект дожил до живого прогона и остановил партию
+        на первом же ходу — теперь он виден здесь.
+        """
+        import numpy as np
+
+        model = _Model({0: "Granary"})
+        city = {"size": 1, "surplus_food": 1, "surplus_shield": 3, "surplus_trade": 2,
+                "surplus_gold": 1, "improvements": np.zeros(3)}
+        before = float(city_options(city, model=model))
+        after = ai_tech.city_want_with(city_options, city, ["Granary"], model=model)
+        assert after >= before                       # счёт не сломался, прирост посчитан
+        assert isinstance(city["improvements"], np.ndarray)   # исходный город не испорчен
+
+    def test_sup_improvements_may_be_an_array_of_names(self):
+        """Перечень открываемых построек тоже принимается массивом (он же numpy в бою)."""
+        import numpy as np
+
+        model = _Model({0: "Granary"})
+        city = {"size": 1, "surplus_food": 1, "surplus_shield": 3, "surplus_trade": 2,
+                "surplus_gold": 1, "improvements": [0, 0, 0]}
+        base = float(city_options(city, model=model))
+        got = ai_tech.city_want_with(city_options, city, np.array(["Granary"]), model=model)
+        assert got > base

@@ -96,12 +96,16 @@ def city_want_with(city_want: Callable[..., float], city_obs: dict[str, Any], te
     if isinstance(tech, str):
         buildings, _ = unlocked_by(tech)
     else:
-        buildings = tuple(tech or ())
+        buildings = tuple(tech) if tech is not None and not isinstance(tech, str) else ()
     indices = [i for i in (improvement_index(model, b) for b in buildings) if i is not None]
     if not indices:
         return city_want(city_obs, **kwargs)
     with_extra = dict(city_obs)
-    flags = list(with_extra.get("improvements") or [])
+    # В живом потоке `improvements` — массив numpy, а не список: проверка на истинность
+    # у него неопределена и валит прогон (`ValueError: truth value ... is ambiguous`).
+    # Проверка была написана так, что этого не видно на списках, — теперь видно.
+    raw_flags = with_extra.get("improvements")
+    flags = [] if raw_flags is None else list(raw_flags)
     for idx in indices:
         while len(flags) <= idx:
             flags.append(0)

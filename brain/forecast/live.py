@@ -126,6 +126,24 @@ def _as_dict(value: Any) -> dict:
     return value if isinstance(value, dict) else {}
 
 
+def _as_list(value: Any) -> list:
+    """Значение слоя наблюдения как список.
+
+    В живом потоке перечни приходят массивами numpy, а не списками, и проверка
+    «правда ли он непустой» (`x or []`) у массива не определена: она валит прогон
+    `ValueError: truth value of an array ... is ambiguous`. Дефект не виден на
+    списках в тестах, поэтому приведение живёт здесь, а не по месту вызова.
+    """
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        return list(value)
+    try:
+        return list(value)
+    except TypeError:
+        return []
+
+
 def _num(value: Any, default: float = 0.0) -> float:
     try:
         return float(value)
@@ -584,7 +602,22 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
                     distance=int(max(abs(int(ux) - _num(city_x, 0)),
                                      abs(int(uy) - _num(city_y, 0))))))
         danger = _ai_mil.city_danger(threats)
-        need_defender = _ai_mil.needs_defender(danger, garrison)
+        # Его правило ограничивает войско НУЖДОЙ, а не только разрешает его: у
+        # `daicity.c:649/658` защитник требуется, когда защиты нет, — и ровно столько,
+        # сколько покрывает опасность (`defenders_wanted`). Без потолка выходило так:
+        # юнит уходит из города, `garrison` снова 0, опасность соседей никуда не делась —
+        # и агент ставил нового защитника каждый ход. Измерено на трёх партиях после
+        # переноса: построено 9–10 юнитов, из них 8–10 военных, население стоит на 2.
+        have_military = 0
+        for _rec in units.values():
+            if not isinstance(_rec, dict):
+                continue
+            _tname = (_rec.get("type_rule_name")
+                      or (type_names or {}).get(int(_num(_rec.get("type"), -1))))
+            if _tname and str(_tname) in military:
+                have_military += 1
+        need_defender = (_ai_mil.needs_defender(danger, garrison)
+                         and have_military < _ai_mil.defenders_wanted(danger))
         if shields <= 0.0:
             return []
         out: list[tuple[str, float, int]] = []
@@ -725,7 +758,7 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
         if not isinstance(rec, dict):
             continue
         for field in ("sup_units", "sup_improvements"):
-            for spec in (rec.get(field) or []):
+            for spec in _as_list(rec.get(field)):
                 if not isinstance(spec, dict):
                     continue
                 name = str(spec.get("rule_name") or spec.get("name") or "")
@@ -750,7 +783,7 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
         try:
             from env.entity_extractor import city_options
             model = getattr(extractor, "model", None)
-            flags = list(rec.get("improvements") or [])
+            flags = _as_list(rec.get("improvements"))
             before = float(city_options(rec, model=model))
             with_flag = dict(rec)
             with_flag["improvements"] = flags + [True]
