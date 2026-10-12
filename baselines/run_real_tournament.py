@@ -489,11 +489,18 @@ def _production_candidate(obs: dict, info: dict, dof_state, extractor,
         except Exception:  # noqa: BLE001
             def _is_wedged(_ctrl, _name):  # type: ignore[misc]
                 return False
+        # «Стенд сказал» и «сведений нет» — разные вещи. Если список предложений вообще не
+        # опубликован (оффлайн, тест, пустое наблюдение), это НЕ запрет: незнание ≠ запрет.
+        offer_known = isinstance(avail, dict) and bool(avail)
+        if _filters_trace():
+            names_sorted = sorted(offered)
+            print(f"  [постановка] город {cid}: стенд предлагает {len(names_sorted)} "
+                  f"предметов: {names_sorted[:14]}", flush=True)
         best: tuple[float, str, int] | None = None
         scored: list[tuple[float, str, int]] = []
         for name in sorted(allowed):
             action_name = f"produce_{name}"
-            if action_name not in offered:
+            if offer_known and action_name not in offered:
                 # Строго: нет в предложении — не отправляем. Прежняя мягкая версия
                 # («если список непуст») пропускала всё при пустом списке, и матч клинило:
                 # измерено — `wedged on city/produce_Marketplace` уже ПОСЛЕ этой правки.

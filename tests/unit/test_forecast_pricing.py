@@ -188,8 +188,11 @@ class TestProductionPricing:
 
         import env.wedged as wedged
         importlib.reload(wedged)
+        # Стенд отказал этому предмету (`Action produce_Battleship of 121 is not
+        # valid`) — это утверждение о невозможности, и одного отказа хватает,
+        # чтобы больше его не пробовать.
         wedged.record_wedged("city", "produce_Battleship", turn=3,
-                            context={"agent": "test"})
+                             context={"agent": "test"}, reason="refused")
         # Сначала убеждаемся, что реестр действительно это знает: иначе тест
         # проверял бы не прогноз, а свою же путаницу с путём файла.
         assert wedged.is_wedged("city", "produce_Battleship") is True

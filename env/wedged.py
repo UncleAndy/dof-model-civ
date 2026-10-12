@@ -14,9 +14,19 @@
   заново через каждые двадцать ходов.
 
 Честная оговорка: клинч измерен на конкретной клетке, а исключается семейство
-целиком. Это осознанная грубость — цена ложного исключения меньше цены
-матча, который не заканчивается; контекст (местность, ход) сохраняется рядом,
-чтобы решение можно было пересмотреть, когда клинчей наберётся достаточно.
+целиком. Контекст (местность, ход) сохраняется рядом, чтобы решение можно было
+пересмотреть, когда клинчей наберётся достаточно.
+
+ПРАВИЛО ОТСЕЧЕНИЯ (исправлено по замеру). Сначала резали по одному наблюдению.
+Замер показал, что это сечёт исправное: реестр записал `unit/build_city` по
+одному случаю, а основание города у нас работает постоянно — и из-за этой
+записи основание молча выпало из оценки действий (`estimate_dof_delta`
+возвращал пусто, агент переставал его рассматривать). Цена ошибок
+несимметрична: ложное исключение стоит возможности и не видно, а лишний клин
+стоит одного матча и виден сразу. Поэтому режем только подтверждённое:
+* `seen >= 2` — клин повторился;
+* `reason == "refused"` — стенд прямо сказал `Action produce_X of N is not valid`
+  (это утверждение о невозможности, а не о неудаче), хватает одного.
 """
 from __future__ import annotations
 
@@ -65,15 +75,25 @@ def reset_cache() -> None:
 
 
 def is_wedged(ctrl_type: str, action_name: str) -> bool:
-    """Известно ли, что это действие заклинивает стенд."""
+    """Известно ли, что это действие заклинивает стенд (по правилу отсечения)."""
     if not ctrl_type or not action_name:
         return False
-    return key_of(ctrl_type, action_name) in load_wedged()
+    entry = load_wedged().get(key_of(ctrl_type, action_name))
+    if not entry:
+        return False
+    if str(entry.get("reason", "timeout")) == "refused":
+        return True          # стенд прямо отказал: это утверждение о невозможности
+    return int(entry.get("seen", 1)) >= 2    # одиночное наблюдение — лишь подозрение
 
 
 def record_wedged(ctrl_type: str, action_name: str, *, turn: int = 0,
-                  context: Optional[dict[str, Any]] = None) -> bool:
+                  context: Optional[dict[str, Any]] = None,
+                  reason: str = "timeout") -> bool:
     """Записать измеренный клинч. True — запись новая, False — уже знали.
+
+    `reason`: "timeout" — матч не докончился, и мы знаем только, какое действие
+    было в полёте (причина не установлена: так записалось `unit/build_city`);
+    "refused" — стенд прямо отказал в действии (`Action ... is not valid`).
 
     Пишем атомарно: матч обрывается по этому событию, и полузаписанный файл
     был бы источником тихо неверных данных в следующем прогоне.
@@ -83,6 +103,14 @@ def record_wedged(ctrl_type: str, action_name: str, *, turn: int = 0,
     registry = load_wedged()
     key = key_of(ctrl_type, action_name)
     if key in registry:
+        entry = registry[key]
+        entry["seen"] = int(entry.get("seen", 1)) + 1
+        entry["last_turn"] = int(turn)
+        if reason == "refused":
+            entry["reason"] = "refused"
+        elif "reason" not in entry:
+            entry["reason"] = "timeout"
+        _write(registry)
         return False
     registry[key] = {
         "ctrl_type": str(ctrl_type),
@@ -90,6 +118,7 @@ def record_wedged(ctrl_type: str, action_name: str, *, turn: int = 0,
         "family": family_of(action_name),
         "first_turn": int(turn),
         "seen": 1,
+        "reason": "refused" if reason == "refused" else "timeout",
         "context": dict(context or {}),
     }
     _write(registry)
