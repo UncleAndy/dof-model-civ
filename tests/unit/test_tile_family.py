@@ -40,12 +40,12 @@ def _dof_state():
     return SimpleNamespace(state=SimpleNamespace(bridge=bridge, entities={}))
 
 
-def _obs(*, city_actions):
+def _obs(*, city_actions, free_trade: float = 3.0):
     """Карта 8×8: канал 0 — еда, 1 — щиты, 2 — торговля (как в слое `map.output`)."""
     out = np.zeros((8, 8, 6), dtype=float)
     # Соседние клетки города (2, 2): у (2, 4) щиты 2, у (3, 2) торговля 3.
     out[2, 4, 1] = 2.0
-    out[3, 2, 2] = 3.0
+    out[3, 2, 2] = float(free_trade)
     city = {"121": {"id": 121, "owner": 0, "x": 2, "y": 2, "size": 1,
                     "surplus_food": 1, "surplus_shield": 3, "surplus_trade": 2,
                     "surplus_gold": 1, "prod_shield": 3, "shield_stock": 0}}
@@ -54,8 +54,8 @@ def _obs(*, city_actions):
     return {"map": {"output": out}, "city": city, "unit": {}}, info_dict
 
 
-def _context(city_actions):
-    obs, info_dict = _obs(city_actions=city_actions)
+def _context(city_actions, free_trade: float = 3.0):
+    obs, info_dict = _obs(city_actions=city_actions, free_trade=free_trade)
     return build_context(obs, info_dict, _dof_state(), _extractor(),
                          world_model=MeasuredFacts("/tmp/нет-такого.json"))
 
@@ -69,9 +69,22 @@ class TestTileFamily:
         # положительна и равна разнице формулы, а не выдуманному числу.
         assert priced[0][1] > 0.0
 
-    def test_unworking_a_tile_is_priced_negative(self):
-        # Клетка (2, 4) — та самая, что несёт щиты 2: выход уходит из экономики.
+    def test_unworking_is_priced_by_the_pair_when_a_free_tile_is_better(self):
+        # §13.180: «снять жителя» — первый шаг ПАРЫ (снять (2, 4) с щитами 2 и
+        # поставить на (3, 2) с торговлей 3). Итог пары выгоднее одной потери,
+        # поэтому шаг оценивается по паре, а не по своей убыточности: иначе
+        # правило строгого улучшения не сделало бы его никогда, и горожане
+        # остались бы там, куда их поставил сервер при основании города.
         ctx = _context({"city_unwork_121_0_2": True})
+        priced = ctx.vals.tiles("city_121")
+        assert [row[0] for row in priced] == ["city_unwork_121_0_2"]
+        assert priced[0][1] > 0.0
+
+    def test_a_pair_with_nothing_better_keeps_the_plain_loss(self):
+        # Свободных клеток лучше нет: единственная ненулевая свободная — та самая,
+        # с которой жителя снимают. Тогда цена остаётся собственной потерей, то
+        # есть отрицательной, и ход по-прежнему не делается.
+        ctx = _context({"city_unwork_121_0_2": True}, free_trade=0.0)
         priced = ctx.vals.tiles("city_121")
         assert [row[0] for row in priced] == ["city_unwork_121_0_2"]
         assert priced[0][1] < 0.0

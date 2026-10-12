@@ -842,6 +842,86 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
         except Exception:  # noqa: BLE001
             return None
 
+    def _best_swap(city_id: str, dx: int, dy: int) -> float | None:
+        """Итог пары «снять жителя с клетки (dx,dy) → поставить на лучшую свободную».
+
+        Зачем пара (§13.179). На этом стенде перестановка горожанина — ДВА шага:
+        `city_unwork_*` отправляет `packet_city_make_specialist` (житель становится
+        специалистом), а `city_work_*` становится годным только после этого
+        (`AI/civrealm/src/civrealm/freeciv/city/city_actions.py`, кл. CityWorkTile /
+        CityUnworkTile). Первый шаг сам по себе убыточен, поэтому правило строгого
+        улучшения (§13.168) его не делает — и горожане никогда не переставляются.
+
+        Здесь первый шаг оценивается ПО ИТОГУ ПАРЫ: снять (dx,dy) и поставить на
+        лучшую свободную клетку города. Итог считается той же формулой города, что и
+        всё остальное, по выходам клеток из слоя карты — новых чисел не вводится.
+
+        Оговорка названа прямо: однократная потеря хода, пока житель — специалист, в
+        этой оценке не учтена (устойчивое состояние пары, а не переходное). Это
+        СМЕЩЕНИЕ ВВЕРХ, и оно записано как известное.
+        """
+        rec = city_records.get(city_id)
+        if not isinstance(rec, dict):
+            return None
+        out_a = _tile_outputs(city_id, f"city_unwork_x_{dx}_{dy}")
+        if out_a is None:
+            return None
+        try:
+            from env.entity_extractor import city_options
+            model = getattr(extractor, "model", None)
+            before = float(city_options(rec, model=model))
+        except Exception:  # noqa: BLE001
+            return None
+        try:
+            cx = int(_num(rec.get("x"), 0.0))
+            cy = int(_num(rec.get("y"), 0.0))
+            radius = max(1, int(math.sqrt(max(0.0, _num(rec.get("city_radius_sq"), 5.0)))))
+        except (TypeError, ValueError):
+            return None
+        # Кто уже обрабатывает клетки: мир помечает это полем `worked` (id города).
+        worked: set[tuple[int, int]] = set()
+        for trec in _as_dict(obs.get("map")).values():
+            if not isinstance(trec, dict):
+                continue
+            if _num(trec.get("worked"), -1) == _num(rec.get("id"), -2):
+                worked.add((int(_num(trec.get("x"), -1)), int(_num(trec.get("y"), -1))))
+
+        def shifted_by(remove: list[float], add: list[float]) -> float | None:
+            probe = dict(rec)
+            for field, index in (("prod_food", 0), ("prod_shield", 1),
+                                 ("prod_trade", 2), ("surplus_food", 0),
+                                 ("surplus_shield", 1), ("surplus_trade", 2)):
+                cur = probe.get(field)
+                if cur is None:
+                    continue
+                try:
+                    probe[field] = (float(cur) - float(remove[index])
+                                    + float(add[index]))
+                except (TypeError, ValueError):
+                    return None
+            try:
+                return float(city_options(probe, model=model))
+            except Exception:  # noqa: BLE001
+                return None
+
+        best: float | None = None
+        for bx in range(cx - radius, cx + radius + 1):
+            for by in range(cy - radius, cy + radius + 1):
+                if (bx, by) == (cx + dx, cy + dy) or (bx, by) in worked:
+                    continue
+                try:
+                    cell = list(output_layer[bx][by])[:3]
+                except Exception:  # noqa: BLE001
+                    continue
+                out_b = [float(v) for v in cell]
+                after = shifted_by(out_a, out_b)
+                if after is None:
+                    continue
+                gain = after - before
+                if best is None or gain > best:
+                    best = gain
+        return best
+
     def tiles(city_id: str) -> list[tuple[str, float]]:
         """Переводы жителя, предложенные сервером: [(действие, Δопций города)].
 
@@ -895,7 +975,21 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
                 after = float(city_options(shifted, model=model))
             except Exception:  # noqa: BLE001
                 continue
-            out.append((text, after - before))
+            own = after - before
+            if sign < 0.0:
+                # §13.180: «снять жителя» — только ПЕРВЫЙ шаг пары (снять и поставить
+                # на другую клетку). Сам по себе он убыточен, и правило строгого
+                # улучшения его не делает, поэтому горожане не переставляются вовсе.
+                # Оцениваем шаг по ИТОГУ пары — числа берутся из той же формулы города
+                # и из выходов клеток слоя карты, новых коэффициентов нет.
+                try:
+                    parts = str(text).split("_")
+                    pair = _best_swap(city_id, int(parts[-2]), int(parts[-1]))
+                except (TypeError, ValueError):
+                    pair = None
+                if pair is not None and pair > own:
+                    own = pair
+            out.append((text, own))
         return out
 
     def techs() -> list[tuple[str, float, int]]:
