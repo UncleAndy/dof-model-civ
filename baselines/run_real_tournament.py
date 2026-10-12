@@ -1341,6 +1341,32 @@ def _unit_type_names(env) -> dict:
     return out
 
 
+def _production_names(env) -> dict:
+    """Таблица «production_value наблюдения → имя» по РОДУ постановки.
+
+    Согласовано с кодом встроенного ИИ: он читает предмет очереди парой
+    (`pcity->production.kind`, `pcity->production.value`) — род и значение вместе
+    (`ai/default/daicity.c:1868/1915/1996`). Одна таблица имён без рода неверна, и
+    это измерено: `production_value=71` разбиралось как юнит №3 «Warriors», тогда как
+    стенд публикует УЛУЧШЕНИЯ без сдвига, а ЮНИТЫ со сдвигом на число улучшений
+    (`city/city_state.py:91-92`: `production_value += num_impr_types` для VUT_UTYPE).
+
+    Проверка числами мира (`classic/`): улучшений **68**, юнитов **52**, и порядок
+    юнитов `[unit_settlers] → [unit_worker] → [unit_engineers] → [unit_warriors]`,
+    то есть `71 − 68 = 3 = warriors`. Чтение было ВЕРНЫМ; не хватало второй половины —
+    улучшений: при их роде в таблице юнитов имени нет вовсе, и предмет очереди
+    назывался «ничем», из-за чего хранитель постановки (§13.196) не удерживал её.
+
+    Ключи не пересекаются, пока сдвиг равен числу улучшений: 0…67 — улучшения,
+    68…119 — юниты. Если сдвига нет (правила не отдали `num_impr_types`), таблица
+    улучшений строится первой и юнит НЕ перекрывает её (`setdefault`).
+    """
+    out: dict = dict(_improvement_names(env) or {})
+    for key, name in (_unit_type_names(env) or {}).items():
+        out.setdefault(int(key), str(name))
+    return out
+
+
 def _gold_of(obs, extractor) -> float:
     """Золото игрока — по ЗАПИСИ игрока, а не по ключу словаря (ловушка §5.2f/13)."""
     try:
@@ -1873,7 +1899,7 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                 # сравнение, а неопределённость.
                 decided, wire = _forecast_decide(
                     obs, info, dof, extractor, avail,
-                    type_names=(_unit_type_names(env_getter())
+                    type_names=(_production_names(env_getter())
                                 if env_getter is not None else None),
                     military_names=(_military_type_names(env_getter())
                                     if env_getter is not None else None),
