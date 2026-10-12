@@ -2100,6 +2100,15 @@ def _forecast_decide(obs, info, dof, extractor, avail, *, type_names=None,
                   f"не предлагает — ход без действия", flush=True)
         return True, None
     _FORECAST_STATS["acted"] += 1
+    if os.environ.get("DOF_TRACE_FILTERS") == "1":
+        # У основного пути следа отправок НЕ БЫЛО (§13.228: за 31 ход «прогноз» 5 раз, а что
+        # он отправлял — не видно), тогда как у режима без DoF след есть. Без этого «эффекта
+        # нет» и «изменение не подключено» неразличимы.
+        if isinstance(wire, tuple) and len(wire) >= 3:
+            _shown = f"{wire[0]}/{wire[2]} (актёр {wire[1]})"
+        else:
+            _shown = str(wire)
+        print(f"        [прогноз] отправляю {_shown}", flush=True)
     return True, wire
 
 
