@@ -72,7 +72,9 @@ class TestMoveGain:
         assert report["current_value"] == 0.0                   # на бесплодной — 0
         assert report["best_value"] > 0
         # Выигрыш дисконтируется как будущая возможность, а не берётся целиком.
-        assert gain == pytest.approx(cfg.W_FUTURE_UNIT * report["raw_gain"], rel=1e-6)
+        # `raw_gain` в отчёте округлён до тысячных (env/entity_extractor.py), поэтому
+        # сверяем с допуском округления, а не до шестого знака.
+        assert gain == pytest.approx(cfg.W_FUTURE_UNIT * report["raw_gain"], rel=1e-4)
         # Цель — в пределах хода носителя и именно богатая сторона.
         target = report["target"]
         assert max(abs(target["dx"]), abs(target["dy"])) <= report["reach"]

@@ -109,10 +109,12 @@ class TestDofDelta:
 
     def test_goto_is_measured_neutral(self, sample_state):
         """`goto` was guessed at +0.01; measured on a live game it changes
-        nothing in the index (Δindex = 0.0000)."""
+        nothing in the index (Δindex = 0.0000). После перевода весов города на
+        числа встроенного ИИ (§13.186) ход не даёт записи вовсе — это тот же
+        нейтральный исход, что и отсутствие изменения."""
         action = CivAction(ctrl_type='unit', actor_id='103', action_name='goto_3')
         delta = estimate_dof_delta(action, sample_state)
-        assert delta['unit_103'] == pytest.approx(0.0)
+        assert delta.get('unit_103', 0.0) == pytest.approx(0.0)
 
     def test_fortify_is_measured_neutral(self, sample_state):
         action = CivAction(ctrl_type='unit', actor_id='103', action_name='fortify')

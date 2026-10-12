@@ -123,7 +123,11 @@ class TestQualityGate:
         m = make_map(tiles={(4, 4): (1, 0, 0)})
         site = evaluate_site(m, 4, 4, size=1, vals=VALS)
         assert site.viable is False
-        assert "SITE_MIN_FOOD" in site.reason
+        # С §13.188 годность решает порог ВСТРОЕННОГО ИИ (его `food_starvation`),
+        # а не прежний наш `SITE_MIN_FOOD` (§13.166). Причина обязана называть
+        # именно его правило — иначе непонятно, чем площадка отвергнута.
+        assert "встроенного ИИ" in site.reason
+        assert site.starved_food is True
 
     def test_rich_site_passes(self):
         m = make_map(tiles={(4, 4): (3, 0, 0), (3, 4): (3, 0, 0), (5, 4): (2, 1, 0)})

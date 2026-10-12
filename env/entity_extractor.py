@@ -522,12 +522,15 @@ def city_options(city_obs: dict[str, Any], garrison: int = 0,
     m1 = min(vals['CITY_CAP_M1'], m1)
 
     # Factor 2 — the economy: what the city can turn options into.
+    # Веса — ЧИСЛА ВСТРОЕННОГО ИИ (§13.186): еда 30, щиты 17, торговля весом науки 21.6,
+    # золото 18 (источник: advbuilding.h:19-21, advdata.c:499-508). Еда у него тяжелее
+    # щитов, а торговля считается ОДИН раз — весом науки, отдельного слагаемого нет.
     m2 = 1.0
+    m2 += vals['CITY_M2_FOOD'] * max(0.0, surplus_food)
     m2 += vals['CITY_M2_SHIELD'] * num(city_obs.get('surplus_shield', city_obs.get('production', 0)), 0)
     m2 += vals['CITY_M2_TRADE'] * num(city_obs.get('surplus_trade', 0), 0)
     m2 += vals['CITY_M2_GOLD'] * num(city_obs.get('surplus_gold', city_obs.get('gold', 0)), 0)
-    m2 += vals['CITY_M2_SCIENCE'] * num(city_obs.get('science', 0), 0)
-    m2 += vals['CITY_M2_LUXURY'] * num(city_obs.get('luxury', 0), 0)
+    m2 += vals.get('CITY_M2_LUXURY', 0.0) * num(city_obs.get('luxury', 0), 0)
     m2 = min(vals['CITY_CAP_M2'], m2)
 
     # Factor 3 — permanent losses.

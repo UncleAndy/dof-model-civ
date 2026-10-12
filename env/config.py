@@ -371,11 +371,35 @@ CITY_CAP_M2: float = 2.0                # economy (shields/trade/gold/science) c
 CITY_M1_FOOD: float = 0.20              # positive food surplus = growth capacity
 CITY_M1_GRANARY: float = 0.30           # filled food box = resilience
 CITY_M1_IMPROV: float = 1.00            # each standing improvement
-CITY_M2_SHIELD: float = 0.05
-CITY_M2_TRADE: float = 0.05
-CITY_M2_GOLD: float = 0.10
-CITY_M2_SCIENCE: float = 0.05
-CITY_M2_LUXURY: float = 0.05
+#: Веса ценности выходов города — ЧИСЛА ВСТРОЕННОГО ИИ, не наши (§13.186).
+#: Источник: `/docker/freeciv/freeciv/server/advisors/advbuilding.h:19-21`
+#: (FOOD_WEIGHTING 30, SHIELD_WEIGHTING 17, TRADE_WEIGHTING 18) и
+#: `server/advisors/advdata.c:499-508`, где приоритеты ИИ выбираются так:
+#:   food_priority = 30; shield_priority = 17;
+#:   если ИИ хочет науку: luxury_priority = 1, science_priority = 18 * 1.2 = 21.6;
+#:   иначе:              luxury_priority = 18, science_priority = 1;
+#:   gold_priority = 18; happy_priority = 1.
+#: В его собственной оценке клетки торговля входит ИМЕННО весом науки
+#: (`ptdc->trade * adv->science_priority`), отдельного слагаемого науки сверху нет — иначе
+#: торговля считалась бы дважды. Поэтому у нас торговля идёт весом 21.6, а отдельные
+#: слагаемые «наука» и «роскошь» из фактора 2 убраны (у ИИ роскошь весит 1 — пренебрежимо).
+#: Масштаб: все веса делятся на 17, чтобы мера осталась прежней величины (прежний вес щитов
+#: 0.05 = 17/17 * 0.05). Отношения между выходами при этом ровно такие, какие у ИИ.
+AI_FOOD_WEIGHTING: float = 30.0
+AI_SHIELD_WEIGHTING: float = 17.0
+AI_TRADE_WEIGHTING: float = 18.0
+AI_SCIENCE_PRIORITY: float = AI_TRADE_WEIGHTING * 1.2   # 21.6 при желании науки
+AI_GOLD_PRIORITY: float = AI_TRADE_WEIGHTING            # 18
+AI_LUXURY_PRIORITY: float = 1.0                         # при желании науки
+
+#: Масштаб меры: прежний вес щитов (0.05) при весе ИИ 17.
+_CITY_M2_SCALE: float = 0.05 / AI_SHIELD_WEIGHTING
+
+CITY_M2_FOOD: float = AI_FOOD_WEIGHTING * _CITY_M2_SCALE          # ≈ 0.0882 — у ИИ еда тяжелее щитов
+CITY_M2_SHIELD: float = AI_SHIELD_WEIGHTING * _CITY_M2_SCALE      # 0.05
+CITY_M2_TRADE: float = AI_SCIENCE_PRIORITY * _CITY_M2_SCALE       # ≈ 0.0635 (торговля весом науки)
+CITY_M2_GOLD: float = AI_GOLD_PRIORITY * _CITY_M2_SCALE           # ≈ 0.0529
+CITY_M2_LUXURY: float = AI_LUXURY_PRIORITY * _CITY_M2_SCALE       # ≈ 0.0029
 
 # ── Строительство (§10.25.4, решение Andy 2026-09-28) ────────────────────────
 #: Объявленный (НЕ измеренный) бонус за постройку. Нужен потому, что здание на

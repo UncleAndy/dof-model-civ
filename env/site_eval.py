@@ -24,6 +24,13 @@ from typing import Any, Iterable
 
 from .terrain_work import tile_terrain_extras
 
+
+def _ai_values():
+    """Модуль чисел встроенного ИИ (§13.187) — импорт по месту, чтобы `env` не тянул
+    `brain` на этапе загрузки пакета (иначе цикл импортов и запросы тестов падают)."""
+    from brain.ai_default import values as _ai
+    return _ai
+
 #: Область влияния города: квадрат 5×5 без угловых == 21 клетка.
 CITY_RADIUS_SQ: int = 5
 
@@ -66,6 +73,17 @@ class SiteEvaluation:
     coastal: bool = False        # есть ли выход к воде в области города
     resource_types: tuple[str, ...] = ()   # различные ИЗМЕРЕННЫЕ ресурсы в области
     option_bonus: float = 0.0    # опции площадки: берег + ресурсы, с потолком
+    #: ── Оценка ВСТРОЕННОГО ИИ-игрока (§13.188) — его числа, не наши ──
+    #: `ai_center_sum`/`ai_best_sum`/`ai_remaining` — из `cityresult_fill`
+    #: (daisettler.c): сумма клетки по весам ИИ (еда 30, торговля весом науки 21.6,
+    #: щиты 17, поправки ×1.5 и ×2 за еду ≥ 2), лучшая рабочая клетка и «потенциал»
+    #: остальных (делённых на GROWTH_POTENTIAL_DEEMPHASIS 8).
+    ai_center_sum: float = 0.0
+    ai_best_sum: float = 0.0
+    ai_remaining: float = 0.0
+    ai_want: float = 0.0         # его `result->total` для нового города на этой площадке
+    starved_food: bool = False   # его `food_starvation`
+    starved_shield: bool = False  # его `shield_starvation`
     viable: bool = False         # прошла ли гейт минимального качества
     reason: str = ""
 
@@ -241,13 +259,65 @@ def evaluate_site(map_obs: dict[str, Any], x: int, y: int, *,
     site.gate_food = float(sum(t[0] for t in gate_ranked))
     gate_food_high = float(sum(t[0] for t in gate_ranked_high))
     site.gate_food_high = gate_food_high
-    if gate_food_high < min_food:
+
+    # ── Годность площадки решает ВСТРОЕННЫЙ ИИ (§13.188) ──────────────────────
+    # Его правило (`daisettler.c`): площадка отвергается, если центр вместе с лучшей
+    # рабочей клеткой не даёт еды больше FOOD_COST (`food_starvation`) или не даёт ни
+    # одного щита (`shield_starvation`). Это ЕГО порог из его кода, а не наш затухающий
+    # порог §13.166: по указанию владельца «наш ИИ строится на данных встроенного ИИ»
+    # правило §13.166 здесь уступает место его правилу. Прежние `gate_food*` остаются
+    # как диагностика — по ним видно, что видел бы старый порог.
+    _ai = _ai_values()
+    _ai_food_p = float(vals.get("AI_FOOD_WEIGHTING", 30.0))
+    _ai_sci_p = float(vals.get("AI_SCIENCE_PRIORITY", 21.6))
+    _ai_shield_p = float(vals.get("AI_SHIELD_WEIGHTING", 17.0))
+
+    def _ai_tile(out: tuple[float, float, float, bool], *, center: bool = False) -> Any:
+        return _ai.tile_sum(out[0], out[1], out[2],
+                            food_priority=_ai_food_p, science_priority=_ai_sci_p,
+                            shield_priority=_ai_shield_p, is_city_center=center)
+
+    def _optimistic(out: tuple[float, float, float, bool]) -> tuple[float, float, float, bool]:
+        """Клетка для порога встроенного ИИ: неразведанная — по лучшему видимому.
+
+        У встроенного ИИ тумана нет: он судит по настоящему выходу клетки. У нас туман
+        есть, и если подставить в ЕГО порог нули неразведанных, он объявит мёртвой любую
+        площадку на неисследованной земле. Это нарушило бы правило владельца: незнание
+        не есть отсутствие возможностей (Axiom 5/7). Поэтому в порог идёт лучший видимый
+        выход, а сама оценка площадки (`ai_want`) считается по видимому без подстановки.
+        """
+        if out[3]:
+            return out
+        return (best_fill[0], best_fill[1], best_fill[2], True)
+
+    ai_center = _ai_tile(_optimistic(tiles[0]), center=True)
+    ai_workable = sorted((_ai_tile(_optimistic(t)) for t in tiles[1:]),
+                         key=lambda t: t.sum, reverse=True)
+    ai_best = ai_workable[0] if ai_workable else None
+    ai_others = ai_workable[1:]
+    # Оценка площадки — по ВИДИМОМУ (его `result->total` на реальных клетках),
+    # а порог голода — по ЛУЧШЕМУ ВИДИМОМУ на неразведанных (см. `_optimistic`).
+    ai_center_known = _ai_tile(tiles[0], center=True)
+    known_workable = sorted((_ai_tile(t) for t in tiles[1:]), key=lambda t: t.sum, reverse=True)
+    site.ai_center_sum = ai_center_known.sum
+    site.ai_best_sum = known_workable[0].sum if known_workable else 0.0
+    site.ai_remaining = sum(t.sum for t in known_workable[1:]) / _ai.GROWTH_POTENTIAL_DEEMPHASIS
+    site.ai_want = _ai.site_total(ai_center_known,
+                                  known_workable[0] if known_workable else None,
+                                  known_workable[1:])
+    site.starved_food = _ai.food_starvation(ai_center, ai_best, food_cost)
+    site.starved_shield = _ai.shield_starvation(ai_center, ai_best)
+    if site.starved_food:
         site.viable = False
-        site.reason = (f"еда {gate_food_high:.1f} на {gate_need} клетках "
-                       f"(размер {site.gate_size}) < SITE_MIN_FOOD={min_food:.1f}")
+        site.reason = (f"порог встроенного ИИ: центр {ai_center.food:.1f} + лучшая "
+                       f"{ai_best.food if ai_best else 0.0:.1f} еды ≤ FOOD_COST "
+                       f"{food_cost:.1f}")
+    elif site.starved_shield:
+        site.viable = False
+        site.reason = ("порог встроенного ИИ: центр и лучшая клетка не дают ни одного щита")
     else:
         site.viable = True
-        site.reason = "ok"
+        site.reason = "ok (порог встроенного ИИ)"
 
     # Опции площадки: берег и ресурсы. Это не выход клетки, а дополнительные пути
     # развития (гавань, морские юниты, морская торговля; ресурс ускоряет рост),
