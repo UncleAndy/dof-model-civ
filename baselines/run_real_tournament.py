@@ -405,8 +405,95 @@ def _filters_trace() -> bool:
     return os.environ.get("DOF_TRACE_FILTERS") == "1"
 
 
+def _spec_at(table, idx):
+    """Запись таблицы правил по номеру: она может быть и списком, и словарём.
+
+    Измерено косвенно: чтение через `.get(idx)` на СПИСКЕ даёт AttributeError, исключение
+    глоталось, и маска мира выглядела «отсутствующей» на каждом городе — то есть здоровый
+    путь молча превращался в отказ от постановки.
+    """
+    if table is None:
+        return None
+    try:
+        return table[idx]
+    except (KeyError, IndexError, TypeError):
+        return None
+
+
+def _world_production_names(env_getter, cid):
+    """Маска постановки ИЗ МИРА: сырая запись города стенда и его же правила.
+
+    Измерено (§13.215): в наблюдение стенда маска УЛУЧШЕНИЙ не попадает, поэтому наша картина
+    города её не знает и кандидаты падали на весь каталог имён — мы предлагали городу
+    `Marketplace`, `Library`, `Factory`, которых в его маске нет, стенд отвечал
+    `Action produce_X of N is not valid`, приказ не применялся, а повтор не двигал матч
+    (клин по общему таймауту). Маска при этом в мире ЕСТЬ (пакет 256) и стенд сам по ней
+    проверяет приказ — значит брать её надо оттуда же, откуда берут её действия стенда.
+
+    Возвращает множество имён того, что город может строить СЕЙЧАС (уже построенное
+    исключено — стенд отказывает и в этом), или None, если мира под рукой нет: «незнание ≠
+    запрет», тогда решение принимает цена по всему каталогу.
+    """
+    if env_getter is None or cid is None:
+        return None
+    try:
+        env = env_getter()
+        ctl = getattr(getattr(env, "unwrapped", None), "civ_controller", None)
+        ccity = getattr(ctl, "city_ctrl", None)
+        rules = getattr(ctl, "rule_ctrl", None)
+        if ccity is None:
+            return None
+        rec = (getattr(ccity, "cities", {}) or {}).get(int(cid))
+        if not isinstance(rec, dict):
+            return None
+        # `X or []` здесь нельзя: `improvements` — массив numpy, и `bool()` на нём срывается
+        # («The truth value of an array with more than one element is ambiguous»). Именно это
+        # и скрывало маску мира: исключение глоталось, и каждый город выглядел как «маски нет».
+        held = rec.get("improvements")
+        if held is None:
+            held = []
+        out: set[str] = set()
+        for field, table in (("can_build_improvement", getattr(rules, "improvements", None)),
+                             ("can_build_unit", getattr(rules, "unit_types", None))):
+            mask = rec.get(field)
+            if mask is None:
+                continue
+            # Маска приходит массивом numpy (`city_ctrl.handle_web_city_info_addition`
+            # делает `np.array(byte_to_bit_array(...))`), и проверка «истинности» прямо на
+            # элементе срывается: измерено — `ValueError: The truth value of an array with
+            # more than one element is ambiguous`. Приводим к числу явно.
+            if isinstance(mask, dict):
+                pairs = list(mask.items())
+            else:
+                base = mask.ravel() if hasattr(mask, "ravel") else mask
+                pairs = list(enumerate(base))
+            for idx, flag in pairs:
+                try:
+                    if int(flag) == 0:
+                        continue
+                except (TypeError, ValueError):
+                    continue
+                if field == "can_build_improvement" and idx < len(held) and held[idx] == 1:
+                    continue        # в городе уже есть — стенд такую постановку отвергает
+                info = _spec_at(table, idx)
+                name = (info or {}).get("name") if isinstance(info, dict) else None
+                if name:
+                    out.add(str(name))
+        return out or None
+    except Exception as exc:  # noqa: BLE001
+        # Молчаливое «нет маски» уже один раз скрыло ошибку пути (измерено: «маски мира нет»
+        # на каждом городе). Причину печатаем, чтобы это не повторялось незаметно.
+        if _filters_trace():
+            import traceback as _tb
+            where = _tb.extract_tb(exc.__traceback__)[-1]
+            print(f"  [постановка] маска мира не прочитана: {type(exc).__name__}: {exc} "
+                  f"(строка {where.lineno}: {where.line})", flush=True)
+        return None
+
+
 def _production_candidate(obs: dict, info: dict, dof_state, extractor,
-                          type_names, military_names, gold, avail=None) -> dict | None:
+                          type_names, military_names, gold, avail=None,
+                          env_getter=None) -> dict | None:
     """Постановка города — ЕГО числами, без оценки DoF (§13.210).
 
     Почему это нужно в общем пути: стенд действия постановки городу НЕ предлагает вовсе
@@ -453,6 +540,23 @@ def _production_candidate(obs: dict, info: dict, dof_state, extractor,
             allowed = _live._allowed_production_types(rec, type_names)
         except Exception:  # noqa: BLE001
             allowed = None
+        # §13.215: маска улучшений в наблюдение не попадает — берём её ИЗ МИРА. Это точнее
+        # каталога: мир говорит не «имя существует», а «город построит это сейчас».
+        world = _world_production_names(env_getter, cid)
+        if world:
+            if _filters_trace():
+                print(f"  [постановка] город {cid}: маска МИРА — {len(world)} предметов: "
+                      f"{sorted(world)[:12]}", flush=True)
+            allowed = world
+        else:
+            # Маски мира нет — ЗАКАЗ НЕ ОТПРАВЛЯЕМ. Здесь «незнание ≠ запрет» уступает
+            # измеренной цене ошибки: заказ по имени из своего каталога стоит не нуля, а
+            # клина (матч умирает), и повторить его нельзя. Пусть очередь идёт как идёт —
+            # это честнее, чем гадать именем, которое мир может прочесть иначе.
+            if _filters_trace():
+                print(f"  [постановка] город {cid}: маски мира нет — постановку не ставим",
+                      flush=True)
+            continue
         if allowed is None:
             # Масок нет — это «незнание», а не запрет (правило проекта: «незнание ≠
             # отсутствие возможностей»). Тогда берём ВЕСЬ каталог имён: отбор сделает цена —
@@ -500,14 +604,12 @@ def _production_candidate(obs: dict, info: dict, dof_state, extractor,
         scored: list[tuple[float, str, int]] = []
         for name in sorted(allowed):
             action_name = f"produce_{name}"
-            if offer_known and action_name not in offered:
-                # Строго: нет в предложении — не отправляем. Прежняя мягкая версия
-                # («если список непуст») пропускала всё при пустом списке, и матч клинило:
-                # измерено — `wedged on city/produce_Marketplace` уже ПОСЛЕ этой правки.
-                if _filters_trace() and not offered:
-                    print(f"  [постановка] город {cid}: предложение стенда пусто — "
-                          f"постановку не ставим вовсе", flush=True)
-                continue
+            # Фильтр «есть ли в предложении стенда» здесь БОЛЕЕ НЕ применяется: измерено, что
+            # предложение НЕ служит признаком законности — оно содержало 207 предметов, среди
+            # них `produce_Offshore Platform`, которого город строить не может, и стенд на нём
+            # же и клинил (`wedged on city/produce_Offshore Platform at turn 1`). Признак
+            # законности — маска МИРА (§13.215), по которой стенд сам проверяет приказ; она и
+            # задаёт `allowed` выше.
             if _is_wedged("city", action_name):
                 continue          # это имя уже клинило матч (реестр `env/wedged.py`)
             got = None
@@ -2249,7 +2351,7 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                         if env_getter is not None else None,
                         _military_type_names(env_getter())
                         if env_getter is not None else None,
-                        _gold_of(obs, extractor), avail)
+                        _gold_of(obs, extractor), avail, env_getter)
                     if _prod is not None:
                         if os.environ.get("DOF_TRACE_FILTERS") == "1":
                             print(f"  [постановка] отправляю {_prod['action_name']} "
