@@ -41,8 +41,17 @@ WORK_PREFERENCE = [
 ]
 
 
-def pick_work(actions: dict) -> tuple[str, object] | None:
-    """Лучшая валидная работа на клетке: сначала те, что ставят экстру."""
+def pick_work(actions: dict, only: str | None = None) -> tuple[str, object] | None:
+    """Лучшая валидная работа на клетке: сначала те, что ставят экстру.
+
+    `only` сужает выбор до одной работы (`irrigation`, `mine`, `road`, …) — иначе замер
+    всегда брал бы дорогу, и вопрос «даёт ли ирригация пищу» остался бы незакрытым.
+    """
+    if only:
+        for name, params in actions.items():
+            if params and name.startswith(only):
+                return name, params
+        return None
     for group in WORK_PREFERENCE:
         for name, params in actions.items():
             if params and any(name.startswith(p) for p in group):
@@ -86,6 +95,9 @@ def units_by_key(obs) -> dict:
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--turns", type=int, default=12)
+    #: Замер одной работы: `--only irrigation` / `--only mine` / `--only road`.
+    #: Без него берётся первая доступная (в порядке предпочтения — дороги).
+    p.add_argument("--only", default=None)
     args = p.parse_args()
 
     import warnings
@@ -93,7 +105,9 @@ def main():
     os.environ["PYTHONWARNINGS"] = "ignore"
 
     signal.signal(signal.SIGALRM, _on_alarm)
-    signal.alarm(560)
+    #: Бюджет матча: по умолчанию 560 с, но замер одной работы требует времени —
+    #: работа идёт 3-4 хода, и матч надо довести до её конца.
+    signal.alarm(int(os.environ.get("TERRAIN_MEASURE_BUDGET", "560")))
     try:
         from civrealm.freeciv.utils.port_utils import Ports
         import gymnasium
@@ -160,7 +174,7 @@ def main():
                 u = units.get(actor_id)
                 if not isinstance(u, dict) or u.get("x") is None:
                     continue
-                choice = pick_work(actions)
+                choice = pick_work(actions, args.only)
                 if choice is None:
                     continue
                 name, params = choice

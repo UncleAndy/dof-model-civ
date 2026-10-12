@@ -4,12 +4,17 @@
 обрабатывает город — значит это канал «рабочий → DoF города», и до сих пор он
 был оценён нулём, то есть невидим для ядра.
 
-Правила здесь НЕ берутся из документации. Эффект работы измеряется на живом
-стенде (скрипты `scripts/measure_terrain_effect.py` и
-`scripts/inspect_terrain_live.py`): это выход клетки с поставленной экстрой минус
-выход того же террейна без неё. Таблица измеренных эффектов живёт в
-`env/config.py` (`MEASURED_EXTRA_EFFECTS`) и попадает в формулы через снимок
-модели; не измеренный эффект даёт дельту 0, а не правдоподобное число.
+Источников два, и порядок между ними важен:
+
+1. **Измерено нами** на живом стенде — `scripts/measure_terrain_effect.py` и
+   `scripts/inspect_terrain_live.py`: выход клетки с поставленной экстрой минус выход того же
+   террейна без неё. Таблица живёт в `env/config.py` (`MEASURED_EXTRA_EFFECTS`).
+2. **Правила мира** — `env/terrain_work_effects.py`, прочитаны из `classic/terrain.ruleset`
+   скриптом `scripts/read_terrain_work_effects.py`. Владелец (2026-10-12): числа из правил мира
+   и из кода встроенного ИИ — тоже наблюдение, их достаточно узнать один раз и хранить в картине
+   мира. Именно этим заполняется незнание, из-за которого цена работы была ровно нулём (§13.257).
+
+Чего нет ни там, ни там — ноль, а не правдоподобное число.
 
 Отдельно: `cultivate`/`plant`/`transform_terrain` меняют САМ террейн (замерено:
 Forest+Pheasant ⇄ Swamp за 4 хода), поэтому в таблицу экстр они не входят — их
@@ -18,6 +23,8 @@ Forest+Pheasant ⇄ Swamp за 4 хода), поэтому в таблицу э�
 from __future__ import annotations
 
 from typing import Any, Optional
+
+from .terrain_work_effects import ROAD_EFFECTS, TERRAIN_WORK_EFFECTS
 
 #: Работа CivRealm → экстра, которую она ставит на клетку.
 WORK_ACTION_EXTRA: dict[str, str] = {
@@ -103,21 +110,63 @@ def tile_terrain_extras(map_obs: dict[str, Any], x: int, y: int) -> tuple[str, t
     return tname, extras
 
 
-def tile_effect(extra: str, terrain: str, extras: tuple[str, ...],
-                vals: dict[str, Any]) -> Optional[tuple[float, float, float]]:
-    """Измеренный эффект экстры на клетке: Δ(еда, щиты, торговля) или None.
+def world_effect(extra: str, terrain: str) -> Optional[tuple[float, float, float]]:
+    """Эффект работы по ПРАВИЛАМ МИРА (`terrain.ruleset`) или None.
 
-    Эффект ищется сначала по паре (экстра, террейн), затем по одной экстре —
-    если измерение делалось без привязки к террейну. `None` означает «не
-    измерено»: вызывающий код обязан вернуть 0, а не подставить догадку.
+    Ирригация и шахта — приросты, записанные у террейна (`irrigation_food_incr`,
+    `mining_shield_incr`, …). Дорога и железная дорога — собственные приросты экстры,
+    умноженные на процент, который террейн применяет (`road_trade_incr_pct` и родственные).
+
+    Ничего не выдумывается: нет поля в правилах — нет числа.
+    """
+    # Имена террейнов в наблюдении — с большой буквы (`Grassland`), а в правилах — с
+    # маленькой (`grassland`): сверяем без учёта регистра (поймали сторожа).
+    row = TERRAIN_WORK_EFFECTS.get(str(terrain).lower()) or {}
+    if extra == "Irrigation":
+        return (row.get("irrigation_food_incr", 0.0), row.get("irrigation_shield_incr", 0.0),
+                row.get("irrigation_trade_incr", 0.0))
+    if extra == "Mine":
+        return (row.get("mining_food_incr", 0.0), row.get("mining_shield_incr", 0.0),
+                row.get("mining_trade_incr", 0.0))
+    if extra in ("Road", "Railroad"):
+        own = ROAD_EFFECTS.get(extra) or {}
+        if not own:
+            # В правилах у этой экстры своих приростов нет — тогда и добавить нечего.
+            return (0.0, 0.0, 0.0)
+        pct = row.get("road_food_incr_pct", 0.0) / 100.0
+        pct_shield = row.get("road_shield_incr_pct", 0.0) / 100.0
+        pct_trade = row.get("road_trade_incr_pct", 0.0) / 100.0
+        return (own.get("food_incr", 0.0) * pct, own.get("shield_incr", 0.0) * pct_shield,
+                own.get("trade_incr", 0.0) * pct_trade)
+    return None
+
+
+def tile_effect(extra: str, terrain: str, extras: tuple[str, ...],
+                vals: dict[str, Any],
+                source: Optional[list[str]] = None) -> Optional[tuple[float, float, float]]:
+    """Эффект экстры на клетке: Δ(еда, щиты, торговля) или None.
+
+    Сперва своё измерение (по паре «экстра@террейн», затем по одной экстре), затем ПРАВИЛА МИРА
+    (§13.257 — иначе цена работы остаётся нулём). `None` означает «не знаем»: вызывающий код
+    обязан вернуть 0, а не подставить догадку. `source` — необязательный список, куда пишется,
+    откуда взято число (`измерено` или `правила мира`), чтобы решение было проверяемым.
     """
     if extra in extras:
+        if source is not None:
+            source.append("уже стоит")
         return (0.0, 0.0, 0.0)  # уже стоит: работа ничего не изменит
     table = vals.get("MEASURED_EXTRA_EFFECTS") or {}
     for key in (f"{extra}@{terrain}", extra):
         value = table.get(key)
         if value is not None:
+            if source is not None:
+                source.append("измерено")
             return tuple(float(v) for v in value)  # type: ignore[return-value]
+    world = world_effect(extra, terrain)
+    if world is not None:
+        if source is not None:
+            source.append("правила мира")
+        return world
     return None
 
 

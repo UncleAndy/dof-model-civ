@@ -91,24 +91,45 @@ class TestEffectTable:
         # Coal измерен на живом стенде: Hills+Coal (1,2,0) против Hills (1,0,0).
         assert tile_effect("Coal", "Hills", (), self.VALS) == (0.0, 2.0, 0.0)
 
-    def test_unmeasured_extra_returns_none_not_zero(self):
-        # Mine пока не измерена: это НЕ «эффекта нет», а «не знаем». Разница
-        # важна: неизмеренное обязано молчать, а не притворяться нулём.
-        assert tile_effect("Mine", "Hills", (), self.VALS) is None
+    def test_unknown_to_both_sources_is_none_not_zero(self):
+        # Экстры, которой нет ни в наших измерениях, ни в правилах мира, мы
+        # действительно не знаем: обязана молчать, а не притворяться нулём.
+        assert tile_effect("NoSuchExtra", "Grassland", (), self.VALS) is None
+
+    def test_unmeasured_extra_falls_back_to_world_rules(self):
+        # Шахта на холме у нас не измерена, но правила мира её знают:
+        # `[terrain_hills] mining_shield_incr = 3` (classic/terrain.ruleset).
+        # Именно этим заполняется незнание, из-за которого цена работы была нулём (§13.257).
+        assert tile_effect("Mine", "Hills", (), self.VALS) == (0.0, 3.0, 0.0)
+        assert tile_effect("Mine", "Desert", (), self.VALS) == (0.0, 1.0, 0.0)
+
+    def test_source_of_the_number_is_reported(self):
+        # Решение должно быть проверяемым: откуда взято число — наши измерения или правила.
+        ours, world = [], []
+        tile_effect("Coal", "Hills", (), self.VALS, source=ours)
+        tile_effect("Mine", "Hills", (), self.VALS, source=world)
+        assert ours == ["измерено"]
+        assert world == ["правила мира"]
 
     def test_measured_work_on_a_given_terrain_is_recorded(self):
         # Замерено на живом стенде: ирригация на равнине ставит экстру за 3 хода,
         # но выхода не добавляет (смысл — открыть ферму, а не еду).
         assert tile_effect("Irrigation", "Grassland", (), self.VALS) == (0.0, 0.0, 0.0)
-        # А на пустыне это НЕ измерено — и потому не обобщается.
-        assert tile_effect("Irrigation", "Desert", (), self.VALS) is None
+        # Расхождение источников (§13.258): замер дал ноль, а правила classic обещают
+        # +1 пищу. Пока расхождение не разрешено, приоритет у НАШЕГО замера — и сторож
+        # это фиксирует, чтобы «удобное» число не подменило измеренное молча.
+        assert tile_effect("Irrigation", "Desert", (), self.VALS) == (1.0, 0.0, 0.0), (
+            "пустыня: измерения нет, значит берём правила мира (irrigation_food_incr = 1)"
+        )
 
     def test_measured_roads_place_the_extra_without_output(self):
         # Замерено на трёх террейнах: дорога ставит экстру Road, выхода не даёт
         # (в этой версии стенда дорога — только перемещение).
         for terrain in ("Grassland", "Plains", "Hills"):
             assert tile_effect("Road", terrain, (), self.VALS) == (0.0, 0.0, 0.0)
-        assert tile_effect("Road", "Forest", (), self.VALS) is None
+        # Лес: своих приростов у дороги в правилах нет, значит и добавить нечего —
+        # ноль ЭТО ЗНАНИЕ, а не «не знаем» (совпало с живым замером на Plains).
+        assert tile_effect("Road", "Forest", (), self.VALS) == (0.0, 0.0, 0.0)
 
     def test_extra_already_present_is_worthless(self):
         assert tile_effect("Coal", "Hills", ("Coal",), self.VALS) == (0.0, 0.0, 0.0)
