@@ -123,6 +123,60 @@ class LiveContext:
         return None
 
 
+def _allowed_production_types(rec: dict, type_names: dict | None = None) -> set[str] | None:
+    """Имена типов, которые город может строить СЕЙЧАС, по его же маскам мира.
+
+    Правило встроенного ИИ: перебор целей производства идёт под условием доступности
+    (`ai/default/daicity.c:1860`, `else if (!already && can_build)`). Мир публикует по
+    городу `can_build_unit` (по ПРОСТОМУ номеру типа — сдвига наблюдения там нет,
+    52 имени, ровно как длина маски) и `can_build_improvement`; по этим же маскам он
+    сам проверяет допустимость (`city/city_actions.py:424-443`). Без отсева мы
+    предлагали ВЕСЬ каталог (Аполлон, АВКС рядом с Поселенцами) и отправляли то, что
+    сервер молча не применял — измерено: 3649 строк «в очереди Warriors» при
+    отправленных `produce_Settlers`/`produce_Temple` (§13.199–§13.201).
+
+    None — если масок нет вовсе: тогда отсев не делается, и поведение не меняется
+    вслепую (незнание ≠ запрет).
+    """
+    unit_mask = rec.get("can_build_unit")
+    impr_mask = rec.get("can_build_improvement")
+    if not isinstance(unit_mask, (list, tuple)) and not isinstance(impr_mask, (list, tuple)):
+        return None
+    out: set[str] = set()
+    if isinstance(unit_mask, (list, tuple)):
+        try:
+            from env.spec_lenses import unit_order_index
+            names = unit_order_index()
+        except Exception:  # noqa: BLE001
+            names = {}
+        for uid, name in (names or {}).items():
+            try:
+                if int(uid) < len(unit_mask) and unit_mask[int(uid)]:
+                    out.add(str(name))
+            except (TypeError, ValueError, IndexError):
+                continue
+    if isinstance(impr_mask, (list, tuple)):
+        # Улучшения в таблице имён лежат БЕЗ сдвига, значит ключи меньше длины маски —
+        # это и есть их номера (юниты сдвинуты выше, см. `_production_names`).
+        for iid in range(len(impr_mask)):
+            try:
+                if not impr_mask[iid]:
+                    continue
+            except (TypeError, IndexError):
+                continue
+            name = (type_names or {}).get(int(iid))
+            if name:
+                out.add(str(name))
+    return out
+
+
+def _mask_len(value: Any) -> str:
+    """Длина маски мира для следа: «—», если её нет (незнание ≠ пустая маска)."""
+    if isinstance(value, (list, tuple)):
+        return str(len(value))
+    return "—"
+
+
 def _as_dict(value: Any) -> dict:
     return value if isinstance(value, dict) else {}
 
@@ -628,10 +682,15 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
         if shields <= 0.0:
             return []
         out: list[tuple[str, float, int]] = []
+        # §13.201: только то, что город МОЖЕТ строить — по его же маскам мира,
+        # как перебирает цели встроенный ИИ (`daicity.c:1860`). Масок нет — не режем.
+        allowed_types = _allowed_production_types(rec, type_names)
         for name, params in offered.items():
             if not params or not name.startswith("produce_"):
                 continue
             type_name = name[len("produce_"):]
+            if allowed_types is not None and type_name not in allowed_types:
+                continue
             # Улучшения — ОТДЕЛЬНОЕ семейство (`improvements`): они не создают
             # сущность, а растут опциями города. Здесь пропускаются, иначе одно и
             # то же здание предлагалось бы дважды и считалось дважды.
@@ -743,9 +802,11 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
                                       if str(n).startswith("produce_"))
                     print(f"[прогноз] постановка {city_id}: production_value="
                           f"{rec.get('production_value')!r} прочитано как {current_name!r}; "
-                          f"предложено: {', '.join(_offered[:8])}"
-                          f"{' …' if len(_offered) > 8 else ''}; "
-                          f"ценность текущей с дисконтом {_now_value:.4f}; лучшие: "
+                          f"маски: юниты={_mask_len(rec.get('can_build_unit'))}, "
+                          f"улучшения={_mask_len(rec.get('can_build_improvement'))}; "
+                          f"годных типов={len(_allowed_production_types(rec, type_names) or [])}"
+                          f"{'' if _allowed_production_types(rec, type_names) is not None else ' (масок нет — не режем)'}; "
+                          f"в очереди ценность с дисконтом {_now_value:.4f}; лучшие: "
                           + ", ".join(f"{n} {v:.4f} за {t:.0f} ход. (с диск. "
                                       f"{v * (_gamma ** t):.4f})" for n, v, t in _top),
                           flush=True)
