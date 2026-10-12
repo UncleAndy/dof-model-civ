@@ -739,9 +739,13 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
                 if _PROD_TRACE:
                     _top = sorted((c for c in out if c[0] != current_name),
                                   key=lambda c: c[1] * (_gamma ** c[2]), reverse=True)[:3]
-                    print(f"[прогноз] постановка {city_id}: в очереди {current_name} "
-                          f"(срок {_now_turns:.0f}, ценность с дисконтом {_now_value:.4f}); "
-                          f"лучшие: "
+                    _offered = sorted(n[len("produce_"):] for n in offered
+                                      if str(n).startswith("produce_"))
+                    print(f"[прогноз] постановка {city_id}: production_value="
+                          f"{rec.get('production_value')!r} прочитано как {current_name!r}; "
+                          f"предложено: {', '.join(_offered[:8])}"
+                          f"{' …' if len(_offered) > 8 else ''}; "
+                          f"ценность текущей с дисконтом {_now_value:.4f}; лучшие: "
                           + ", ".join(f"{n} {v:.4f} за {t:.0f} ход. (с диск. "
                                       f"{v * (_gamma ** t):.4f})" for n, v, t in _top),
                           flush=True)
