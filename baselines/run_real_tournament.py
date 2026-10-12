@@ -315,6 +315,91 @@ def _hold_production_candidates(cands: list, obs: dict, type_names: dict | None)
     return keep
 
 
+def _hold_military_candidates(cands: list, obs: dict, my_id, military: set,
+                              type_names: dict | None) -> list:
+    """Нужда в войске — правило встроенного ИИ в ОБЩЕМ пути (§13.207).
+
+    Замер, по которому это понадобилось: путь без прогноза строил 8–16 военных при
+    населении 2–4, тогда как путь с прогнозом — 0, и разница была не в мире, а в том,
+    что правило нужды жило только в прогнозе (§13.207).
+
+    Правило то же самое и теми же чистыми функциями, что у прогноза
+    (`brain/ai_default/military.py`): опасность = чужие, СПОСОБНЫЕ напасть и ДОЙТИ
+    (`daimilitary.c:77`), защитник нужен при опасности и отсутствии защиты
+    (`daicity.c:649/658`), и ровно столько, сколько покрывает опасность. Безвестные
+    чужие считаются средним по известным (`spec_threat.mean_attack`), не нулём.
+    """
+    if not military:
+        return cands
+    city_fields = (obs or {}).get("city") if isinstance(obs, dict) else None
+    if not isinstance(city_fields, dict) or not city_fields:
+        return cands
+    units = (obs or {}).get("unit") if isinstance(obs, dict) else None
+    units = units if isinstance(units, dict) else {}
+    try:
+        from brain.ai_default import military as _ai_mil
+        from env import spec_threat as _threat
+    except Exception:  # noqa: BLE001
+        return cands
+
+    passports: dict[tuple[int, int], dict] = {}
+    own_by_tile: dict[tuple[int, int], int] = {}
+    for rec in units.values():
+        if not isinstance(rec, dict) or rec.get("x") is None:
+            continue
+        tile = (int(rec.get("x")), int(rec.get("y")))
+        passports[tile] = rec
+        try:
+            if int(rec.get("owner", my_id)) == int(my_id):
+                own_by_tile[tile] = own_by_tile.get(tile, 0) + 1
+        except (TypeError, ValueError):
+            continue
+    mean_att, _n = _threat.mean_attack(obs, my_id)
+    mean_move, _m = _threat.mean_move_rate(obs, my_id)
+    fill_attack = float(mean_att) if mean_att is not None else 1.0
+    fill_move = float(mean_move) if mean_move is not None else 0.0
+
+    have_military = 0
+    for rec in units.values():
+        if not isinstance(rec, dict):
+            continue
+        name = (rec.get("type_rule_name")
+                or (type_names or {}).get(int(_num(rec.get("type"), -1))))
+        if name and str(name) in military:
+            have_military += 1
+
+    need: dict[str, bool] = {}
+    for cid, city in city_fields.items():
+        if not isinstance(city, dict) or city.get("x") is None:
+            continue
+        cx, cy = int(city.get("x")), int(city.get("y"))
+        threats = []
+        for _owner, ux, uy in _threat.foreign_units_from_map(obs, my_id):
+            rec = passports.get((int(ux), int(uy))) or {}
+            threats.append(_ai_mil.Threat(
+                attack_strength=_num(rec.get("type_attack_strength"), fill_attack),
+                hp=_num(rec.get("type_hp"), 1.0),
+                firepower=_num(rec.get("type_firepower"), 1.0),
+                move_rate=_num(rec.get("type_move_rate"), fill_move),
+                distance=int(max(abs(int(ux) - cx), abs(int(uy) - cy)))))
+        danger = _ai_mil.city_danger(threats)
+        wanted = _ai_mil.defenders_wanted(danger)
+        need[str(city.get("id", cid))] = (_ai_mil.needs_defender(danger, own_by_tile.get((cx, cy), 0))
+                                          and have_military < wanted)
+    keep: list = []
+    for c in cands:
+        action = _to_action(c)
+        if action is None:
+            keep.append(c)
+            continue
+        ctrl, actor, name = action
+        if (ctrl != "city" or not str(name).startswith("produce_")
+                or str(name)[len("produce_"):] not in military
+                or need.get(str(actor), True)):
+            keep.append(c)
+    return keep
+
+
 def _to_action(candidate: dict):
     """Candidate -> the (ctrl_type, actor_id, action_name) tuple env.step wants.
 
@@ -1965,6 +2050,12 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                         gen.generate_candidates(dof.state, avail), obs,
                         _production_names(env_getter())
                         if env_getter is not None else None)
+                    if env_getter is not None:
+                        # §13.207: нужда в войске — тоже ОБЩЕЕ правило, не свойство прогноза.
+                        descore = _hold_military_candidates(
+                            descore, obs, getattr(extractor, "my_player_id", None),
+                            _military_type_names(env_getter()),
+                            _production_names(env_getter()))
                     if descore:
                         _pick = max(descore,
                                     key=lambda c: (gen._preference_score(c),
@@ -2030,6 +2121,10 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                 cands = _hold_production_candidates(
                     gen.generate_candidates(dof.state, avail), obs,
                     _production_names(env_getter()) if env_getter is not None else None)
+                if env_getter is not None:
+                    cands = _hold_military_candidates(
+                        cands, obs, getattr(extractor, "my_player_id", None),
+                        _military_type_names(env_getter()), _production_names(env_getter()))
                 if ARGS.ban_produce and cands:
                     # Тот же инструмент для ПРЕЖНЕГО пути (серия A: «обратный запрет»).
                     # Запрет действует только на постановку в очередь и только у того
