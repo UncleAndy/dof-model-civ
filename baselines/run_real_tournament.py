@@ -534,6 +534,52 @@ def _my_units_classes(env_getter, my_id):
         return ()
 
 
+#: Последний собранный контекст прогноза: в нём живёт дверь его чисел для клеток.
+#: Ставится `_production_candidate` каждый ход и читается выбором без DoF.
+_LAST_CTX = None
+
+
+def _tile_score_of(ctx, ctrl_type, action_name, actor_id=None):
+    """Δ веса ЕГО управляющего для перевода жителя — или `None`, если это не клетка.
+
+    Шкалы не смешиваются: это число сравнивается ТОЛЬКО с числами того же рода (прирост
+    взвешенной суммы), а не с опциями и не с приростом DoF.
+    """
+    if ctx is None or str(ctrl_type) != "city":
+        return None
+    name = str(action_name or "")
+    if not (name.startswith("city_work_") or name.startswith("city_unwork_")):
+        return None
+    getter = getattr(ctx, "tile_scores", None)
+    if getter is None:
+        if os.environ.get("DOF_TILE_DEBUG") == "1":
+            print(f"  [клетка-отладка] у контекста нет tile_scores (ctx={type(ctx).__name__})",
+                  flush=True)
+        return None
+    # Id города берётся у АКТЁРА, а не из имени действия: измерено, что число в
+    # `city_unwork_<n>_<dx>_<dy>` — не id города (`city_unwork_11_...` при наших городах
+    # 121 и 126), а индекс клетки в постановке города; иначе дверь его чисел пустеет.
+    if actor_id is None:
+        return None
+    try:
+        rows = getter(str(actor_id))
+    except Exception as exc:  # noqa: BLE001
+        if os.environ.get("DOF_TILE_DEBUG") == "1":
+            print(f"  [клетка-отладка] {name}: его числа упали — "
+                  f"{type(exc).__name__}: {exc}", flush=True)
+        return None
+    if os.environ.get("DOF_TILE_DEBUG") == "1":
+        print(f"  [клетка-отладка] {name}: строк его чисел {len(rows or ())}; "
+              f"контекст {type(ctx).__name__}", flush=True)
+    for act, gain in rows or ():
+        if str(act) == name:
+            return float(gain)
+    if os.environ.get("DOF_TILE_DEBUG") == "1":
+        print(f"  [клетка-отладка] {name}: в его числах не значится (строк {len(rows or ())})",
+              flush=True)
+    return None
+
+
 def _is_wonder_name(name: str) -> bool:
     """Чудо ли это — по роду, прочитанному из правил мира.
 
@@ -610,6 +656,8 @@ def _production_candidate(obs: dict, info: dict, dof_state, extractor,
         if _filters_trace():
             print("  [постановка] контекст не собран или выбор закрыт — пропуск", flush=True)
         return None
+    global _LAST_CTX
+    _LAST_CTX = ctx
     cities = (obs or {}).get("city") or {}
     # Его правило: чудеса строит ТОЛЬКО город чудес (`daicity.c:1972`). Без этой проверки
     # наш город населением 3 ставил `Colossus` (измерено, игра 6001: `produce_Colossus` ×5) —
@@ -2458,6 +2506,32 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                             print(f"  [постановка] отправляю {_prod['action_name']} "
                                   f"городу {_prod['actor_id']}", flush=True)
                         return _to_action(_prod)
+                    # Жителя переставляет ЕГО управляющий (`server/cityturn.c:313`):
+                    # строгое улучшение взвешенной суммы. Замер: до этого у клеток в режиме
+                    # без DoF оценки не было ВООБЩЕ, и жители переставлялись порядком
+                    # короткого списка (перетасовка 2–6 за игру).
+                    _best_tile = None
+                    if os.environ.get("DOF_TILE_DEBUG") == "1":
+                        _tiles_in = [c.get("action_name") for c in descore
+                                     if str(c.get("action_name") or "").startswith(("city_work_", "city_unwork_"))]
+                        print(f"  [клетка-отладка] кандидатов {len(descore)}, из них клеток "
+                              f"{len(_tiles_in)}: {_tiles_in[:6]}; контекст "
+                              f"{'есть' if _LAST_CTX is not None else 'НЕТ'}", flush=True)
+                    for _cand in descore:
+                        _gain = _tile_score_of(_LAST_CTX, _cand.get("ctrl_type"),
+                                               _cand.get("action_name"),
+                                               _cand.get("actor_id"))
+                        if _gain is None or _gain <= 0.0:
+                            continue
+                        if _best_tile is None or _gain > _best_tile[0]:
+                            _best_tile = (_gain, _cand)
+                    if _best_tile is not None:
+                        _wire = _to_action(_best_tile[1])
+                        if _wire is not None:
+                            if os.environ.get("DOF_TRACE_FILTERS") == "1":
+                                print(f"  [без DoF] житель: {_wire[2] if isinstance(_wire, tuple) and len(_wire) > 2 else _wire} "
+                                      f"прирост веса управляющего {_best_tile[0]:+.1f}", flush=True)
+                            return _wire
                     if descore:
                         _pick = max(descore,
                                     key=lambda c: (gen._preference_score(c),

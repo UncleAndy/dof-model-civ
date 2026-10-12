@@ -91,6 +91,12 @@ class LiveContext:
     vals: Valuations
     my_id: int | None
     notes: list[str]
+    #: Числа ЕГО городского управляющего для перевода жителя: `(id города) -> [(имя
+    #: действия, Δ взвешенной суммы)]`. Отдельно от `vals`, потому что `vals` — шкала
+    #: ядра (0…1], а здесь его собственная шкала: смешивать их нельзя (§13.225).
+    #: Поле обязано идти ПОСЛЕ полей без значения: `tile_scores = None` перед `my_id`
+    #: сделало класс неконструируемым (`TypeError: non-default argument 'my_id' follows
+    #: default argument`), и это НЕ поймали тесты — поймал след прогона.
     #: типы, предложенные сервером, но не имеющие ИЗМЕРЕННОЙ стоимости — их
     #: прогноз не предлагает вовсе. Заполняется при первом вызове `productions`.
     unpriced: set[str]
@@ -112,6 +118,15 @@ class LiveContext:
     #: Цена типа по имени — чтобы вызывающий сравнивал постановки ТОЙ ЖЕ мерой
     #: (ценность с дисконтом γ^срок), а не своим коэффициентом.
     type_price_of: Any = None
+    #: Числа ЕГО городского управляющего для перевода жителя: `(id города) -> [(имя
+    #: действия, Δ взвешенной суммы)]`. Отдельно от `vals`, потому что `vals` — шкала
+    #: ядра (0…1], а здесь его собственная шкала: смешивать нельзя (§13.225).
+    #: Место — в САМОМ конце полей: поле со значением перед полем без значения делает
+    #: класс неконструируемым (`TypeError: non-default argument ... follows default
+    #: argument`). Первые две попытки поставить его не туда уронили сбор контекста, и это
+    #: НЕ поймали тесты — поймал след прогона («сбор контекста упал»).
+    tile_scores: Callable[[str], list[tuple[str, float]]] | None = None
+
 
     def probe_action(self) -> tuple[str, str, str] | None:
         """Ход на замер: поставить неоцениваемый тип производства.
@@ -226,6 +241,60 @@ def _effects_price(name: str, city_rec: dict, city_records: dict,
     if options <= 0.0:
         return None
     return float(options), float(cost)
+
+
+#: След источника оценки клетки — печатается один раз за прогон.
+_CM_TRACE_DONE = False
+
+
+def _cm_size_and_granary(rec: dict) -> tuple[int, bool]:
+    """Размер города и «полна ли житница» — по числам записи города."""
+    from brain.ai_default import city_manager as _cm
+
+    size = int(_num(rec.get("size"), 0.0))
+    stock = rec.get("food_stock")
+    stock = None if stock is None else _num(stock, 0.0)
+    return size, _cm.granary_full(size, stock)
+
+
+def _cm_score(rec: dict) -> float | None:
+    """Оценка города его числами управляющего (`server/cityturn.c:313`).
+
+    `None`, если нужных чисел нет: вызывающий тогда берёт прежнюю оценку (Δ опций), а не
+    ноль — «незнание ≠ отсутствие возможностей».
+    """
+    from brain.ai_default import city_manager as _cm
+
+    food, shield = rec.get("prod_food"), rec.get("prod_shield")
+    if food is None or shield is None:
+        return None
+    prod = rec.get("prod")
+    gold = science = None
+    if isinstance(prod, dict):
+        gold, science = prod.get("gold"), prod.get("science")
+    if gold is None or science is None:
+        trade = rec.get("prod_trade")
+        if trade is None:
+            return None
+        # Веса золота и науки у него одинаковы (по 2), а ставки в сумме дают 100 % —
+        # значит вклад торговли равен ей самой, как её ни дели.
+        gold = science = _num(trade, 0.0) / 2.0
+    size, full = _cm_size_and_granary(rec)
+    return _cm.score(_num(food, 0.0), _num(shield, 0.0), _num(gold, 0.0),
+                     _num(science, 0.0), size, full)
+
+
+def _cm_minimums_ok(rec: dict) -> bool | None:
+    """Его наименьшие приросты: `None` — сведений нет (это не запрет)."""
+    from brain.ai_default import city_manager as _cm
+
+    food, shield = rec.get("surplus_food"), rec.get("surplus_shield")
+    if food is None and shield is None:
+        return None
+    size, full = _cm_size_and_granary(rec)
+    food = None if food is None else _num(food, 0.0)
+    shield = None if shield is None else _num(shield, 0.0)
+    return _cm.minimums_ok(food, shield, full)
 
 
 def _mask_len(value: Any) -> str:
@@ -1171,6 +1240,11 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
         rec = city_records.get(city_id)
         if not isinstance(rec, dict) or output_layer is None:
             return []
+        # Оценка клеток — его числами управляющего (§13.223): прежняя мерила НАШ предмет
+        # (прирост опций) и не требовала прироста пищи, а его управляющий требует.
+        # Шкалу НЕ смешиваем: здесь цена — в ОПЦИЯХ (предмет DoF), и в него нельзя
+        # подставлять взвешенную сумму управляющего (это другая шкала). Его числа живут
+        # в `tile_scores()` и решают отдельный вопрос — куда ставить ЖИТЕЛЯ (§13.225).
         try:
             from env.entity_extractor import city_options
             model = getattr(extractor, "model", None)
@@ -1228,6 +1302,78 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
                 if pair is not None and pair > own:
                     own = pair
             out.append((text, own))
+        return out
+
+    def tile_scores(city_id: str) -> list[tuple[str, float]]:
+        """[(действие клетки, Δ веса ЕГО управляющего)] — `server/cityturn.c:313`.
+
+        Зачем отдельно от `tiles()`. `tiles()` меряет НАШ предмет (опции) и кормит им
+        поиск по DoF. Здесь — предмет ЕГО управляющего: пища с весом по размеру города,
+        щиты ×5, золото ×2, наука ×2, плюс его наименьшие приросты (пища ≥ 1, щиты ≥ 1).
+        Смешивать шкалы нельзя, поэтому это отдельная дверь, а не правка прежней.
+
+        Замер, ради которого дверь открыта: в режиме без DoF у клеток НЕ БЫЛО оценки
+        вовсе — `city_work_*` не ценится ни структурой состояния, ни таблицей замеров,
+        поэтому `projected_dof_delta` у них ноль, а выбор шёл порядком короткого списка
+        (отсюда перетасовка 2–6 за игру).
+        """
+        if not values.get("CITY_TILE_FAMILY", _cfg.CITY_TILE_FAMILY):
+            return []
+        # Имя действия — `city_unwork_<id>_<dx>_<dy>`, а записи городов у нас ключом
+        # `city_<id>` (ключ берётся из самой записи, §5.2f навыка). Приводим к одному виду:
+        # иначе дверь его чисел молча пустеет (измерено: «записи города нет» на каждом ходу).
+        key = str(city_id)
+        if key not in city_records and not key.startswith("city_"):
+            key = f"city_{key}"
+        rec = city_records.get(key)
+        if not isinstance(rec, dict) or output_layer is None:
+            if os.environ.get("DOF_TILE_DEBUG") == "1":
+                print(f"  [клетка-отладка] tile_scores({city_id!r}): записи города "
+                      f"{'нет' if not isinstance(rec, dict) else 'есть'}, слой выходов "
+                      f"{'нет' if output_layer is None else 'есть'}; ключи записей "
+                      f"{list(city_records)[:5]}", flush=True)
+            return []
+        before = _cm_score(rec)
+        if before is None:
+            if os.environ.get("DOF_TILE_DEBUG") == "1":
+                print(f"  [клетка-отладка] tile_scores({city_id!r}): его чисел нет в записи "
+                      f"(поля: {sorted(rec)[:8]})", flush=True)
+            return []          # его чисел нет — молча ничего не выдумываем
+        out: list[tuple[str, float]] = []
+        _offers = _offered_for(offered_city, key)
+        if os.environ.get("DOF_TILE_DEBUG") == "1" and not _offers:
+            print(f"  [клетка-отладка] tile_scores({city_id!r}): предложений для "
+                  f"{key!r} нет; ключи предложений {list(offered_city)[:6]}", flush=True)
+        for name, params in _offers.items():
+            if not params:
+                continue
+            text = str(name)
+            if text.startswith("city_work_"):
+                sign = 1.0
+            elif text.startswith("city_unwork_"):
+                sign = -1.0
+            else:
+                continue
+            outputs = _tile_outputs(str(key), text)
+            if not outputs:
+                continue
+            shifted = dict(rec)
+            for field, index in (("prod_food", 0), ("prod_shield", 1),
+                                 ("prod_trade", 2), ("surplus_food", 0),
+                                 ("surplus_shield", 1), ("surplus_trade", 2)):
+                cur = shifted.get(field)
+                if cur is None:
+                    continue
+                try:
+                    shifted[field] = float(cur) + sign * float(outputs[index])
+                except (TypeError, ValueError):
+                    continue
+            if _cm_minimums_ok(shifted) is False:
+                continue        # измеренное нарушение его наименьших приростов
+            after = _cm_score(shifted)
+            if after is None:
+                continue
+            out.append((text, after - before))
         return out
 
     def techs() -> list[tuple[str, float, int]]:
@@ -1707,7 +1853,8 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
     if w_info:
         notes.append("W_INFO не используется как множитель: цена раскрытия — "
                      "разрыв Дженсена, свободного веса нет")
-    return LiveContext(state=state, vals=vals, my_id=my_id, notes=notes,
+    return LiveContext(state=state, vals=vals, tile_scores=tile_scores,
+                       my_id=my_id, notes=notes,
                        unpriced=unpriced, facts_summary=world.summary(),
                        probe_offers=probe_offers, facts=world,
                        production_of=productions, type_price_of=type_price)
