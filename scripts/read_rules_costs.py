@@ -25,8 +25,10 @@ CONTAINER = "freeciv-web"
 RULES_DIR = "/home/docker/freeciv/share/freeciv/classic"
 
 UNIT_KEYS = ("name", "rule_name", "build_cost", "pop_cost", "attack", "defense",
-             "hitpoints", "firepower", "move_rate")
+             "hitpoints", "firepower", "move_rate", "class")
 BUILDING_KEYS = ("name", "rule_name", "genus", "build_cost", "upkeep")
+#: ключи, которые надо снять с кавычек (`class = "Land"` приходит как `"Land"`)
+UNQUOTE_KEYS = ("name", "rule_name", "genus", "class")
 
 
 def read_rules(name: str) -> str:
@@ -81,10 +83,47 @@ def scalar(body: str, key: str) -> str | None:
     return match.group(1).split(";")[0].strip()
 
 
-def reqs_targets(body: str) -> list[tuple[str, str, str]]:
-    """Из `reqs` — требования вида ("Building", "Granary", "City")."""
-    pairs = re.findall(r'"([A-Za-z]+)"\s*,\s*"([^"]*)"\s*,\s*"([^"]*)"', body)
-    return [(kind, name, rng) for kind, name, rng in pairs]
+def reqs_targets(body: str) -> list[tuple]:
+    """Из `reqs` — требования вида ("Building", "Granary", "City").
+
+    Четвёртое поле (`present`: TRUE/FALSE) тоже читаем: через него устроен `Barracks` —
+    у него НЕТ собственных эффектов, он только включает чужие
+    (`"BuildingFlag", "Barracks", "City", TRUE` в `effects.ruleset`) — и без этого поля
+    постройка выглядела «неоценённой», хотя на деле её ценность просто не прочитана.
+    """
+    out: list[tuple] = []
+    pattern = (r'"([A-Za-z]+)"\s*,\s*"([^"]*)"\s*,\s*"([^"]*)"'
+               r'(?:\s*,\s*(TRUE|FALSE))?')
+    for kind, name, rng, present in re.findall(pattern, body):
+        out.append((kind, name, rng, present))
+    return out
+
+
+def flags_of(body: str) -> tuple:
+    """Флаги раздела правил.
+
+    Измерено: флаги пишут и в скобках (`flags = { "NonMil" }`), и БЕЗ них
+    (`flags = "Settlers", "Cant_Fortify"` — так у поселенца). Прежнее чтение знало
+    только скобочную форму и молча возвращало пусто, а `NonMil` — ровно тот флаг, по
+    которому `Barracks` на поселенцев НЕ действует.
+    """
+    match = re.search(r'^\s*flags\s*=\s*(.*?)(?=\n\s*[a-z_]+\s*=|$)', body, re.M | re.S)
+    if not match:
+        return ()
+    return tuple(sorted(set(re.findall(r'"([^"]+)"', match.group(1)))))
+
+
+def parse_unit_classes(text: str) -> dict[str, dict[str, object]]:
+    """Классы юнитов: имя → флаги. Требования эффектов ссылаются на классы и их флаги."""
+    table: dict[str, dict[str, object]] = {}
+    for name, body in sections(text):
+        if not name.startswith("unitclass_"):
+            continue
+        rule = scalar(body, "rule_name")
+        shown = scalar(body, "name")
+        key = _unquote(rule or shown or name)
+        table[key] = {"name": _unquote(shown or key), "flags": flags_of(body)}
+    return table
 
 
 def parse_units(text: str) -> dict[str, dict[str, object]]:
@@ -97,13 +136,14 @@ def parse_units(text: str) -> dict[str, dict[str, object]]:
             raw = scalar(body, key)
             if raw is None:
                 continue
-            if key in ("name", "rule_name"):
+            if key in UNQUOTE_KEYS:
                 row[key] = _unquote(raw)
             else:
                 try:
                     row[key] = int(float(raw))
                 except ValueError:
                     row[key] = raw
+        row["flags"] = flags_of(body)
         key_name = str(row.get("rule_name") or row.get("name") or name)
         table[key_name] = row
     return table
@@ -122,19 +162,20 @@ def parse_buildings(text: str) -> dict[str, dict[str, object]]:
             raw = scalar(body, key)
             if raw is None:
                 continue
-            if key in ("name", "rule_name", "genus"):
+            if key in UNQUOTE_KEYS:
                 row[key] = _unquote(raw)
             else:
                 try:
                     row[key] = int(float(raw))
                 except ValueError:
                     row[key] = raw
+        row["flags"] = flags_of(body)
         key_name = str(row.get("rule_name") or row.get("name") or name)
         table[key_name] = row
     return table
 
 
-def parse_effects(text: str) -> list[tuple[str, int, str, str, str, str, str, tuple]]:
+def parse_effects(text: str) -> list[tuple]:
     """Эффекты мира: (эффект, величина, род цели, имя цели, охват, ВИД ВЫХОДА, раздел).
 
     Вид выхода (`OutputType`: Food/Shield/Trade/Gold/Luxury) нужен, чтобы приложить к эффекту
@@ -156,27 +197,49 @@ def parse_effects(text: str) -> list[tuple[str, int, str, str, str, str, str, tu
             continue
         targets = reqs_targets(body)
         output_kind = ""
-        for req_kind, req_name, _req_range in targets:
+        for req_kind, req_name, _req_range, _present in targets:
             if req_kind == "OutputType":
                 output_kind = req_name
-        named = [(_unquote(req_name), req_kind)
-                 for req_kind, req_name, _req_range in targets
-                 if req_kind in ("Building", "Unit", "Extra", "Tech")]
-        for req_kind, req_name, req_range in targets:
-            if req_kind not in ("Building", "Unit", "Extra", "Tech"):
-                continue
-            target = _unquote(req_name)
-            # Требования эффекта, кроме самого адресата: у `[effect_oracle]` это ещё и
-            # `Building Oracle`, и без него эффект НЕ действует. Без этого поля ценность
-            # Храма завышалась бы (измерено: 3 раздела Make_Content, но третий — про Оракула).
-            requires = tuple(sorted(n for n, k in named if n != target))
-            out.append((_unquote(kind), amount, req_kind, target, req_range,
-                        output_kind, name, requires))
+        # Адресат эффекта. Если здания/юнита/науки в требованиях нет, адресатом может быть
+        # ФЛАГ постройки: именно так устроен `Barracks` — своих эффектов у него нет, он
+        # включает чужие (`"BuildingFlag", "Barracks", "City", TRUE` в `effects.ruleset`).
+        # Без этого измеренный факт «Barracks нужен городу» не читался вовсе.
+        addresses = [(k, _unquote(n), r)
+                     for k, n, r, _p in targets
+                     if k in ("Building", "Unit", "Extra", "Tech")]
+        if not addresses:
+            # Своих адресатов нет — значит адресат флаговый (измерено на `Barracks`).
+            addresses = [(k, _unquote(n), r)
+                         for k, n, r, pr in targets
+                         if k == "BuildingFlag" and str(pr).upper() == "TRUE"][:1]
+        if not addresses:
+            continue
+        for a_kind, a_name, a_range in addresses:
+        # Требования К ГОРОДУ (что должно быть у города), кроме самого адресата: у
+        # `[effect_oracle]` это ещё и `Building Oracle`, и без него эффект НЕ действует —
+        # измерено: у Храма 3 раздела Make_Content, третий про Оракула.
+            requires = tuple(sorted(
+                (_unquote(n), k, str(p).upper())
+                for k, n, _r, p in targets
+                if k in ("Building", "Unit", "Extra", "Tech", "BuildingFlag")
+                and not (k == a_kind and _unquote(n) == a_name)))
+            # Требования К ЮНИТАМ: на кого эффект действует — это считает его
+            # `num_affected_units` (`daieffects.c:120`), и без них военные семьи не оценить.
+            unit_reqs = tuple(sorted(
+                (_unquote(n), k, str(p).upper())
+                for k, n, _r, p in targets
+                if k in ("UnitClass", "UnitFlag")))
+            out.append((_unquote(kind), amount, a_kind, a_name, a_range,
+                        output_kind, name, requires, unit_reqs))
     return out
 
 
 def main() -> None:
     units = parse_units(read_rules("units.ruleset"))
+    # Классы юнитов определены ВНУТРИ units.ruleset (отдельного файла в classic нет):
+    # измерено — `unitclasses.ruleset` в каталоге правил отсутствует, есть только
+    # units/buildings/effects/terrain/techs/game/cities/governments/actions/styles.
+    unit_classes = parse_unit_classes(read_rules("units.ruleset"))
     buildings = parse_buildings(read_rules("buildings.ruleset"))
     effects = parse_effects(read_rules("effects.ruleset"))
 
@@ -201,6 +264,10 @@ def main() -> None:
               "BUILDING_COST: dict[str, dict[str, object]] = {"]
     for name in sorted(buildings):
         lines.append(f"    {name!r}: {buildings[name]!r},")
+    lines += ["}", "", "#: имя класса юнитов → его флаги (мир нумерует юнитов классами)",
+              "UNIT_CLASSES: dict[str, dict[str, object]] = {"]
+    for name in sorted(unit_classes):
+        lines.append(f"    {name!r}: {unit_classes[name]!r},")
     lines += ["}", "",
               "#: эффекты мира: (эффект, величина, род цели, имя цели, охват, вид выхода,",
               "#:                 раздел, требования — кроме самого адресата)",

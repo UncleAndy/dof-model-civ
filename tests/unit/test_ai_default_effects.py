@@ -68,7 +68,12 @@ class TestWorldGrounding:
         """
         temple = [e for e in EFFECTS if e[3] == "Temple" and e[0] == "Make_Content"]
         assert len(temple) == 3
-        assert {e[7] for e in temple} == {(), ("Mysticism",), ("Oracle",)}
+        # Форма требования выросла до (имя, род, present): род нужен, чтобы отличать
+        # постройку от флага (`BuildingFlag Barracks` — через него `Barracks` включает
+        # чужие эффекты, измерено на правилах мира), а `present` — чтобы отличать
+        # «требуется есть» от «требуется НЕТ». Сами требования те же: наука и Оракул.
+        assert {tuple((r[0], r[1]) for r in (e[7] or ())) for e in temple} == {
+            (), (("Mysticism", "Tech"),), (("Oracle", "Building"),)}
         assert fx.type_options(EFFECTS, "Temple", c=1, unhappy=1) == 35.0
 
     def test_requirements_open_the_extra_effects(self):

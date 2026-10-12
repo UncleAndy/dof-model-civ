@@ -144,6 +144,26 @@ NOTES: list[str] = []
 UNKNOWN: set[str] = set()
 
 
+def _holds(name: str, kind: str, held: frozenset[str]) -> bool:
+    """Выполнено ли одно требование эффекта.
+
+    Требование может быть названо ПОСТРОЙКОЙ (`Building Oracle`, `Tech Mysticism`) — тогда
+    оно выполнено, если имя есть у города/игрока. Но бывает и ФЛАГОМ
+    (`BuildingFlag Barracks`): измерено на правилах мира — у `Barracks` нет собственных
+    эффектов, он только включает чужие через этот флаг, поэтому «держим ли мы флаг»
+    проверяется по флагам удерживаемых построек, а не по имени.
+    """
+    if name in held:
+        return True
+    if str(kind) != "BuildingFlag":
+        return False
+    for building in held:
+        row = BUILDING_COST.get(building) or {}
+        if name in tuple(row.get("flags") or ()):
+            return True
+    return False
+
+
 def requirements_met(row: tuple, held: frozenset[str]) -> bool:
     """Выполнены ли требования эффекта, кроме самого адресата.
 
@@ -154,7 +174,11 @@ def requirements_met(row: tuple, held: frozenset[str]) -> bool:
     if len(row) < 8:
         return True
     for requirement in row[7] or ():
-        if str(requirement) not in held:
+        if isinstance(requirement, (tuple, list)) and len(requirement) >= 2:
+            name, kind = str(requirement[0]), str(requirement[1])
+        else:
+            name, kind = str(requirement), ""
+        if not _holds(name, kind, held):
             return False
     return True
 
