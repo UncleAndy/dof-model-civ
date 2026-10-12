@@ -112,6 +112,11 @@ def _parse_cli(argv: list[str]) -> argparse.Namespace:
                         help="подавать приказ по клетке КАЖДЫЙ ход: наш приказ живёт один ход "
                              "(управляющий сервера перекрывает его, §13.234), но именно он даёт "
                              "прирост еды (§13.235: без приказов городов 0–1 вместо 2–3)")
+    parser.add_argument("--city-manager", dest="city_manager", action="store_true",
+                        default=False,
+                        help="сказать городскому управляющему СЕРВЕРА наши требования "
+                             "(PACKET_WEB_CMA_SET 257): раскладку жителей выбирает он, и без "
+                             "наших требований берёт умолчание (§13.237)")
     parser.add_argument("--no-tile-actions", dest="no_tile_actions",
                         action="store_true", default=False,
                         help="не тратить ходы на клетки: раскладку жителей выбирает "
@@ -2306,6 +2311,76 @@ _UNIT_TRACE_TURNS: set = set()
 # «рост через 1000000000 turns», а счётчик производства сбрасывается).
 _LAST_TILE_ACTION: dict = {}
 
+#: Что мы уже сказали управляющему по каждому городу: `{город: (размер, требуемая еда)}`.
+_CMA_SENT: dict = {}
+
+#: Городской управляющий СЕРВЕРА (проверено дважды: packets.js:75 и разбор enum):
+#: PACKET_WEB_CMA_SET = 257, PACKET_WEB_CMA_CLEAR = 258. Форма запроса — как в самом клиенте
+#: (`javascript/cma.js:115`): {"pid": 257, "id": <город>, "cm_parameter": {...}}.
+_CMA_SET_PID = 257
+_CMA_CLEAR_PID = 258
+
+
+def _city_manager_params(size: int, food_surplus: int) -> dict:
+    """Требования управляющему: числа мира (`set_default_city_manager`, cityturn.c:313-360).
+
+    Порядок выходов у мира: food, shield, trade, gold, luxury, science. Еда — как у него
+    (20 при размере 1, 15 при 2..notradesize, 10 выше), щиты 5, торговля и роскошь 0,
+    золото 2, наука 2. Требование по еде берём строже его (`1`): рост города важнее щита,
+    потому что размер 1 запирает поселенца (измерено §13.231).
+    """
+    food_factor = 20 if size <= 1 else 15
+    return {
+        "minimal_surplus": [int(food_surplus), 1, 0, -2147483647, 0, 0],
+        "max_growth": False,
+        "require_happy": False,
+        "allow_disorder": False,
+        "allow_specialists": True,
+        "factor": [food_factor, 5, 0, 2, 0, 2],
+        "happy_factor": 0,
+    }
+
+
+def _send_city_manager(env_getter, obs, extractor) -> int:
+    """Отправить управляющему наши требования по каждому своему городу. Возвращает число отправок.
+
+    Отправляем только при СМЕНЕ размера города или требуемой еды: незачем повторять одно и то
+    же каждый ход. Мир отдаёт структуру наружу (`server/citytools.c:2696` копирует
+    `pcity->cm_parameter` в веб-пакет), то есть проверка «дошло ли» возможна — но пока её нет,
+    считаем отправленное, а не «поставленное».
+    """
+    try:
+        env = env_getter()
+        ctrl = getattr(getattr(env, "unwrapped", None), "civ_controller", None)
+        ws = getattr(ctrl, "ws_client", None)
+        if ws is None:
+            print("        [управляющий] соединения нет — не отправлено", flush=True)
+            return 0
+        my_id = getattr(extractor, "my_player_id", None)
+        sent = 0
+        for rec in as_dict(obs.get("city")).values():
+            if not isinstance(rec, dict):
+                continue
+            if my_id is not None and rec.get("owner") is not None \
+                    and str(rec.get("owner")) != str(my_id):
+                continue
+            cid = rec.get("id")
+            size = int(rec.get("size") or 1)
+            req = 2 if size <= 1 else 1
+            key = (size, req)
+            if cid is None or _CMA_SENT.get(str(cid)) == key:
+                continue
+            ws.send_request({"pid": _CMA_SET_PID, "id": int(cid),
+                             "cm_parameter": _city_manager_params(size, req)})
+            _CMA_SENT[str(cid)] = key
+            sent += 1
+        if sent and os.environ.get("DOF_TRACE_FILTERS") == "1":
+            print(f"        [управляющий] требования отправлены городам: {sent}", flush=True)
+        return sent
+    except Exception as exc:  # noqa: BLE001 - не рушим матч диагностикой
+        print(f"        [управляющий] сбой: {type(exc).__name__}: {exc}", flush=True)
+        return 0
+
 _FORECAST_STATS: dict[str, int] = {"decisions": 0, "acted": 0, "declined": 0,
                                    "unmappable": 0, "probes": 0, "idle": 0}
 _FORECAST_ERRORS: list[str] = []
@@ -2719,6 +2794,8 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                             return _wire
                     return None
 
+                if getattr(ARGS, "city_manager", False):
+                    _send_city_manager(env_getter, obs, extractor)
                 decided, wire = _forecast_decide(
                     obs, info, dof, extractor, avail,
                     type_names=(_production_names(env_getter())
