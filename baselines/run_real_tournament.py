@@ -2037,6 +2037,8 @@ def _forecast_decide(obs, info, dof, extractor, avail, *, type_names=None,
             _queue = []
             for _c in _cities:
                 _qname = (type_names or {}).get(int(_c.get("production_value") or -1))
+                _cma = _c.get("cma_enabled")
+                _qname = f"{_qname}[упр.{_cma}]" if _cma is not None else _qname
                 _queue.append(f"{_c.get('id')}:{_qname or _c.get('production_value')}"
                               f"(разм.{_c.get('size')},ед.+{_c.get('surplus_food')},"
                               f"запас еды {_c.get('food_stock')}, житница "
@@ -2368,7 +2370,16 @@ def _send_city_manager(env_getter, obs, extractor) -> int:
             size = int(rec.get("size") or 1)
             req = 2 if size <= 1 else 1
             key = (size, req)
-            if cid is None or _CMA_SENT.get(str(cid)) == key:
+            # Мир СНИМАЕТ настройку управляющего: измерено (§13.240) — `cma_enabled` стал True
+            # сразу после отправки и вернулся в False на следующем ходу у города 121. Пока
+            # признак виден и он False, отправляем снова; если признак недоступен (None),
+            # работаем по памяти о размере и требовании.
+            if cid is None:
+                continue
+            said = _CMA_SENT.get(str(cid))
+            if rec.get("cma_enabled") is False:
+                pass  # мир снял — возвращаем, даже если мы это уже говорили
+            elif said == key:
                 continue
             ws.send_request({"pid": _CMA_SET_PID, "id": int(cid),
                              "cm_parameter": _city_manager_params(size, req)})
