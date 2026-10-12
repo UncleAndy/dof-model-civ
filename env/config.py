@@ -155,6 +155,18 @@ UNDEPLOYED_CARRIER_SINK_PER_TURN: float = 0.02
 #: rules) so a site that cannot feed at least two citizens with a surplus can
 #: only ever be a one-day town: those are forbidden rather than penalised — an
 #: unviable option is excised from the candidate set, not scored low (doc §3).
+#: ── Порог основания — ЧИСЛА ВСТРОЕННОГО ИИ, не наши (указание Andy 2026-10-12) ──
+#: Его поселенец берёт площадку при `cr->result > 0` (`ai/default/daisettler.c:826`),
+#: где `cr->result = amortize(cr->total, PERFECTION * turns)` и из него вычтен ценник
+#: самого поселенца (`:816`, `:823`). Наш прежний порог 6.0 еды с убыванием 0.4/ход
+#: (`SITE_MIN_FOOD*` ниже) — наше изобретение: измерено, что с ним наш агент не
+#: основал НИ ОДНОГО города за 40 ходов там, где он основал 1–2 за три (§13.204).
+AI_SITE_FOUNDING_BAR: float = 0.0        # `cr->result > 0`
+AI_SITE_RESULT_IS_ENOUGH: float = 250    # `RESULT_IS_ENOUGH` (`daisettler.c:94`, `:846`)
+AI_SITE_PERFECTION: int = 3              # `PERFECTION` (`daisettler.c:104`, `:816`)
+AI_GROWTH_PRIORITY: int = 15             # `GROWTH_PRIORITY` (`daisettler.c:98`, `:362`)
+AI_GROWTH_POTENTIAL_DEEMPHASIS: int = 8  # `:109`, `cityresult_fill`
+
 SITE_MIN_FOOD: float = 6.0
 
 #: ── ПОРОГ ГОДНОСТИ ПАДАЕТ С ХОДОМ — ДЛЯ ВСЕХ ГОРОДОВ (решение Andy 2026-10-12) ──

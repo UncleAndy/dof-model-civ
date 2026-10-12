@@ -107,6 +107,11 @@ def _parse_cli(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--no-forecast", dest="forecast", action="store_false",
                         help="прежний путь: ядро оценивает один шаг по сегодняшнему "
                              "меню (для сравнения, а не для результатов)")
+    parser.add_argument("--no-dof", dest="no_dof", action="store_true", default=False,
+                        help="ВЫКЛЮЧИТЬ DoF: ни прогноза, ни индекса, ни вето ядра — "
+                             "выбор только предпочтением стратегии. Указание владельца: "
+                             "сначала доказать, что САМА ИГРА (города, рост, производство) "
+                             "не хуже встроенного ИИ, и лишь потом накладывать индекс")
     parser.add_argument("--seed-base", type=int, default=None,
                         help="if set, episode i calls env.reset(seed=seed_base+i). "
                              "NOTE: observed ineffective on the standard stand -- "
@@ -1897,6 +1902,28 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                 # остаётся как fallback на случай сбоя прогноза, а не как
                 # альтернативное мнение: два решателя одновременно — это не
                 # сравнение, а неопределённость.
+                if getattr(ARGS, "no_dof", False):
+                    # §13.204 (указание владельца): «сначала наш агент играет не хуже
+                    # встроенного с ВЫКЛЮЧЕННЫМ DoF». Ни прогноза, ни индекса, ни вето
+                    # ядра — выбор только предпочтением стратегии
+                    # (`HeuristicGenerator._preference_score`). Нужен, чтобы отделить
+                    # САМУ ИГРУ (основание городов, рост, производство) от наших
+                    # надстроек: пока игра не идёт не хуже его, индекс накладывать не на что.
+                    descore = gen.generate_candidates(dof.state, avail)
+                    if descore:
+                        _pick = max(descore,
+                                    key=lambda c: (gen._preference_score(c),
+                                                   sum(c.get("projected_dof_delta", {}).values()),
+                                                   c.get("is_reversible", True)))
+                        _wire = _to_action(_pick)
+                        if _wire is not None:
+                            if not getattr(self, "_nodof_said", False):
+                                self._nodof_said = True
+                                print("        [без DoF] выбор только предпочтением стратегии"
+                                      "; индекс, прогноз и вето ядра выключены (§13.204)",
+                                      flush=True)
+                            return _wire
+
                 decided, wire = _forecast_decide(
                     obs, info, dof, extractor, avail,
                     type_names=(_production_names(env_getter())

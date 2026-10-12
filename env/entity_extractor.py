@@ -41,6 +41,7 @@ from .config import (
     TECH_BASE_OPTIONS,
     POPULATION_UNIT_TYPES,
     first_city_food_gate as _first_city_food_gate,
+    AI_SITE_FOUNDING_BAR,
     UNIT_TYPICAL_MAX_HP,
     HEALTH_PERCENT_THRESHOLD,
     UNIT_MAX_HP_BY_TYPE,
@@ -1521,7 +1522,16 @@ class GameStateExtractor:
         запрещены — годных площадок 0 из 48 (измерено, §13.165).
         """
         vals = dict(self.model.values())
-        vals["SITE_MIN_FOOD"] = _first_city_food_gate(getattr(self, "_turn", 1))
+        # Порог основания берём У ВСТРОЕННОГО ИИ, а не свой: его поселенец основывает
+        # город при `cr->result > 0` (`ai/default/daisettler.c:826`), где результат уже
+        # амортизирован с `PERFECTION 3` и уменьшен на ценник поселенца (`:816`, `:823`).
+        # Именно это и считает `env/site_eval.py` (`ai_want` = его `result->total`,
+        # `starved_food`/`starved_shield` = его правила голода). Наш прежний порог
+        # «6.0 еды с убыванием 0.4/ход» — ИЗОБРЕТЕНИЕ, и оно блокировало игру:
+        # измерено §13.204 — с ним агент не основал ни одного города за 40 ходов там,
+        # где он основал 1–2 за три. Порог `250` (`RESULT_IS_ENOUGH`) — не порог
+        # основания, а «хватит искать дальше» (`:846`), и здесь он ни при чём.
+        vals["SITE_MIN_FOOD"] = float(AI_SITE_FOUNDING_BAR)
         return vals
 
     def _carrier_site(self, unit_obs: dict[str, Any], map_obs: dict[str, Any],

@@ -87,16 +87,20 @@ def _context(turn: int):
 
 
 class TestTheWiring:
-    def test_the_first_city_gate_is_announced_in_the_diagnostics(self):
+    def test_the_founding_bar_is_announced_as_the_built_in_ai_one(self):
+        """Порог — число встроенного ИИ, и это видно в самоотчёте прогона."""
         ctx = _context(turn=9)
         joined = " ".join(ctx.notes)
-        assert "порог площадки падает с ходом" in joined
-        assert "на ходу 9 он 2.80" in joined
+        assert "порог основания — число встроенного ИИ" in joined
+        assert "cr->result > 0" in joined          # daisettler.c:826
+        assert "RESULT_IS_ENOUGH 250" in joined    # daisettler.c:94/846 — не порог
+        assert "порог площадки падает с ходом" not in joined, (
+            "вернулся НАШ изобретённый порог с убыванием: он запрещал основание "
+            "целиком (0 городов за 40 ходов там, где встроенный ИИ основал 1–2 за три)")
 
-    def test_with_a_city_the_gate_stays_strict(self):
-        """Город есть → порог не подменяется: правило «однодневок нет» держится."""
-        ctx = _context(turn=40)
-        assert "порог площадки падает с ходом" in " ".join(ctx.notes)
-        # (проверка «после основания порог снова 6.0» живёт на живом проводе:
-        #  там видно и город, и меню; здесь — что подмена включается только на
-        #  состоянии БЕЗ города, а это и есть условие `capital`.)
+    def test_the_bar_does_not_depend_on_the_turn(self):
+        """У его правила хода нет: порог не меняется ни с ходом, ни с наличием города."""
+        first = " ".join(_context(turn=1).notes)
+        later = " ".join(_context(turn=40).notes)
+        for joined in (first, later):
+            assert "порог основания — число встроенного ИИ" in joined

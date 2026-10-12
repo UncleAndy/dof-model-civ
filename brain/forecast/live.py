@@ -445,12 +445,12 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
         _turn_no = max(1, int((info or {}).get("turn") or 1))
     except (TypeError, ValueError):
         _turn_no = 1
-    values["SITE_MIN_FOOD"] = _cfg.first_city_food_gate(_turn_no)
-    notes.append(f"порог площадки падает с ходом "
-                 f"({_cfg.SITE_MIN_FOOD_FIRST:.1f} − "
-                 f"{_cfg.SITE_MIN_FOOD_FIRST_DECAY:.2f}/ход, пол "
-                 f"{_cfg.SITE_MIN_FOOD_FIRST_FLOOR:.1f}); на ходу {_turn_no} он "
-                 f"{values['SITE_MIN_FOOD']:.2f}")
+    values["SITE_MIN_FOOD"] = float(_cfg.AI_SITE_FOUNDING_BAR)
+    notes.append("порог основания — число встроенного ИИ: его поселенец основывает при "
+                 f"`cr->result > 0` (daisettler.c:826; здесь {values['SITE_MIN_FOOD']:.1f}), "
+                 "а `RESULT_IS_ENOUGH 250` означает «хватит искать дальше», не порог "
+                 "(daisettler.c:94/846). Наш прежний порог 6.0 с убыванием 0.4/ход — "
+                 "изобретение, оно блокировало игру (§13.204)")
 
     # ── НАБИВКА СКРЫТЫХ КЛЕТОК — ИЗ ИЗМЕРЕННОГО (§10.27.1) ─────────────────
     # Средний и лучший выход по РАСКРЫТЫМ клеткам этой карты. Нужны там, где окно
@@ -479,6 +479,22 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
     def site_of(tile: tuple[int, int]):
         return evaluate_site(map_obs, int(tile[0]), int(tile[1]), size=1,
                              vals=values)
+    def city_value_raw(tile: tuple[int, int]) -> float:
+        """Сырая ценность площадки — БЕЗ нашего порога годности.
+
+        Порог годности — НАША планка качества основания, а не свойство мира: сервер
+        разрешает город на любой суше, а встроенный ИИ площадки порогом не отсекает
+        вовсе — он сравнивает их сырой ценностью (еда 30, щиты 17, торговля 21.6;
+        `server/advisors/advbuilding.h:19-21`) и всегда идёт к лучшей известной
+        (`ai/default/daisettler.c`). Для ЦЕНЫ РАСКРЫТИЯ порог неверен ещё и потому,
+        что замыкает круг: нет годной площадки ⇒ раскрытие бесполезно ⇒ не раскрываем
+        ⇒ годной площадки не появится (§13.203).
+        """
+        try:
+            return float(extractor._site_city_value(site_of(tile), capital))
+        except Exception:  # noqa: BLE001
+            return 0.0
+
     def city_dof(tile: tuple[int, int]) -> float:
         try:
             site = site_of(tile)
@@ -1370,7 +1386,7 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
             if tile not in state.revealed:
                 continue
             try:
-                held.append(float(city_dof(tile)))
+                held.append(float(city_value_raw(tile)))
             except Exception:  # noqa: BLE001
                 continue
     best_known = math.log(max(max(held), 1.0)) if held else 0.0
