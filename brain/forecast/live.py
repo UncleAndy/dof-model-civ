@@ -179,7 +179,8 @@ def _allowed_production_types(rec: dict, type_names: dict | None = None) -> set[
     return out
 
 
-def _effects_price(name: str, city_rec: dict, city_records: dict) -> tuple[float, float] | None:
+def _effects_price(name: str, city_rec: dict, city_records: dict,
+                   units=()) -> tuple[float, float] | None:
     """(ценность, цена) типа из ЕГО оценки эффектов и правил мира.
 
     Указание владельца: «код встроенного ИИ — это тоже наблюдение, можно использовать
@@ -221,7 +222,7 @@ def _effects_price(name: str, city_rec: dict, city_records: dict) -> tuple[float
         _world_effects, name, prod=prod,
         worked_tiles=int(_num(rec.get("size"), 0.0)),
         unhappy=unhappy, num_cities=max(1, cities), cities=cities,
-        trade_split=trade_split, held=held)
+        trade_split=trade_split, held=held, units=units)
     if options <= 0.0:
         return None
     return float(options), float(cost)
@@ -1382,7 +1383,8 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
         "improvement": _as_dict(getattr(bridge, "improvement_options", None)),
     }
 
-    def type_price(name: str, city_rec: dict | None = None) -> tuple[float, float] | None:
+    def type_price(name: str, city_rec: dict | None = None,
+                   units=()) -> tuple[float, float] | None:
         """(опции типа, стоимость) или None, если цены нет — тогда тип не предлагаем.
 
         Живой юнит типа даёт оба числа сразу (`type_*` + `unit_options`) — и, что
@@ -1431,7 +1433,7 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
         # иначе наружу (в общий путь без прогноза) улучшения приходили без цены вовсе —
         # измерено: из 120 типов оценивались только 8 юнитов.
         if city_rec is not None:
-            return _effects_price(name, city_rec, city_records)
+            return _effects_price(name, city_rec, city_records, units)
         return None
 
     # Цена раскрытия: разрыв Дженсена по ИЗМЕРЕННОМУ разбросу ценностей площадок.

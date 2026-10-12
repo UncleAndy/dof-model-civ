@@ -79,7 +79,7 @@ def content_value(amount: int, unhappy: float, entertainers: float,
 
 
 def effect_value(effect: str, amount: int, *, c: int = 1, unhappy: float = 0.0,
-                 entertainers: float = 0.0, units_supported: int = 0,
+                 entertainers: float = 0.0, units_supported: int = 0, affected: int = 0,
                  num_cities: int = 1, cities: int = 0,
                  empire_size_base: float = 0.0, empire_size_step: float = 0.0,
                  unhappy_free: bool = False) -> float:
@@ -130,6 +130,17 @@ def effect_value(effect: str, amount: int, *, c: int = 1, unhappy: float = 0.0,
         value = float(unhappy) * amount * max(units_supported, 0) * 2
         value += c * max(amount + 2, 1)
         return value
+    # Его военные семьи (`daieffects.c:441-460`). Именно через них ценна постройка
+    # `Barracks`: у неё нет своих эффектов, она включает эти. Числа — его:
+    # `num` — затронутые наши юниты (`affected_units` выше).
+    if effect in ("HP_Regen", "HP_Regen_2"):
+        return 5.0 * c + affected
+    if effect == "Min_HP_Pct":
+        return 3.0 * c + affected
+    if effect == "Veteran_Combat":
+        return 2.0 * c + affected
+    if effect == "Veteran_Build":
+        return float(amount) * (3.0 * c + affected)
     # Прочие виды эффектов его код обрабатывает, но классические правила их не используют;
     # неизвестный вид даёт ноль, а не выдуманное число (и это видно в отчёте: см. `UNKNOWN`).
     return 0.0
@@ -164,6 +175,45 @@ def _holds(name: str, kind: str, held: frozenset[str]) -> bool:
     return False
 
 
+def affected_units(unit_reqs: tuple, units) -> int:
+    """`num_affected_units` (стр. 120): сколько НАШИХ юнитов эффект затрагивает.
+
+    Он идёт по КЛАССАМ юнитов и складывает `adv->stats.units.byclass[класс]` для классов,
+    удовлетворяющих требованиям эффекта. Мы идём по нашим юнитам и проверяем ту же пару
+    (класс, флаги) по каждому: `UnitClass Land` — класс совпадает, `UnitFlag NonMil FALSE` —
+    у типа этого флага НЕТ.
+
+    Названное расхождение: его проверка по классам может оказаться грубее (например, считать
+    все наземные, включая невоенных), и тогда его число будет больше нашего. Это не подгонка,
+    а известная разница: она видна и проверяема, потому что `byclass` — его собственный счётчик.
+    """
+    total = 0
+    for unit in units or ():
+        class_name, flags = (unit if isinstance(unit, (tuple, list)) and len(unit) >= 2
+                             else (unit, ()))
+        flags = tuple(flags or ())
+        ok = True
+        for requirement in unit_reqs or ():
+            if not isinstance(requirement, (tuple, list)) or len(requirement) < 2:
+                continue
+            name, kind = str(requirement[0]), str(requirement[1])
+            present = True
+            if len(requirement) >= 3 and str(requirement[2]).upper() in ("TRUE", "FALSE"):
+                present = str(requirement[2]).upper() == "TRUE"
+            if kind == "UnitClass":
+                hit = str(class_name) == name
+            elif kind == "UnitFlag":
+                hit = name in flags
+            else:
+                continue
+            if hit != present:
+                ok = False
+                break
+        if ok:
+            total += 1
+    return total
+
+
 def requirements_met(row: tuple, held: frozenset[str]) -> bool:
     """Выполнены ли требования эффекта, кроме самого адресата.
 
@@ -188,7 +238,7 @@ def type_options(effects: list[tuple], target: str, *,
                  c: int = 1, unhappy: float = 0.0, entertainers: float = 0.0,
                  units_supported: int = 0, num_cities: int = 1, cities: int = 0,
                  empire_size_base: float = 0.0, empire_size_step: float = 0.0,
-                 unhappy_free: bool = False) -> float:
+                 unhappy_free: bool = False, units=()) -> float:
     """Ценность типа: сумма ценностей ЕГО эффектов, адресованных этому типу.
 
     `effects` — таблица мира из `env/rules_costs.py::EFFECTS`
@@ -201,8 +251,14 @@ def type_options(effects: list[tuple], target: str, *,
             continue
         if not requirements_met(row, held):
             continue
+        # Требования К ЮНИТАМ у его эффектов — это не «что должно быть у города», а
+        # «на кого эффект действует»: их считает `num_affected_units` (стр. 120). Без этого
+        # у `Barracks` (ветеранство и восстановление войск) ценность выходила нулевой.
+        unit_reqs = row[8] if len(row) > 8 else ()
+        affected = affected_units(unit_reqs, units) if unit_reqs else 0
         value = effect_value(str(effect), int(amount), c=c, unhappy=unhappy,
                              entertainers=entertainers, units_supported=units_supported,
+                             affected=affected,
                              num_cities=num_cities, cities=cities,
                              empire_size_base=empire_size_base,
                              empire_size_step=empire_size_step, unhappy_free=unhappy_free)
@@ -309,7 +365,8 @@ def improvement_value(effects: list[tuple], target: str, *, prod: dict[str, floa
                       unhappy_free: bool = False, tax_rate: float | None = None,
                       wants_science: bool = True,
                       trade_split: tuple[float, float, float] | None = None,
-                      held: frozenset[str] = frozenset()) -> float:
+                      held: frozenset[str] = frozenset(),
+                      units=()) -> float:
     """Ценность улучшения: прирост хотения города плюс ценность эффектов счастья.
 
     Ровно так его `base_want` (`daicity.c:1495`) и устроен: «добавить постройку и сравнить
@@ -343,8 +400,13 @@ def improvement_value(effects: list[tuple], target: str, *, prod: dict[str, floa
     for row in effects:
         if len(row) < 6 or str(row[3]) != str(target):
             continue
+        # Требования К ЮНИТАМ — «на кого эффект действует» (`num_affected_units`, стр. 120):
+        # без них постройка `Barracks` (ветеранство и восстановление войск) выходила нулём,
+        # хотя у города уже стоят военные, ровно на которых она и работает.
+        unit_reqs = row[8] if len(row) > 8 else ()
         content += effect_value(str(row[0]), int(row[1]), c=1, unhappy=unhappy,
                                entertainers=entertainers, units_supported=units_supported,
+                               affected=affected_units(unit_reqs, units) if unit_reqs else 0,
                                num_cities=max(1, num_cities), cities=cities,
                                empire_size_base=empire_size_base,
                                empire_size_step=empire_size_step, unhappy_free=unhappy_free)

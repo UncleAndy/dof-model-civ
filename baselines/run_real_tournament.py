@@ -491,6 +491,49 @@ def _world_production_names(env_getter, cid):
         return None
 
 
+def _my_units_classes(env_getter, my_id):
+    """Классы и флаги НАШИХ юнитов — из мира (его правила плюс его же записи юнитов).
+
+    Нужны военным семьям его оценки (`num_affected_units`, `daieffects.c:120`): постройка
+    `Barracks` ценна ровно тем, что действует на наших наземных НЕневоенных. В нашем
+    наблюдении ни класса, ни флагов нет, поэтому берём их там же, где их берёт стенд:
+    `rule_ctrl.unit_types[id]['class']` → `rule_ctrl.unit_classes[id]`, плюс собственные
+    флаги типа (именно по ним различается `NonMil`).
+    """
+    if env_getter is None:
+        return ()
+    try:
+        env = env_getter()
+        ctl = getattr(getattr(env, "unwrapped", None), "civ_controller", None)
+        rules = getattr(ctl, "rule_ctrl", None)
+        units = getattr(getattr(ctl, "unit_ctrl", None), "units", None) or {}
+        classes = getattr(rules, "unit_classes", None) or {}
+        utypes = getattr(rules, "unit_types", None) or {}
+        out = []
+        for _uid, unit in (units.items() if isinstance(units, dict) else ()):
+            if not isinstance(unit, dict):
+                continue
+            owner = unit.get("owner")
+            if my_id is not None and owner is not None and int(owner) != int(my_id):
+                continue
+            spec = utypes.get(unit.get("type")) if isinstance(utypes, dict) else None
+            spec = spec if isinstance(spec, dict) else {}
+            cls = classes.get(spec.get("class")) if isinstance(classes, dict) else None
+            cls = cls if isinstance(cls, dict) else {}
+            cls_name = str(cls.get("name") or "").split(":")[-1]
+            flags: list[str] = []
+            for source in (spec.get("flags"), cls.get("flags")):
+                if isinstance(source, (list, tuple, set)):
+                    flags.extend(str(f).split(":")[-1] for f in source)
+            out.append((cls_name, tuple(flags)))
+        return tuple(out)
+    except Exception as exc:  # noqa: BLE001
+        if _filters_trace():
+            print(f"  [постановка] классы юнитов не прочитаны: {type(exc).__name__}: {exc}",
+                  flush=True)
+        return ()
+
+
 def _production_candidate(obs: dict, info: dict, dof_state, extractor,
                           type_names, military_names, gold, avail=None,
                           env_getter=None) -> dict | None:
@@ -596,6 +639,12 @@ def _production_candidate(obs: dict, info: dict, dof_state, extractor,
         # «Стенд сказал» и «сведений нет» — разные вещи. Если список предложений вообще не
         # опубликован (оффлайн, тест, пустое наблюдение), это НЕ запрет: незнание ≠ запрет.
         offer_known = isinstance(avail, dict) and bool(avail)
+        # Классы и флаги наших юнитов — из мира: без них его военные эффекты (ветеранство,
+        # восстановление) не оцениваются, и `Barracks` выходит нулём, хотя войска уже стоят.
+        units = _my_units_classes(env_getter, getattr(extractor, "my_player_id", None))
+        if _filters_trace():
+            print(f"  [постановка] город {cid}: наших юнитов для его военных эффектов "
+                  f"{len(units)}", flush=True)
         if _filters_trace():
             names_sorted = sorted(offered)
             print(f"  [постановка] город {cid}: стенд предлагает {len(names_sorted)} "
@@ -615,9 +664,12 @@ def _production_candidate(obs: dict, info: dict, dof_state, extractor,
             got = None
             if getattr(ctx, "type_price_of", None) is not None:
                 try:
-                    got = ctx.type_price_of(str(name), rec)
-                except Exception:  # noqa: BLE001
+                    got = ctx.type_price_of(str(name), rec, units)
+                except Exception as _exc:  # noqa: BLE001
                     got = None
+                    if _filters_trace():
+                        print(f"  [постановка] {name}: цена не получена — "
+                              f"{type(_exc).__name__}: {_exc}", flush=True)
             if got is None:
                 continue
             options, cost = float(got[0]), float(got[1])
