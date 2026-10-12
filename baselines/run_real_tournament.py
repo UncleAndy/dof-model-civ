@@ -1233,18 +1233,29 @@ def _improvement_names(env) -> dict:
     return out
 
 
+#: След перечня военных типов: сколько имён пришло за партию (§13.192).
+#: Гадать, почему ворота военного типа не срабатывают, нельзя — их надо измерить.
+_MILITARY_TRACE: list = []
+
+
 def _military_type_names(env) -> set:
     """Типы юнитов с наступательной силой — из правил КЛИЕНТА.
 
     Нужно для переноса их правила опасности (§13.161): военные типы предлагаются
     городу только по нужде. Силу берём у самих правил (`attack_strength`), а не из
     списка имён: список имён — наша догадка, а сила — свойство мира.
+
+    Ошибка здесь раньше возвращала ПУСТОЕ множество молча, а пустое множество делает
+    ворота военного типа бездейственными: и прежнее правило, и перенос ничего не меняли
+    бы, а выглядело бы это как «эффекта нет». Теперь причина записывается в след.
     """
     out: set = set()
+    reason = ""
     try:
         ctl = getattr(getattr(env, "unwrapped", None), "civ_controller", None)
         rules = getattr(ctl, "rule_ctrl", None)
-        for _tid, spec in dict(getattr(rules, "unit_types", None) or {}).items():
+        all_types = dict(getattr(rules, "unit_types", None) or {})
+        for _tid, spec in all_types.items():
             if not isinstance(spec, dict):
                 continue
             name = spec.get("name")
@@ -1254,9 +1265,27 @@ def _military_type_names(env) -> set:
                 attack = 0.0
             if name and attack > 0.0:
                 out.add(str(name))
-    except Exception:  # noqa: BLE001
+        if not all_types:
+            reason = "правила типов не получены (unit_types пуст)"
+        elif not out:
+            reason = "у типов нет attack_strength>0 — или поле названо иначе"
+    except Exception as exc:  # noqa: BLE001
+        _MILITARY_TRACE.append({"n": -1, "reason": f"{type(exc).__name__}: {exc}"})
         return set()
+    _MILITARY_TRACE.append({"n": len(out), "reason": reason,
+                            "sample": sorted(out)[:4]})
     return out
+
+
+def _print_military_trace() -> None:
+    """Печатает, сколько военных типов реально пришло из правил клиента."""
+    if not _MILITARY_TRACE:
+        return
+    last = _MILITARY_TRACE[-1]
+    print(f"\n  военные типы из правил: {last['n']}"
+          f"{'  [' + last['reason'] + ']' if last.get('reason') else ''}"
+          f"{'  например: ' + ', '.join(last['sample']) if last.get('sample') else ''}",
+          flush=True)
 
 
 def _publish_improvement_names(extractor, env) -> int:
@@ -2559,6 +2588,7 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
             # «прогноз не работал и всё делал fallback».
             _print_forecast_summary()
             _print_tech_trace()
+            _print_military_trace()
     except MatchTimeout as exc:
         metrics.error = f"timeout: {exc}"
     except Exception as exc:  # noqa: BLE001 - report, never crash the tournament
