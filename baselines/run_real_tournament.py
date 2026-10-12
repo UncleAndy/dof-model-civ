@@ -400,6 +400,50 @@ def _hold_military_candidates(cands: list, obs: dict, my_id, military: set,
     return keep
 
 
+def _apply_common_rules(cands: list, obs: dict, extractor, env_getter,
+                        avail=None) -> list:
+    """ОБЩИЕ правила, обязательные для любого решателя (§13.206–13.208).
+
+    Собрано в одно место, чтобы ни один путь не оказался без правила: пока правила
+    (удержание постановки, нужда в войске) жили внутри прогноза, путь без прогноза
+    строил 8–16 военных при населении 2–4 и менял постановку каждый ход.
+
+    При `DOF_TRACE_FILTERS=1` печатает, СКОЛЬКО кандидатов отбросило каждое правило —
+    чтобы «правило внесено» проверялось замером, а не чтением кода.
+    """
+    if env_getter is None:
+        return cands
+    try:
+        type_names = _production_names(env_getter())
+    except Exception:  # noqa: BLE001
+        return cands
+    before = len(cands)
+    held = _hold_production_candidates(cands, obs, type_names)
+    try:
+        military = _military_type_names(env_getter())
+    except Exception:  # noqa: BLE001
+        military = set()
+    kept = _hold_military_candidates(
+        held, obs, getattr(extractor, "my_player_id", None), military, type_names)
+    if os.environ.get("DOF_TRACE_FILTERS") == "1":
+        city_ish = [c for c in cands
+                    if str((_to_action(c) or ("", "", ""))[2]).startswith("produce_")]
+        print(f"  [правила] кандидатов {before} → удержание {len(held)} → войско {len(kept)}; "
+              f"постановок было {len(city_ish)}, "
+              f"отброшено удержанием {len(city_ish) - len([c for c in held if str((_to_action(c) or ('','',''))[2]).startswith('produce_')])}, "
+              f"войском {len([c for c in held if str((_to_action(c) or ('','',''))[2]).startswith('produce_')]) - len([c for c in kept if str((_to_action(c) or ('','',''))[2]).startswith('produce_')])}; "
+              f"военных типов {len(military)}; род кандидатов "
+              f"{sorted({str((_to_action(c) or ('?','',''))[0]) for c in cands})}; "
+              f"стенд предложил городу "
+              f"{sum(len(v) for k, v in (avail or {}).items() if str(k) in ('city', 'city_ctrl') and isinstance(v, dict))}; "
+              f"имена городовых кандидатов "
+              f"{[str((_to_action(c) or ('','',''))[2]) for c in cands if str((_to_action(c) or ('','',''))[0]) == 'city'][:3]}"
+              f" / в предложении стенда "
+              f"{[str(k) for v in (avail or {}).values() if isinstance(v, dict) for a in v.values() if isinstance(a, dict) for k in a.keys()][:6]}",
+              flush=True)
+    return kept
+
+
 def _to_action(candidate: dict):
     """Candidate -> the (ctrl_type, actor_id, action_name) tuple env.step wants.
 
@@ -2046,16 +2090,8 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                     # (`HeuristicGenerator._preference_score`). Нужен, чтобы отделить
                     # САМУ ИГРУ (основание городов, рост, производство) от наших
                     # надстроек: пока игра не идёт не хуже его, индекс накладывать не на что.
-                    descore = _hold_production_candidates(
-                        gen.generate_candidates(dof.state, avail), obs,
-                        _production_names(env_getter())
-                        if env_getter is not None else None)
-                    if env_getter is not None:
-                        # §13.207: нужда в войске — тоже ОБЩЕЕ правило, не свойство прогноза.
-                        descore = _hold_military_candidates(
-                            descore, obs, getattr(extractor, "my_player_id", None),
-                            _military_type_names(env_getter()),
-                            _production_names(env_getter()))
+                    descore = _apply_common_rules(
+                        gen.generate_candidates(dof.state, avail), obs, extractor, env_getter, avail)
                     if descore:
                         _pick = max(descore,
                                     key=lambda c: (gen._preference_score(c),
@@ -2118,13 +2154,8 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                                   f"обратимое — простой стоил бы позиции)", flush=True)
                         return _to_action(_best)
 
-                cands = _hold_production_candidates(
-                    gen.generate_candidates(dof.state, avail), obs,
-                    _production_names(env_getter()) if env_getter is not None else None)
-                if env_getter is not None:
-                    cands = _hold_military_candidates(
-                        cands, obs, getattr(extractor, "my_player_id", None),
-                        _military_type_names(env_getter()), _production_names(env_getter()))
+                cands = _apply_common_rules(
+                    gen.generate_candidates(dof.state, avail), obs, extractor, env_getter, avail)
                 if ARGS.ban_produce and cands:
                     # Тот же инструмент для ПРЕЖНЕГО пути (серия A: «обратный запрет»).
                     # Запрет действует только на постановку в очередь и только у того
