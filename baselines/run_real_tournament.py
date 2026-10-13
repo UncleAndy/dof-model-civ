@@ -206,7 +206,7 @@ from env.config import AXIOM4_PENALTY_OPTIONS, CORE_DOF_SCALE, EPSILON
 from env.entity_extractor import GameStateExtractor, as_dict, compute_total_dof_index
 from env.experiments import note_choice
 from env import food_gate
-from env.wedged import record_wedged
+from env.wedged import record_success, record_wedged
 from env.world_model import FALSE_CLAIM_MARKER, Provenance
 from brain.generator.heuristics import ALL_STRATEGIES, DEFENSIVE, HeuristicGenerator
 from metrics.tracker import MatchMetrics, agent_turns
@@ -3287,21 +3287,64 @@ def _sample_sites(obs: dict, turn: int, radius: int, my_player_id) -> int:
     return written
 
 
-def _record_wedge(metrics: MatchMetrics, action, turn: int) -> None:
-    """Записать выбор, о который заклинило стенд, — это измерение, а не шум.
+def _action_record(action, obs) -> dict[str, Any]:
+    if action is None:
+        return {}
+    ctrl, actor = str(action[0]), str(action[1])
+    records = as_dict(as_dict(obs).get(ctrl))
+    prefix = f"{ctrl}_"
+    actor_key = actor[len(prefix):] if actor.startswith(prefix) else actor
+    keys = (actor, actor_key, f"{ctrl}_{actor_key}")
+    record = next((records[key] for key in keys if key in records), None)
+    if record is None:
+        try:
+            record = records.get(int(actor_key))
+        except ValueError:
+            return {}
+    return as_dict(record)
 
-    Матч потерян, но знание остаётся: семейство уходит в реестр, и следующий
-    матч (в т.ч. следующий агент того же прогона) за него уже не заплатит и не
-    выберет его.
-    """
+
+def _action_position_context(action, obs) -> dict[str, Any]:
+    record = _action_record(action, obs)
+    try:
+        position = [int(record["x"]), int(record["y"])]
+    except (KeyError, TypeError, ValueError):
+        return {}
+    context = {"position": position}
+    unit_type = record.get("type_rule_name") or record.get("rule_name")
+    if unit_type:
+        context["unit_type"] = str(unit_type)
+    return context
+
+
+def _record_wedge(metrics: MatchMetrics, action, turn: int,
+                  action_context=None) -> None:
+    """Записать timeout вместе с местом, не распространяя его вслепую на карту."""
     if action is None:
         return
     ctrl, name = str(action[0]), str(action[2])
     metrics.wedge_action = {"ctrl_type": ctrl, "action_name": name, "turn": turn}
+    context = {"agent": metrics.agent_name, **(action_context or {})}
     try:
-        record_wedged(ctrl, name, turn=turn, context={"agent": metrics.agent_name})
+        record_wedged(ctrl, name, turn=turn, context=context)
     except OSError as exc:  # pragma: no cover - диск, а не логика
         print(f"  [warn] не записал клинч {ctrl}/{name}: {exc}", flush=True)
+
+
+def _record_step_success(metrics: MatchMetrics, action, turn: int,
+                         action_context=None) -> None:
+    """A returned env.step rehabilitates only the same controller position."""
+    if action is None:
+        return
+    ctrl, name = str(action[0]), str(action[2])
+    context = dict(action_context or {})
+    if not context.get("position"):
+        return
+    context["agent"] = metrics.agent_name
+    try:
+        record_success(ctrl, name, turn=turn, context=context)
+    except OSError as exc:  # pragma: no cover - диск, а не логика
+        print(f"  [warn] не записал успех {ctrl}/{name}: {exc}", flush=True)
 
 
 def run_match(agent_type: str, turns: int = 30, port: int = 6001,
@@ -3506,8 +3549,11 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
                     decisions_this_turn = 0
                     used_actors = set()
 
+                step_action_context = _action_position_context(action, obs)
                 stepped = True  # from here a hang belongs to the chosen action
                 obs, reward, terminated, truncated, info = env.step(action)
+                _record_step_success(metrics, action, turns_played + 1,
+                                     step_action_context)
                 # Замер засчитывается только ПОСЛЕ шага: отклонённое сервером
                 # действие ничему не учит, и тратить на него бюджет любопытства
                 # нельзя (то же правило, что для неизмеренных действий проекта).
@@ -3517,7 +3563,8 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
                     # Either the match budget ran out, or the agent itself hung:
                     # neither names an action, so there is nothing to measure.
                     raise
-                _record_wedge(metrics, action, turns_played + 1)
+                _record_wedge(metrics, action, turns_played + 1,
+                              step_action_context)
                 raise MatchTimeout(
                     f"wedged on {action[0]}/{action[2]} at turn "
                     f"{turns_played + 1}") from exc

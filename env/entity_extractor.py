@@ -194,6 +194,8 @@ class SystemStateMatrix(BaseModel):
     global_time_to_collapse_mks: float = 1e15
     context_switch_cost: float = 0.0
     entities: dict[str, EntityState] = Field(default_factory=dict)
+    #: Entity positions, retained for context-scoped action evidence (e.g. wedges).
+    positions: dict[str, tuple[int, int]] = Field(default_factory=dict)
     resources: dict[str, ResourceObservation] = Field(default_factory=dict)
     #: System DoF sink in options (§7): the aggregate upkeep of all units alive.
     #: Kept as a separate quantity, not folded into any unit, because its bite
@@ -236,6 +238,20 @@ def as_dict(value: Any) -> dict:
         return dict(value)
     except (TypeError, ValueError):
         return {}
+
+
+def _entity_positions(observations: dict[str, Any]) -> dict[str, tuple[int, int]]:
+    positions = {}
+    for controller in ("unit", "city"):
+        for actor_id, record in as_dict(observations.get(controller)).items():
+            if not isinstance(record, dict):
+                continue
+            try:
+                positions[f"{controller}_{actor_id}"] = (
+                    int(record["x"]), int(record["y"]))
+            except (KeyError, TypeError, ValueError):
+                continue
+    return positions
 
 
 def as_list(value: Any) -> list:
@@ -798,6 +814,7 @@ class GameStateExtractor:
             psi=self._compute_psi(entities, turn),
             global_time_to_collapse_mks=tau,
             entities=entities,
+            positions=_entity_positions(observations),
             dof_sink=self._compute_system_sink(observations, turn),
             bridge=self._compute_bridge_calibration(observations),
         )

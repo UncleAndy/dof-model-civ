@@ -239,3 +239,44 @@ class TestSlotRange:
         from metrics.tracker import MatchMetrics
 
         assert runner.MatchResult is MatchMetrics
+
+
+class TestWedgeContext:
+    def test_action_context_accepts_canonical_entity_ids(self, runner):
+        observations = (
+            (("unit", "unit_7", "build_city"), {"7": {"x": 4, "y": 5}}),
+            (("unit", 7, "build_city"), {"unit_7": {"x": 4, "y": 5}}),
+            (("unit", "unit_7", "build_city"), {"unit_7": {"x": 4, "y": 5}}),
+        )
+        for action, units in observations:
+            assert runner._action_position_context(action, {"unit": units}) == {
+                "position": [4, 5]}
+
+    def test_timeout_and_returned_step_are_position_scoped(
+            self, runner, tmp_path, monkeypatch):
+        from types import SimpleNamespace
+        import json
+        from env import wedged
+
+        path = tmp_path / "wedged.json"
+        monkeypatch.setattr(wedged, "WEDGED_FILE", path)
+        wedged.reset_cache()
+        metrics = SimpleNamespace(agent_name="dof_expansionist", wedge_action=None)
+        action = ("unit", 7, "build_city")
+        obs = {"unit": {"7": {"x": 4, "y": 5, "type_rule_name": "Settlers"}}}
+        context = {"position": (4, 5)}
+        try:
+            action_context = runner._action_position_context(action, obs)
+            runner._record_wedge(metrics, action, 1, action_context)
+            runner._record_wedge(metrics, action, 2, action_context)
+            assert wedged.is_wedged("unit", "build_city", context=context)
+
+            # Founding consumes the unit, so the post-step observation lacks its ID.
+            assert runner._action_position_context(action, {"unit": {}}) == {}
+            runner._record_step_success(metrics, action, 3, action_context)
+            assert not wedged.is_wedged("unit", "build_city", context=context)
+            entry = json.loads(path.read_text())["unit/build_city"]
+            assert entry["seen"] == 2
+            assert entry["scopes"]["position:4,5"]["successes"] == 1
+        finally:
+            wedged.reset_cache()

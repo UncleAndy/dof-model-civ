@@ -157,6 +157,14 @@ class TestUnitExtraction:
         unit_entities = [e for e in result.state.entities if e.startswith('unit_')]
         assert len(unit_entities) == 3
 
+    def test_state_retains_positions_for_contextual_action_evidence(
+            self, extractor, sample_observation, sample_info):
+        result = extractor.extract(sample_observation, sample_info, turn=10)
+        assert result.state.positions["unit_103"] == (10, 15)
+        assert result.state.positions["city_1"] == (10, 15)
+        assert result.state.positions["unit_200"] == (20, 20)
+
+
     def test_unit_health_dof(self, extractor, sample_observation, sample_info):
         """Unit with lower health should have lower DoF."""
         result = extractor.extract(sample_observation, sample_info, turn=10)

@@ -7,6 +7,46 @@
     "seen": 1,
     "context": {
       "agent": "dof_expansionist"
+    },
+    "successes": 15,
+    "last_success_turn": 4,
+    "last_success_context": {
+      "position": [
+        45,
+        23
+      ],
+      "agent": "dof_expansionist"
+    },
+    "unscoped_seen": 1,
+    "successes_by_context": {
+      "position:31,21": {
+        "successes": 5,
+        "resolved_unscoped_seen": 1
+      },
+      "position:30,19": {
+        "successes": 1,
+        "resolved_unscoped_seen": 1
+      },
+      "position:48,15": {
+        "successes": 2,
+        "resolved_unscoped_seen": 1
+      },
+      "position:46,13": {
+        "successes": 1,
+        "resolved_unscoped_seen": 1
+      },
+      "position:55,20": {
+        "successes": 1,
+        "resolved_unscoped_seen": 1
+      },
+      "position:53,18": {
+        "successes": 2,
+        "resolved_unscoped_seen": 1
+      },
+      "position:45,23": {
+        "successes": 3,
+        "resolved_unscoped_seen": 1
+      }
     }
   },
   "city/city_change_specialist": {
@@ -17,6 +57,275 @@
     "seen": 1,
     "context": {
       "agent": "dof_expansionist"
+    }
+  },
+  "unit/goto": {
+    "ctrl_type": "unit",
+    "action_name": "goto_0",
+    "family": "goto",
+    "first_turn": 1,
+    "seen": 1,
+    "context": {
+      "agent": "dof_defensive"
+    },
+    "successes": 39,
+    "last_success_turn": 2,
+    "last_success_context": {
+      "position": [
+        46,
+        24
+      ],
+      "unit_type": "Explorer",
+      "agent": "dof_expansionist"
+    },
+    "unscoped_seen": 1,
+    "successes_by_context": {
+      "position:30,20": {
+        "successes": 3,
+        "resolved_unscoped_seen": 1
+      },
+      "position:30,22": {
+        "successes": 1,
+        "resolved_unscoped_seen": 1
+      },
+      "position:32,20": {
+        "successes": 1,
+        "resolved_unscoped_seen": 1
+      },
+      "position:32,22": {
+        "successes": 1,
+        "resolved_unscoped_seen": 1
+      },
+      "position:31,21": {
+        "successes": 1,
+        "resolved_unscoped_seen": 1
+      },
+      "position:31,20": {
+        "successes": 1,
+        "resolved_unscoped_seen": 1
+      },
+      "position:30,19": {
+        "successes": 2,
+        "resolved_unscoped_seen": 1
+      },
+      "position:32,19": {
+        "successes": 1,
+        "resolved_unscoped_seen": 1
+      },
+      "position:30,21": {
+        "successes": 1,
+        "resolved_unscoped_seen": 1
+      },
+      "position:29,20": {
+        "successes": 1,
+        "resolved_unscoped_seen": 1
+      },
+      "position:30,18": {
+        "successes": 2,
+        "resolved_unscoped_seen": 1
+      },
+      "position:47,14": {
+        "successes": 2,
+        "resolved_unscoped_seen": 1
+      },
+      "position:47,16": {
+        "successes": 1,
+        "resolved_unscoped_seen": 1
+      },
+      "position:49,14": {
+        "successes": 1,
+        "resolved_unscoped_seen": 1
+      },
+      "position:49,16": {
+        "successes": 1,
+        "resolved_unscoped_seen": 1
+      },
+      "position:46,13": {
+        "successes": 1,
+        "resolved_unscoped_seen": 1
+      },
+      "position:46,16": {
+        "successes": 1,
+        "resolved_unscoped_seen": 1
+      },
+      "position:48,13": {
+        "successes": 1,
+        "resolved_unscoped_seen": 1
+      },
+      "position:48,15": {
+        "successes": 1,
+        "resolved_unscoped_seen": 1
+      },
+      "position:45,14": {
+        "successes": 1,
+        "resolved_unscoped_seen": 1
+      },
+      "position:47,12": {
+        "successes": 1,
+        "resolved_unscoped_seen": 1
+      },
+      "position:54,19": {
+        "successes": 2,
+        "resolved_unscoped_seen": 1
+      },
+      "position:54,21": {
+        "successes": 1,
+        "resolved_unscoped_seen": 1
+      },
+      "position:56,19": {
+        "successes": 1,
+        "resolved_unscoped_seen": 1
+      },
+      "position:53,18": {
+        "successes": 1,
+        "resolved_unscoped_seen": 1
+      },
+      "position:53,20": {
+        "successes": 1,
+        "resolved_unscoped_seen": 1
+      },
+      "position:45,23": {
+        "successes": 4,
+        "resolved_unscoped_seen": 1
+      },
+      "position:44,24": {
+        "successes": 1,
+        "resolved_unscoped_seen": 1
+      },
+      "position:46,22": {
+        "successes": 1,
+        "resolved_unscoped_seen": 1
+      },
+      "position:46,24": {
+        "successes": 1,
+        "resolved_unscoped_seen": 1
+      }
+    }
+  },
+  "city/produce_Legion": {
+    "ctrl_type": "city",
+    "action_name": "produce_Legion",
+    "family": "produce_Legion",
+    "first_turn": 1,
+    "seen": 1,
+    "context": {
+      "agent": "dof_expansionist"
+    }
+  },
+  "city/produce_Factory": {
+    "ctrl_type": "city",
+    "action_name": "produce_Factory",
+    "family": "produce_Factory",
+    "first_turn": 2,
+    "seen": 2,
+    "context": {
+      "agent": "dof_expansionist"
+    },
+    "last_turn": 1,
+    "reason": "timeout"
+  },
+  "city/produce_Library": {
+    "ctrl_type": "city",
+    "action_name": "produce_Library",
+    "family": "produce_Library",
+    "first_turn": 1,
+    "seen": 2,
+    "context": {
+      "agent": "dof_expansionist"
+    },
+    "last_turn": 1,
+    "reason": "timeout"
+  },
+  "city/produce_Mfg. Plant": {
+    "ctrl_type": "city",
+    "action_name": "produce_Mfg. Plant",
+    "family": "produce_Mfg. Plant",
+    "first_turn": 2,
+    "seen": 1,
+    "context": {
+      "agent": "dof_expansionist"
+    }
+  },
+  "city/produce_Offshore Platform": {
+    "ctrl_type": "city",
+    "action_name": "produce_Offshore Platform",
+    "family": "produce_Offshore Platform",
+    "first_turn": 1,
+    "seen": 2,
+    "context": {
+      "agent": "dof_expansionist"
+    },
+    "last_turn": 1,
+    "reason": "timeout"
+  },
+  "city/produce_Marketplace": {
+    "ctrl_type": "city",
+    "action_name": "produce_Marketplace",
+    "family": "produce_Marketplace",
+    "first_turn": 12,
+    "seen": 1,
+    "context": {
+      "agent": "dof_expansionist"
+    }
+  },
+  "unit/build_city": {
+    "ctrl_type": "unit",
+    "action_name": "build_city",
+    "family": "build_city",
+    "first_turn": 1,
+    "seen": 3,
+    "context": {
+      "agent": "dof_expansionist"
+    },
+    "last_turn": 1,
+    "reason": "timeout",
+    "successes": 3,
+    "last_success_turn": 3,
+    "last_success_context": {
+      "position": [
+        43,
+        21
+      ],
+      "unit_type": "Settlers",
+      "agent": "dof_expansionist"
+    },
+    "unscoped_seen": 3,
+    "successes_by_context": {
+      "position:8,14": {
+        "successes": 1,
+        "resolved_unscoped_seen": 3
+      },
+      "position:45,23": {
+        "successes": 1,
+        "resolved_unscoped_seen": 3
+      },
+      "position:43,21": {
+        "successes": 1,
+        "resolved_unscoped_seen": 3
+      }
+    }
+  },
+  "city/city_work": {
+    "ctrl_type": "city",
+    "action_name": "city_work_13_-2_-1",
+    "family": "city_work",
+    "first_turn": 15,
+    "seen": 53,
+    "reason": "timeout",
+    "context": {
+      "agent": "dof_expansionist"
+    },
+    "last_turn": 5
+  },
+  "unit/plant": {
+    "ctrl_type": "unit",
+    "action_name": "plant",
+    "family": "plant",
+    "first_turn": 28,
+    "seen": 1,
+    "reason": "timeout",
+    "context": {
+      "agent": "dof_economic"
     }
   }
 }

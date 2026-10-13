@@ -258,7 +258,14 @@ def estimate_dof_delta(
     #    case where the honest value is not zero: zero would look like "no effect"
     #    and let a curious agent pick it again in the next match, killing that
     #    match too. Cutting it removes it from the shortlist entirely.
-    if is_wedged(ctrl, name):
+    position = getattr(state, "positions", {}).get(entity_key)
+    wedge_context = None
+    if isinstance(position, (tuple, list)) and len(position) == 2:
+        try:
+            wedge_context = {"position": [int(position[0]), int(position[1])]}
+        except (TypeError, ValueError):
+            wedge_context = None
+    if is_wedged(ctrl, name, context=wedge_context):
         return {}
 
     # 1. Founding is a difference between two states, not a constant.

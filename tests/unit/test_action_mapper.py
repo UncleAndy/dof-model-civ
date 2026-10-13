@@ -20,6 +20,13 @@ from brain.generator.heuristics import (
     ALL_STRATEGIES,
     HeuristicGenerator,
 )
+import env.action_mapper as action_mapper_module
+
+
+@pytest.fixture(autouse=True)
+def ignore_persistent_wedge_registry(monkeypatch):
+    """Keep runtime wedge evidence from changing projection unit-test fixtures."""
+    monkeypatch.setattr(action_mapper_module, "is_wedged", lambda *_, **__: False)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

@@ -54,13 +54,65 @@ class TestWedgedRegistry:
         assert data[key]["first_turn"] == 4
         assert data[key]["context"]["agent"] == "dof_economic"
 
-    def test_the_record_is_per_family_not_per_tile(self, registry):
-        # Клинч случился на конкретной клетке, но исключаем семейство: иначе
-        # следующий матч повторит эксперимент на другой клетке и снова умрёт.
+    def test_unscoped_observations_keep_family_fallback(self, registry):
+        # Старые записи без координат остаются семейными для вызовов,
+        # которым контекст недоступен. Forecast-вызовы передают позицию.
         wedged.record_wedged("unit", "irrigate_5_3")
         wedged.record_wedged("unit", "irrigate_40_-2")
         assert wedged.is_wedged("unit", "irrigate_9_9") is True
         assert family_of("irrigate_9_9") == "irrigate"
+
+    def test_context_aware_wedge_does_not_leak_between_locations(self, registry):
+        site_a = {"position": (5, 3)}
+        site_b = {"position": (9, 9)}
+        wedged.record_wedged("unit", "build_city", context=site_a)
+        wedged.record_wedged("unit", "build_city", context=site_a)
+        assert wedged.is_wedged("unit", "build_city", context=site_a) is True
+        assert wedged.is_wedged("unit", "build_city", context=site_b) is False
+
+    def test_success_resolves_unscoped_history_without_erasing_it(self, registry):
+        wedged.record_wedged("unit", "build_city")
+        wedged.record_wedged("unit", "build_city")
+        site_a = {"position": (5, 3)}
+        site_b = {"position": (9, 9)}
+        assert wedged.is_wedged("unit", "build_city", context=site_a) is True
+
+        wedged.record_success("unit", "build_city", context=site_a)
+        assert wedged.is_wedged("unit", "build_city", context=site_a) is False
+        assert wedged.is_wedged("unit", "build_city", context=site_b) is True
+        assert wedged.is_wedged("unit", "build_city") is True
+        entry = json.loads(registry.read_text())["unit/build_city"]
+        assert entry["seen"] == 2
+        success = entry["successes_by_context"]["position:5,3"]
+        assert success["resolved_unscoped_seen"] == 2
+
+    def test_success_at_one_position_keeps_another_position_wedged(self, registry):
+        site_a = {"position": (5, 3)}
+        site_b = {"position": (9, 9)}
+        for _ in range(2):
+            wedged.record_wedged("unit", "build_city", context=site_a)
+            wedged.record_wedged("unit", "build_city", context=site_b)
+        wedged.record_success("unit", "build_city", context=site_a)
+        assert wedged.is_wedged("unit", "build_city", context=site_a) is False
+        assert wedged.is_wedged("unit", "build_city", context=site_b) is True
+
+    def test_success_resets_threshold_before_same_site_can_rewedge(self, registry):
+        site = {"position": (5, 3)}
+        wedged.record_wedged("unit", "build_city", context=site)
+        wedged.record_wedged("unit", "build_city", context=site)
+        assert wedged.is_wedged("unit", "build_city", context=site) is True
+
+        wedged.record_success("unit", "build_city", context=site)
+        assert wedged.is_wedged("unit", "build_city", context=site) is False
+        entry = json.loads(registry.read_text())["unit/build_city"]
+        assert entry["seen"] == 2
+        assert entry["scopes"]["position:5,3"]["resolved_seen"] == 2
+        assert entry["scopes"]["position:5,3"]["successes"] == 1
+
+        wedged.record_wedged("unit", "build_city", context=site)
+        assert wedged.is_wedged("unit", "build_city", context=site) is False
+        wedged.record_wedged("unit", "build_city", context=site)
+        assert wedged.is_wedged("unit", "build_city", context=site) is True
 
     def test_the_record_is_per_controller(self, registry):
         wedged.record_wedged("unit", "irrigate_5_3")
@@ -106,6 +158,24 @@ class TestWedgedIsKnowledge:
         wedged.record_wedged("unit", "irrigate_9_9")
         # Пустая дельта — действие вырезано из шортлиста, а не оценено нулём:
         # ноль выглядел бы как «эффекта нет» и агент выбрал бы его снова.
+        assert estimate_dof_delta(action, state) == {}
+
+    def test_scoped_wedge_uses_the_actor_position(self, registry):
+        from env.action_mapper import CivAction, estimate_dof_delta
+        from env.entity_extractor import BridgeCalibration, EntityState, SystemStateMatrix
+
+        wedged.record_wedged("unit", "build_city", context={"position": (5, 3)})
+        wedged.record_wedged("unit", "build_city", context={"position": (5, 3)})
+        action = CivAction(ctrl_type="unit", actor_id=3, action_name="build_city")
+        state = SystemStateMatrix(
+            entities={"unit_3": EntityState(entity_id="unit_3", entity_type="unit",
+                                            dof_count=2.0, current_dof=0.2)},
+            positions={"unit_3": (9, 9)},
+            bridge=BridgeCalibration(new_city_options=5.0),
+        )
+        assert estimate_dof_delta(action, state) == {"unit_3": 3.0}
+
+        state.positions["unit_3"] = (5, 3)
         assert estimate_dof_delta(action, state) == {}
 
 

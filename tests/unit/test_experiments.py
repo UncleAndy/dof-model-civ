@@ -226,7 +226,9 @@ class TestMapperPaysForExperiments:
 
 
 class TestQuestionsPanel:
-    def test_founding_pays_the_probe_bonus_where_evidence_is_produced(self):
+    def test_founding_pays_the_probe_bonus_where_evidence_is_produced(self, monkeypatch):
+        # This test exercises projection math, not persistent runtime wedge evidence.
+        monkeypatch.setattr("env.action_mapper.is_wedged", lambda *_, **__: False)
         # Ветка основания выходит из estimate_dof_delta РАНЬШЕ общей обработки
         # неизмеренного, поэтому надбавка за зонд обязана платиться прямо здесь —
         # иначе она недостижима ровно там, где рождается свидетельство.
