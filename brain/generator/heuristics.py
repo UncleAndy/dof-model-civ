@@ -126,6 +126,12 @@ FOUNDING_ACTIONS = ('build_city', 'found_city')
 #: и любой тип строится десятки ходов (поселенец — 40, дисконт γ^40 роняет его желание).
 TILE_WORK_ACTIONS = ('mine', 'irrigation', 'road', 'railroad', 'plant', 'cultivate')
 
+#: Отмена собственного приказа. Стоит НЕ ноль, а минус (§13.277): отмена уничтожает уже
+#: вложенные ходы. Измерено — юнит орошал, на следующем ходу получал `cancel_order`
+#: запасным ходом, и орошение не доводилось до конца (`turn 4: irrigation`,
+#: `turn 5: cancel_order`, `turn 6: irrigation`, `turn 9: cancel_order`).
+CANCEL_ORDER_ACTIONS = ('cancel_order',)
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Heuristic generator
@@ -308,6 +314,11 @@ class HeuristicGenerator:
             score += 2.0
         elif any(w in name for w in TILE_WORK_ACTIONS):
             score += 1.0
+        elif any(c in name for c in CANCEL_ORDER_ACTIONS):
+            # Отмена уничтожает вложенные ходы: её цена — минус, а не ноль. Иначе она
+            # выигрывает запасной ход у простого (простой обратим, отмена тоже) и
+            # вложение гибнет — измерено: орошение не доводилось до конца.
+            score -= 1.0
         return score
 
     def _prioritize(
