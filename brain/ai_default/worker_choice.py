@@ -158,3 +158,42 @@ def choose_tile_work(tiles, *, in_use_tiles: frozenset = frozenset()) -> WorkCho
                 activity, new_tile_value=new_value, old_tile_value=old_value,
                 in_use=in_use, delay=delay, best=best, tile=tile)
     return best
+
+#: Работа → поле правил, которым выражен её прирост, и статья выхода, которую оно двигает.
+WORK_INCREMENT_FIELDS: dict[str, tuple[str, int]] = {
+    "mine": ("mining_shield_incr", 1),          # индекс 1 — щиты в тройке (food, shield, trade)
+    "irrigation": ("irrigation_food_incr", 0),  # индекс 0 — еда
+}
+
+
+def work_options_from_rules(terrain: str, outputs, offered) -> dict:
+    """Варианты работ для клетки: `{работа: (новая тройка выходов, срок)}` — из правил мира.
+
+    Вход: террейн клетки, её текущие выходы `(food, shield, trade)` и имена работ, которые
+    стенд СЕЙЧАС предлагает. Выход — только те работы, у которых в правилах есть прирост и
+    есть срок: «нельзя» никогда не выглядит как «мгновенно».
+
+    Срок берётся из правил террейна (`env/terrain_work_times.py`), потому что перенесённое
+    правило встроенного ИИ дисконтирует выигрыш по числу ходов: `amortize(total, delay)`.
+    """
+    from env.terrain_work_effects import TERRAIN_WORK_EFFECTS
+    from env.terrain_work_times import TERRAIN_WORK_TIMES
+
+    effects = TERRAIN_WORK_EFFECTS.get(str(terrain), {}) or {}
+    times = TERRAIN_WORK_TIMES.get(str(terrain), {}) or {}
+    out: dict = {}
+    for work in offered:
+        name = str(work)
+        field = WORK_INCREMENT_FIELDS.get(name)
+        if field is None:
+            continue
+        key, index = field
+        if key not in effects or name not in times:
+            continue
+        delta = float(effects[key])
+        if delta == 0:
+            continue
+        new_outputs = list(outputs)
+        new_outputs[index] = new_outputs[index] + delta
+        out[name] = (tuple(new_outputs), int(times[name]))
+    return out
