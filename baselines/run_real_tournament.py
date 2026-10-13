@@ -949,6 +949,14 @@ def _prefer_port_work_choice(cands: list, obs: dict, dof_state, avail=None) -> l
         out.append(c)
     if not out:
         return cands
+    if os.environ.get("DOF_TRACE_FILTERS") == "1":
+        # След связывает отбор с исходом: видно, что осталось ПОСЛЕ правила, а не только что
+        # оно отложило. Без этого «отложено» и «отправлено» в одном ходу выглядят как
+        # противоречие, хотя могут быть разными решениями.
+        _left = sorted({str(_to_action(c)[2]) for c in out
+                        if _to_action(c) and str(_to_action(c)[2]) in ("mine", "irrigation")})
+        _picked = ", ".join(f"{a}->{w}" for a, w in sorted(keep.items()))
+        print(f"  [работа-перенос] выбор: {_picked}; осталось работ: {_left}", flush=True)
     return out
 
 
