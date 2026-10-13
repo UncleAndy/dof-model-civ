@@ -115,6 +115,10 @@ DIPLOMATIC = StrategyTemplate(
 
 ALL_STRATEGIES = [DEFENSIVE, EXPANSIONIST, ECONOMIC, TECHNOLOGICAL, DIPLOMATIC]
 
+#: Действия основания города. Оба имени в ходу: агент синтезирует `build_city`,
+#: спецификация роли зовёт его `found_city`.
+FOUNDING_ACTIONS = ('build_city', 'found_city')
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Heuristic generator
@@ -286,7 +290,15 @@ class HeuristicGenerator:
             'econ': self.strategy.preferred_economy_actions,
             'tech': self.strategy.preferred_tech_actions,
         }.get(domain, [])
-        return float(sum(1 for pref in prefs if name.startswith(pref) or pref in name))
+        score = float(sum(1 for pref in prefs if name.startswith(pref) or pref in name))
+        if any(name.startswith(f) or f in name for f in FOUNDING_ACTIONS):
+            # Основание города — решение ИГРЫ, а не доменная склонность (§13.270):
+            # простой ход не смеет обойти его в паритете. Измерено на живой серии:
+            # при равном предпочтении поселенец простаивал, потому что набор действий
+            # сравнивается `max(предпочтение, ΔDoF, обратимость)`, основание необратимо,
+            # а простой — обратим, и ход уходил простому.
+            score += 1.0
+        return score
 
     def _prioritize(
         self,
