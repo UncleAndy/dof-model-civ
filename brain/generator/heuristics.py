@@ -51,7 +51,8 @@ class StrategyTemplate:
 DEFENSIVE = StrategyTemplate(
     name="defensive",
     description="Fortify borders, strengthen cities, avoid conflict",
-    preferred_unit_actions=['fortify', 'fortress', 'sentry', 'keep_activity'],
+    preferred_unit_actions=['build_city', 'found_city', 'fortify', 'fortress',
+                            'sentry', 'keep_activity'],
     preferred_city_actions=['build_unit', 'build_improvement'],
     preferred_diplomacy_actions=['peace_treaty', 'accept_treaty', 'alliance'],
     preferred_economy_actions=['set_sci_lux_tax'],
@@ -75,7 +76,8 @@ EXPANSIONIST = StrategyTemplate(
 ECONOMIC = StrategyTemplate(
     name="economic",
     description="Maximize gold, trade, infrastructure",
-    preferred_unit_actions=['road', 'railroad', 'mine', 'plant', 'cultivate', 'goto'],
+    preferred_unit_actions=['build_city', 'found_city', 'road', 'railroad',
+                            'mine', 'plant', 'cultivate', 'goto'],
     preferred_city_actions=['build_improvement', 'buy_improvement'],
     preferred_diplomacy_actions=['add_clause', 'trade_agreement', 'trade_gold'],
     preferred_economy_actions=['set_sci_lux_tax', 'set_tax', 'set_luxury'],
@@ -87,7 +89,8 @@ ECONOMIC = StrategyTemplate(
 TECHNOLOGICAL = StrategyTemplate(
     name="technological",
     description="Rush key technologies, invest in research",
-    preferred_unit_actions=['keep_activity', 'fortify', 'sentry'],
+    preferred_unit_actions=['build_city', 'found_city', 'keep_activity',
+                            'fortify', 'sentry'],
     preferred_city_actions=['build_improvement', 'build_unit'],
     preferred_diplomacy_actions=['add_clause', 'trade_tech'],
     preferred_economy_actions=['set_sci_lux_tax'],
@@ -99,7 +102,8 @@ TECHNOLOGICAL = StrategyTemplate(
 DIPLOMATIC = StrategyTemplate(
     name="diplomatic",
     description="Form alliances, trade agreements, peace treaties",
-    preferred_unit_actions=['keep_activity', 'fortify', 'sentry'],
+    preferred_unit_actions=['build_city', 'found_city', 'keep_activity',
+                            'fortify', 'sentry'],
     preferred_city_actions=['build_improvement'],
     preferred_diplomacy_actions=['alliance', 'peace_treaty', 'accept_treaty',
                                  'add_clause', 'trade_agreement'],
