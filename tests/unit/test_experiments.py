@@ -112,14 +112,30 @@ class TestUncertaintyBonus:
         assert uncertainty_bonus("unit", "road", self.VALS, 0.0) == 0.0
 
     def test_a_work_whose_extra_was_measured_counts_as_known(self):
-        # `build_road` ставит экстру Road, а эффект Road замерен (ноль) — значит
-        # работа известна, и платить за её «эксперимент» нечего.
+        # `build_road` ставит экстру Road, а эффект Road определён ПРАВИЛАМИ
+        # (`road.trade_incr=1` × `road_trade_incr_pct`) — значит работа известна,
+        # и платить за её «эксперимент» нечего. Прежняя посылка «замерен нулём
+        # `map.output`» отозвана: нули того датчика улучшений не измеряли.
         assert action_known("unit", "build_road") is True
         assert action_known("unit", "irrigation") is True
         # `mine` известна из таблицы ΔDoF (измеренный ноль) — тоже знание.
         assert action_known("unit", "mine") is True
         # А вот действие, которого нет ни в одной таблице, — настоящий эксперимент.
         assert action_known("unit", "hut_enter_6") is False
+
+    def test_terrain_work_knowledge_comes_from_rules_not_blind_zero(self):
+        # Знание о работах обязано идти из ПРАВИЛ, а не из отозванного слепого нуля.
+        # Если бы оно держалось на нуле датчика, отзыв нуля молча сделал бы работу
+        # «неизвестной», и агент платил бы за её «эксперимент» в каждом матче.
+        assert "Road" not in cfg.MEASURED_EXTRA_EFFECTS
+        assert "Irrigation" not in cfg.MEASURED_EXTRA_EFFECTS
+        assert cfg.MEASURED_EXTRA_EFFECTS.get("Coal") == (0.0, 2.0, 0.0)
+        from env.terrain_work_effects import effect_known_from_rules
+        assert effect_known_from_rules("Road") is True
+        assert effect_known_from_rules("Irrigation") is True
+        assert effect_known_from_rules("Mine") is True
+        # Экстра, которой нет в правилах, знанием не объявляется.
+        assert effect_known_from_rules("Farmland") is False
 
     def test_note_choice_counts_only_real_experiments(self):
         model = WorldModel()

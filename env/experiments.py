@@ -63,8 +63,16 @@ def action_known(ctrl_type: str, action_name: str) -> bool:
     extra = work_extra(action_name)
     if extra is None:
         return False
-    return any(key == extra or key.startswith(f"{extra}@")
-               for key in cfg.MEASURED_EXTRA_EFFECTS)
+    if any(key == extra or key.startswith(f"{extra}@")
+           for key in cfg.MEASURED_EXTRA_EFFECTS):
+        return True
+    # Четвёртый источник — ПРАВИЛА мира. Указание владельца: эффект — характеристика
+    # мира, её достаточно узнать один раз (`classic/terrain.ruleset`). После отзыва
+    # слепых нулей `map.output` работа считается известной именно отсюда: дорога
+    # описана секцией `road_*`, ирригация и шахта — полями террейна. Иначе знание
+    # зависело бы от отозванного нуля, и `Road` был бы «известен», а `build_road` — нет.
+    from .terrain_work_effects import effect_known_from_rules
+    return effect_known_from_rules(extra)
 
 
 def note_choice(model, ctrl_type: str, action_name: str, turn: int = 0) -> bool:

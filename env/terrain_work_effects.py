@@ -31,3 +31,28 @@ ROAD_PCT_FIELDS = (
     "road_shield_incr_pct",
     "road_trade_incr_pct",
 )
+
+#: экстра работы → поле правил, которым выражен её эффект. Нужно, чтобы «эффект
+#: известен» можно было утверждать по ПРАВИЛАМ (единый источник мира), а не по
+#: нулю слепого датчика: нули `map.output` отозваны, знание обязано быть настоящим.
+WORK_EXTRA_RULE_FIELDS: dict[str, tuple[str, ...]] = {
+    "Irrigation": ("irrigation_food_incr",),
+    "Mine": ("mining_shield_incr",),
+}
+
+
+def effect_known_from_rules(extra: str) -> bool:
+    """Определён ли эффект экстры ПРАВИЛАМИ мира (а не выдуман и не слепой ноль).
+
+    Дорога и её виды описаны собственной секцией `road_*`; ирригация и шахта —
+    полями террейна (`irrigation_food_incr`, `mining_shield_incr`). Если ни одной
+    записи правила нет, эффект неизвестен — и это честный ответ, а не ноль.
+    """
+    name = str(extra or "")
+    if ROAD_EFFECTS.get(name.lower()):
+        return True
+    fields = WORK_EXTRA_RULE_FIELDS.get(name)
+    if not fields:
+        return False
+    terrains = TERRAIN_WORK_EFFECTS.values()
+    return any(field in spec for field in fields for spec in terrains)
