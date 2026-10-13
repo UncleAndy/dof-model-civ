@@ -208,8 +208,7 @@ from env.experiments import note_choice
 from env import food_gate
 from env.wedged import is_wedged_family, is_wedged_here, record_success, record_wedged
 from env.world_model import FALSE_CLAIM_MARKER, Provenance
-from brain.generator.heuristics import (ALL_STRATEGIES, DEFENSIVE, FOUNDING_ACTIONS,
-                                       HeuristicGenerator)
+from brain.generator.heuristics import ALL_STRATEGIES, DEFENSIVE, HeuristicGenerator
 from metrics.tracker import MatchMetrics, agent_turns
 
 # DOF-Core decision engine. The tournament must exercise the actual object of
@@ -843,114 +842,6 @@ def _is_action_wedged(ctrl: str, name: str, position) -> bool:
         return bool(is_wedged_here(ctrl, name, position))
     except Exception:  # noqa: BLE001
         return False
-
-
-def _activity_diag(why: str, uid=None) -> None:
-    """Почему занятие не прочитано — иначе «правило молчит» неотличимо от «данных нет»."""
-    if os.environ.get("DOF_TRACE_FILTERS") != "1":
-        return
-    print(f"  [занят-диагностика] {why} (юнит {uid})", flush=True)
-
-
-def _is_idle_activity(value) -> bool:
-    """Свободен ли юнит. `ACTIVITY_IDLE = 0` — из кода мира (`version/v14.py:50`).
-
-    Неизвестное значение считаем простым: молчание правила безопаснее, чем запрет вслепую —
-    иначе агент перестанет ходить.
-    """
-    if value is None:
-        return True
-    if isinstance(value, str):
-        return "IDLE" in value.upper()
-    try:
-        return int(value) == 0
-    except (TypeError, ValueError):
-        return True
-
-
-def _unit_activities(env_getter) -> dict:
-    """Занятие наших юнитов — из мира (`unit_ctrl.units[id]['activity']`).
-
-    Мир сообщает его сам, и клиент сам различает занятого (`unit_actions.py:514`), поэтому
-    это запись мира, а не догадка (решение владельца: код мира — тоже наблюдение).
-    """
-    if env_getter is None:
-        return {}
-    try:
-        env = env_getter()
-        ctl = getattr(getattr(env, "unwrapped", None), "civ_controller", None)
-        units = getattr(getattr(ctl, "unit_ctrl", None), "units", None) or {}
-        my_id = getattr(ctl, "my_player_id", None)
-        out: dict = {}
-        for uid, unit in (units.items() if isinstance(units, dict) else ()):
-            if not isinstance(unit, dict):
-                continue
-            if "activity" not in unit:
-                # Диагностика §13.281: без неё «правило молчит» и «занятие не приходит»
-                # неразличимы, и правку нельзя проверить честно.
-                _activity_diag("нет поля activity", uid)
-                continue
-            owner = unit.get("owner")
-            if my_id is not None and owner is not None and int(owner) != int(my_id):
-                continue
-            out[str(uid)] = unit.get("activity")
-        if os.environ.get("DOF_TRACE_FILTERS") == "1":
-            print(f"  [занят-диагностика] прочитано занятий: {len(out)} "
-                  f"(юнитов в мире {len(units) if isinstance(units, dict) else 0}, "
-                  f"мой id {my_id}); состояния {list(out.values())[:6]}", flush=True)
-        return out
-    except Exception as exc:  # noqa: BLE001
-        if os.environ.get("DOF_TRACE_FILTERS") == "1":
-            print(f"  [занят] занятие юнитов не прочитано: {type(exc).__name__}: {exc}",
-                  flush=True)
-        return {}
-
-
-def _hold_busy_unit_orders(cands: list, activities=None, env_getter=None) -> list:
-    """Занятому юниту — продолжать начатое, а не получать ДРУГОЙ приказ (§13.281).
-
-    Измерено (`/tmp/dof_growth.log`): `unit/114` получал КАЖДЫЙ ход другой приказ
-    (`mine` → `build_road` → `mine`), поэтому ни одно улучшение не завершалось, клетка
-    оставалась базовой, `prod_food` = 2, излишек еды 0 — и город не рос: 1 город и
-    население 1 против 23 и 182 у встроенного ИИ.
-
-    Основание города разрешено: оно решение ИГРЫ и стоит ВЫШЕ работы клетки (§13.271/13.276),
-    поэтому занятый поселенец обязан мочь основать город вместо дороги.
-
-    Измерено после первой версии: занятие ПРИХОДИТ (0, 13, 15), а `keep_activity` у занятых
-    юнитов в предложении НЕТ — предохранитель «нужен keep_activity» глушил правило, и
-    чередование продолжалось. Поэтому правило применяется без этого условия, но уступает,
-    если оставляет сторону без хода.
-    """
-    if activities is None:
-        activities = _unit_activities(env_getter)
-    if not activities:
-        return cands
-
-    out = []
-    for c in cands:
-        act = _to_action(c)
-        if not act:
-            out.append(c)
-            continue
-        ctrl, actor, name = str(act[0]), str(act[1]), str(act[2])
-        if ctrl != "unit":
-            out.append(c)
-            continue
-        if _is_idle_activity(activities.get(actor)):
-            out.append(c)
-            continue
-        if name == "keep_activity" or any(f in name for f in FOUNDING_ACTIONS):
-            out.append(c)
-            continue
-        if os.environ.get("DOF_TRACE_FILTERS") == "1":
-            print(f"  [занят] unit/{actor} уже занят ({activities.get(actor)}); {name} "
-                  f"отложено — смена приказа уничтожила бы вложенные ходы", flush=True)
-    if not out:
-        # Сторона без хода хуже смены приказа: правило уступает, а не оставляет сторону
-        # без решения (измерено: занятых юнитов 3–5 за ход, и у них нет keep_activity).
-        return cands
-    return out
 
 
 def _drop_wedged_candidates(cands: list, dof_state) -> list:
@@ -2958,10 +2849,6 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                     # §13.274: клин — ИЗМЕРЕННЫЙ факт, и он обязан отсекать действие
                     # ЛЮБОГО рода. Без этого `unit/plant` ставился снова и залипал.
                     descore = _drop_wedged_candidates(descore, dof.state)
-                    # §13.281: занятому юниту — продолжать начатое, а не получать
-                    # другой приказ. Каждый новый приказ отменял предыдущий, и ни
-                    # одно улучшение не завершалось: город не рос.
-                    descore = _hold_busy_unit_orders(descore, env_getter=env_getter)
                     # §13.210: постановку в городе ставим МЫ — стенд этого действия не
                     # предлагает вовсе (§13.209), и без него очередь додерживала Warriors.
                     _prod = _production_candidate(
