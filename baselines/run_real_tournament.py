@@ -821,6 +821,137 @@ def _production_candidate(obs: dict, info: dict, dof_state, extractor,
     return None
 
 
+def _port_diag(why: str, extra) -> None:
+    """Почему перенос работы промолчал — молчание обязано быть отличимо от данных."""
+    if os.environ.get("DOF_TRACE_FILTERS") != "1":
+        return
+    print(f"  [работа-перенос] молчит: {why}" + (f" ({extra})" if extra is not None else ""),
+          flush=True)
+
+
+def _port_work_choice_for(actor, candidates, obs, dof_state, avail=None):
+    """Работа, которую выбрал бы встроенный ИИ на клетке этого юнита (§13.288).
+
+    Возвращает имя работы или None, если данных не хватает (тогда правило молчит).
+    """
+    try:
+        from brain.ai_default.worker_choice import choose_tile_work, work_options_from_rules
+        from env.terrain_output import server_tile_outputs
+        from env.terrain_work import tile_terrain_extras
+    except Exception:  # noqa: BLE001
+        return None
+
+    positions = getattr(dof_state, "positions", None) or {}
+    pos = positions.get(str(actor)) or positions.get(f"unit_{actor}")
+    if not pos:
+        _port_diag(f"нет позиции юнита {actor}", len(positions))
+        return None
+    try:
+        x, y = int(pos[0]), int(pos[1])
+    except (TypeError, ValueError, IndexError):
+        return None
+
+    map_obs = obs.get("map") if isinstance(obs, dict) else None
+    if not isinstance(map_obs, dict):
+        _port_diag("нет карты в наблюдении", None)
+        return None
+    try:
+        terrain, _extras = tile_terrain_extras(map_obs, x, y)
+    except Exception:  # noqa: BLE001
+        return None
+    if not terrain:
+        return None
+    # Клиент присылает ОТОБРАЖАЕМОЕ имя террейна (Grassland), а правила мира записаны
+    # служебными ключами (grassland). Приводим к ключу правил один раз здесь, чтобы ни одна
+    # таблица не искалась по имени, которого в правилах нет.
+    terrain = str(terrain).strip().lower().replace(" ", "_")
+
+    city_actions = {}
+    try:
+        source = avail if avail is not None else ((obs.get("avail") or {}) if isinstance(obs, dict) else {})
+        city_actions = (source or {}).get("city") or {}
+    except Exception:  # noqa: BLE001
+        city_actions = {}
+    outputs_by_city = {}
+    try:
+        outputs_by_city = server_tile_outputs(city_actions, x, y)
+    except Exception:  # noqa: BLE001
+        outputs_by_city = {}
+    if outputs_by_city:
+        outputs = next(iter(outputs_by_city.values()))
+    else:
+        # Город сообщает выходы только своих клеток, а рабочий часто стоит ВНЕ радиуса
+        # (измерено: 6 обращений подряд). Основа выходов — свойство террейна и лежит в
+        # правилах мира, поэтому берём её оттуда, а не из наблюдения и не нулём.
+        from env.terrain_work_times import TERRAIN_BASE_OUTPUTS
+
+        outputs = TERRAIN_BASE_OUTPUTS.get(str(terrain))
+        if outputs is None:
+            _port_diag(f"нет основы выходов для террейна {terrain}", None)
+            return None
+        _port_diag(f"клетка вне радиуса — основа из правил: {terrain} {tuple(outputs)}", None)
+
+    offered = []
+    for c in candidates:
+        act = _to_action(c)
+        if act and str(act[0]) == "unit" and str(act[1]) == str(actor):
+            offered.append(str(act[2]))
+    options = work_options_from_rules(str(terrain), tuple(outputs), offered)
+    if not options:
+        _port_diag(f"правил нет для {terrain} {outputs} из {offered}", None)
+        return None
+    try:
+        choice = choose_tile_work([((x, y), tuple(outputs), options)])
+    except Exception:  # noqa: BLE001
+        return None
+    return choice.activity or None
+
+
+def _prefer_port_work_choice(cands: list, obs: dict, dof_state, avail=None) -> list:
+    """Оставить выбранную ИМ работу среди предложенных работ КАЖДОГО юнита (§13.288).
+
+    Измерено за этот заход: работу клетки выбирал счёт совпадений со списком предпочтений
+    (`_preference_score`), поэтому шли шахта и дорога, а город стоял на размере 1 при
+    излишке еды 0 (13.280). Теперь работу выбирает ЕГО правило.
+    """
+    by_actor: dict = {}
+    for c in cands:
+        act = _to_action(c)
+        if not act or str(act[0]) != "unit":
+            continue
+        name = str(act[2])
+        if name in ("mine", "irrigation"):
+            by_actor.setdefault(str(act[1]), []).append(name)
+    if not by_actor:
+        return cands
+
+    keep: dict = {}
+    for actor in by_actor:
+        chosen = _port_work_choice_for(actor, cands, obs, dof_state, avail)
+        if chosen:
+            keep[actor] = chosen
+    if not keep:
+        return cands
+
+    out = []
+    for c in cands:
+        act = _to_action(c)
+        if not act:
+            out.append(c)
+            continue
+        ctrl, actor, name = str(act[0]), str(act[1]), str(act[2])
+        chosen = keep.get(actor)
+        if ctrl == "unit" and chosen and name in ("mine", "irrigation") and name != chosen:
+            if os.environ.get("DOF_TRACE_FILTERS") == "1":
+                print(f"  [работа-перенос] unit/{actor}: {name} отложено — его правило "
+                      f"выбрало {chosen}", flush=True)
+            continue
+        out.append(c)
+    if not out:
+        return cands
+    return out
+
+
 def _is_action_wedged(ctrl: str, name: str, position) -> bool:
     """Заклинивало ли уже это действие — по правилу §13.274.
 
@@ -2846,6 +2977,11 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                     descore = _apply_common_rules(
                         gen.generate_candidates(dof.state, avail), obs, extractor,
                         env_getter, avail)
+                    # §13.288: работу клетки выбирает ПЕРЕНОСЁННОЕ правило встроенного ИИ,
+                    # а не счёт совпадений со списком. На ОБЩЕМ пути: у решения рабочего
+                    # был свой гейт (`if not ARGS.forecast`), и при --no-dof оно не
+                    # вызывалось вовсе — четвёртый случай одного дефекта (13.286).
+                    descore = _prefer_port_work_choice(descore, obs, dof.state, avail)
                     # §13.274: клин — ИЗМЕРЕННЫЙ факт, и он обязан отсекать действие
                     # ЛЮБОГО рода. Без этого `unit/plant` ставился снова и залипал.
                     descore = _drop_wedged_candidates(descore, dof.state)
