@@ -1395,6 +1395,31 @@ def _dump_state(env, obs, info, extractor, turn: int, port=None) -> None:
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")
     except Exception:  # noqa: BLE001 - запись среза не должна рушить матч
         pass
+    if os.environ.get("DOF_TRACE_FILTERS") == "1":
+        # §13.290: сколько клеток обрабатывает каждый свой город. Мир помечает клетку полем
+        # `worked` = id города (`civrealm/.../map/tile.py:63`). Город размера 1 обязан
+        # обрабатывать центр И клетку горожанина: если обработана одна — горожане не
+        # расставлены, и дело не в ценах и не в работах.
+        try:
+            _worked_layer = (as_dict(obs.get("map")) or {}).get("worked")
+            _counts = {}
+            if _worked_layer is not None:
+                import numpy as np
+
+                _wa = np.asarray(_worked_layer)
+                _ids = [c.get("id") for c in my_cities]
+                for _cid in _ids:
+                    if _cid is None:
+                        continue
+                    _counts[_cid] = int((_wa == _cid).sum())
+            _sizes = {c.get("id"): c.get("size") for c in my_cities}
+            _layer_keys = sorted((as_dict(obs.get("map")) or {}).keys())
+            print(f"      [обработка] свои города: "
+                  f"{[(cid, f'размер {_sizes.get(cid)}', f'клеток {n}') for cid, n in _counts.items()]}"
+                  f"{'(нет клеток) ' if not _counts else ''}слои карты: {_layer_keys}",
+                  flush=True)
+        except Exception as _exc:  # noqa: BLE001 - диагностика не должна рушить матч
+            print(f"      [обработка] не измерена: {_exc!r}", flush=True)
     print(f"      [состояние {row['turn']}] сущ={row['obs_entities']} "
           f"(город {len(city_recs)}, юнит {len(unit_recs)}) "
           f"свои города={[(c.get('x'), c.get('y'), c.get('size'), c.get('surplus_food')) for c in my_cities]} "
