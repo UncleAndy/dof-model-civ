@@ -1,4 +1,4 @@
-"""Сторож на сборку вариантов работ из правил мира (§13.287).
+"""Сторож на сборку вариантов работ из правил мира (§13.287, поправка §13.291).
 
 Проверяется, что перенесённый выбор работы получает числа ИЗ ПРАВИЛ, а не выдуманные:
 прирост — из `env/terrain_work_effects.py`, срок — из `env/terrain_work_times.py`
@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+from brain.ai_default.tile_outputs import tile_outputs_from_rules
 from brain.ai_default.values import city_tile_value
 from brain.ai_default.worker_choice import choose_tile_work, work_options_from_rules
 from env.terrain_work_effects import TERRAIN_WORK_EFFECTS
@@ -20,8 +21,8 @@ def test_irrigation_on_grassland_uses_the_rules_values():
 
 def test_mine_on_hills_uses_the_rules_values():
     """Холмы: шахта даёт +3 щита за 10 ходов — из правил."""
-    opts = work_options_from_rules("hills", (1, 1, 0), ["mine"])
-    assert opts == {"mine": ((1, 4.0, 0), 10)}
+    opts = work_options_from_rules("hills", (1, 0, 0), ["mine"])
+    assert opts == {"mine": ((1, 3.0, 0), 10)}
 
 
 def test_work_not_in_the_rules_is_not_offered():
@@ -38,38 +39,34 @@ def test_road_is_deliberately_absent():
     assert work_options_from_rules("grassland", (2, 0, 0), ["road", "build_road"]) == {}
 
 
-def test_unworked_tiles_compare_TOTALS_so_shields_on_hills_win():
-    """ФАКТ его правила, а не ожидание: сравнивается ИТОГ, поэтому шахта обгоняет орошение.
+def test_unworked_tiles_compare_TOTALS_not_gains():
+    """Ветка необрабатываемых клеток: сравнивается ИТОГ, а не прирост (`autoworkers.c:344-361`).
 
-    Числа: орошённый луг — `city_tile_value(3,0,0) = 90+15 = 105`; шахта на холме —
-    `city_tile_value(1,4,0) = 30+15 + 68+8.5 = 121.5`. В ветке необрабатываемых клеток
-    (`autoworkers.c:344-361`) он берёт БОЛЬШИЙ ИТОГ, а не больший прирост. Первая версия
-    этого теста ждала еду «по смыслу» и падала; тест исправлен под исходник.
-
-    Рост при этом защищён в его коде ОТДЕЛЬНО — правилом `food_starvation`
-    (`daisettler.c:558`), уже перенесённым в `brain/ai_default/values.py`.
+    Орошённый луг `105` против шахты холма `104.5` — при том, что ПРИРОСТ у шахты больше
+    (`104.5 − 45 = 59.5` против `105 − 75 = 30`). Побеждает всё равно луг: решает итог.
+    Если бы правило сравнивало приросты, победила бы шахта. Тест стережёт именно это.
     """
-    grass, hills = (2, 0, 0), (1, 1, 0)
-    assert city_tile_value(3, 0, 0) == 105
-    assert city_tile_value(1, 4, 0) == 121.5
+    grass, hills = tile_outputs_from_rules("grassland", ()), tile_outputs_from_rules("hills", ())
+    assert city_tile_value(*hills) == 45.0
+    assert (city_tile_value(1, 3, 0) - city_tile_value(*hills)) > (
+        city_tile_value(3, 0, 0) - city_tile_value(*grass))
     tiles = [
         ((1, 1), grass, work_options_from_rules("grassland", grass, ["irrigation"])),
         ((2, 2), hills, work_options_from_rules("hills", hills, ["mine"])),
     ]
-    assert choose_tile_work(tiles).activity == "mine"
+    choice = choose_tile_work(tiles)
+    assert choice.activity == "irrigation", choice
 
 
-def test_in_use_tiles_compare_GAINS_so_food_can_win():
-    """Ветка обрабатываемых клеток: сравнивается ПРИРОСТ — и тогда еда обгоняет щиты.
-
-    Прирост луга `+1 еды = 30` против прироста холма `+3 щитов = 51`. Ставим условия, где
-    выигрыш за едой: у холма прирост меньше, при одинаковом сроке.
-    """
-    grass, desert = (2, 0, 0), (1, 0, 0)
+def test_in_use_tiles_compare_GAINS():
+    """Ветка обрабатываемых клеток сравнивает прирост — и тогда выбирается больший."""
+    grass, hills = tile_outputs_from_rules("grassland", ()), tile_outputs_from_rules("hills", ())
     tiles = [
         ((1, 1), grass, work_options_from_rules("grassland", grass, ["irrigation"])),  # +30
+        ((2, 2), hills, work_options_from_rules("hills", hills, ["mine"])),            # +59.5
     ]
-    assert choose_tile_work(tiles, in_use_tiles=frozenset({(1, 1)})).activity == "irrigation"
+    choice = choose_tile_work(tiles, in_use_tiles=frozenset({(1, 1), (2, 2)}))
+    assert choice.activity == "mine", choice
 
 
 def test_rules_tables_are_not_empty():
