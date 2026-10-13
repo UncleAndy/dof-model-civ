@@ -115,3 +115,38 @@ def settler_want(total: float, *, travel_turns: int, settler_shield_cost: float)
     из неё вычитается сам поселенец — тем самым отсекаются мелкие пустышки.
     """
     return amortize(total, PERFECTION * max(0, travel_turns)) - settler_shield_cost
+
+#: Веса выходов клетки — `server/advisors/advbuilding.h:19-21`, у нас `env/config.py:380-382`.
+TILE_FOOD_WEIGHTING: float = 30.0
+TILE_SHIELD_WEIGHTING: float = 17.0
+TILE_TRADE_WEIGHTING: float = 18.0
+
+
+def city_tile_value(food: float, shield: float, trade: float, *,
+                    food_weighting: float = TILE_FOOD_WEIGHTING,
+                    shield_weighting: float = TILE_SHIELD_WEIGHTING,
+                    trade_weighting: float = TILE_TRADE_WEIGHTING) -> float:
+    """`city_tile_value` из `server/advisors/infracache.c:293` — строка в строку.
+
+    «Мера добротности клетки для города». Каждая статья весит своим весом, и ПОЛОВИНА
+    веса добавляется, если статья ненулевая: по комментарию исходника это даёт ровный
+    баланс клеток и учитывает эффекты `INC_TILE`.
+
+    FIXME исходника сохранён как факт: его `foodneed` и `prodneed` всегда 0
+    («FIXME: foodneed and prodneed are always 0»), поэтому аргументов под них нет — иначе
+    мы повторяли бы несуществующее поведение.
+
+    Нужна для выбора работы рабочим: `settler_evaluate_improvements`
+    (`server/advisors/autoworkers.c:530`) считает `oldv = city_tile_value(pcity, ptile, 0, 0)`
+    и сравнивает с ценностью клетки ПОСЛЕ работы.
+    """
+    value = food * food_weighting
+    if food > 0:
+        value += food_weighting / 2
+    value += shield * shield_weighting
+    if shield > 0:
+        value += shield_weighting / 2
+    value += trade * trade_weighting
+    if trade > 0:
+        value += trade_weighting / 2
+    return value
