@@ -226,24 +226,33 @@ def _allowed_production_types(rec: dict, type_names: dict | None = None) -> set[
 
 
 def _improvement_type_names(rec: dict, type_names: dict | None = None) -> set[str]:
-    """Имена ПОСТРОЕК, доступных городу, по маске мира `can_build_improvement`.
+    """Имена ПОСТРОЕК среди типов города: всё, что не является единицей.
 
-    Маска улучшений лежит без сдвига: ключ в таблице имён и есть номер улучшения (юниты сдвинуты
-    выше — см. `_production_names`). Нужен отдельный набор от `allowed_types`, где единицы и
-    постройки вместе: ветвь §13.262–13.263 отсекает именно постройки.
+    Маска `can_build_improvement` в этом наблюдении НЕ публикуется (измерено: `NoneType`,
+    §13.265), поэтому признак берём от списка единиц мира (`env.spec_lenses.unit_order_index`):
+    имя из таблицы типов, которого нет среди единиц, — постройка. Набор нужен ветви §13.262–13.263
+    (малому городу постройки не предлагаются). Если маска есть и непуста — берём её: она точнее.
     """
-    mask = rec.get("can_build_improvement")
-    if not isinstance(mask, (list, tuple)):
-        return set()
     out: set[str] = set()
-    for iid in range(len(mask)):
-        try:
-            if not mask[iid]:
+    mask = rec.get("can_build_improvement")
+    if isinstance(mask, (list, tuple)) and any(mask):
+        for iid in range(len(mask)):
+            try:
+                if not mask[iid]:
+                    continue
+            except (TypeError, IndexError):
                 continue
-        except (TypeError, IndexError):
-            continue
-        name = (type_names or {}).get(int(iid))
-        if name:
+            name = (type_names or {}).get(int(iid))
+            if name:
+                out.add(str(name))
+        return out
+    try:
+        from env.spec_lenses import unit_order_index
+        unit_names = {str(n) for n in (unit_order_index() or {}).values()}
+    except Exception:  # noqa: BLE001
+        unit_names = set()
+    for name in (type_names or {}).values():
+        if name and str(name) not in unit_names:
             out.add(str(name))
     return out
 
@@ -776,6 +785,67 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
                 out.append((action, float(gains.get(extra, 0.0)), city_id))
         return out
 
+    # Все доступные работы по всем клеткам — для оценки потребности в рабочих.
+    _works_all: list[tuple[str, float, str | None]] = []
+    for _tile in state.positions.values():
+        _works_all.extend(works((int(_tile[0]), int(_tile[1]))))
+
+    def worker_want(city_rec: dict) -> tuple[float, str]:
+        """Желание города построить рабочего — порт daicity.c:747-838."""
+        best_work: float = 0.0
+        for _action, _gain, _cid in _works_all:
+            if _gain > best_work:
+                best_work = _gain
+        if best_work <= 0.0:
+            return 0.0, "нет выгодной работы — рабочий не нужен"
+        worker_type_name = "Workers"
+        upkeep_food = _type_food_upkeep(live_by_type.get(worker_type_name)) or 0.0
+        food_weight = float(values.get("AI_FOOD_WEIGHTING", 30.0))
+        try:
+            from env.rules_costs import UNIT_STATS
+            worker_foodbox = float((UNIT_STATS.get(worker_type_name) or {}).get("foodbox_cost", 10))
+        except Exception:
+            worker_foodbox = 10.0
+        want = (best_work - upkeep_food * food_weight / 2.0) * 100.0 / (40.0 + worker_foodbox)
+        if want <= 0.0:
+            return 0.0, f"работа ({best_work:.1f}) не окупает прокорм рабочего"
+        n_workers = sum(1 for _u in units.values()
+                        if isinstance(_u, dict) and _u.get("type_rule_name") == worker_type_name)
+        n_cities = max(1, len(cities))
+        density = max(1, n_workers / (n_cities + 1))
+        want = want / density - n_workers
+        if want <= 0.0:
+            return 0.0, f"рабочих ({n_workers}) уже достаточно на {n_cities} городов"
+        want = max(0.0, want)
+        reason = (f"лучшая работа {best_work:.1f} опц, "
+                  f"рабочих {n_workers}/{n_cities} городов")
+        return want, reason
+
+    def founder_want(city_rec: dict) -> tuple[float, str]:
+        """Желание города основать новый — порт daisettler.c:1343-1388."""
+        # Сценарии с запретом основания: prevent_new_cities в game_info.
+        _game_info = _as_dict(obs.get("game_info")) if isinstance(obs, dict) else {}
+        if _game_info.get("prevent_new_cities"):
+            return 0.0, "основание запрещено сценарием"
+        best_raw = 0.0
+        best_tile = None
+        for tile in list(state.revealed)[:200]:
+            try:
+                v = float(city_value_raw(tile))
+            except Exception:
+                continue
+            if v > best_raw:
+                best_raw = v
+                best_tile = tile
+        if best_raw <= 0.0:
+            return 0.0, "нет площадки с положительной ценностью"
+        city_pos = (int(_num(city_rec.get("x"), 0)), int(_num(city_rec.get("y"), 0)))
+        dist = int(max(abs(best_tile[0] - city_pos[0]), abs(best_tile[1] - city_pos[1]))) if best_tile else 0
+        perf = 3  # PERFECTION
+        want = best_raw / (1.0 + float(dist) / perf)
+        reason = f"площадка {best_tile}, сырая ценность {best_raw:.1f}, расстояние {dist}"
+        return want, reason
+
     def productions(city_id: str) -> list[tuple[str, float, int]]:
         """Что город может построить: [(тип, опции, ходов)] — по числам мира.
 
@@ -918,7 +988,6 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
             # то же здание предлагалось бы дважды и считалось дважды.
             if type_name in spec_improvements and type_name not in live_by_type:
                 continue
-                continue
             # Войско — только по нужде, и нужда теперь считается правилом ВСТРОЕННОГО ИИ
             # (§13.190): опасность = чужие, способные напасть и дойти; защитник нужен,
             # когда опасность есть, а защиты нет. Прежний признак «виден любой чужой»
@@ -937,7 +1006,25 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
                     continue
             # Цену типа спрашиваем С ГОРОДОМ: у улучшений она считается по его эффектам
             # и по этому городу (выходы, недовольные), у юнитов — как раньше.
-            priced = type_price(type_name, rec)
+            # §13.xxx — Workers/Settlers: цена = желание города (по формулам встроенного ИИ).
+            if type_name == "Workers":
+                _w, _reason = worker_want(rec)
+                if _w > 0.0:
+                    from env.rules_costs import build_cost_of
+                    _cost = build_cost_of(type_name) or world.cost(type_name) or spec_costs.get(type_name) or 10.0
+                    priced = (_w, float(_cost))
+                else:
+                    priced = None
+            elif type_name == "Settlers":
+                _w, _reason = founder_want(rec)
+                if _w > 0.0:
+                    from env.rules_costs import build_cost_of
+                    _cost = build_cost_of(type_name) or world.cost(type_name) or spec_costs.get(type_name) or 10.0
+                    priced = (_w, float(_cost))
+                else:
+                    priced = None
+            else:
+                priced = type_price(type_name, rec)
             if priced is None:
                 unpriced.add(type_name)
                 # Запоминаем предложение для самозамера — но ТОЛЬКО если тип
@@ -1023,14 +1110,14 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
                 if _PROD_TRACE:
                     _top = sorted((c for c in out if c[0] != current_name),
                                   key=lambda c: c[1] * (_gamma ** c[2]), reverse=True)[:3]
-                    _offered = sorted(n[len("produce_"):] for n in offered
-                                      if str(n).startswith("produce_"))
+                    _offered = _production_offer_names(offered)
                     print(f"[прогноз] постановка {city_id}: production_value="
                           f"{rec.get('production_value')!r} прочитано как {current_name!r}; "
                           f"маски: юниты={_mask_len(rec.get('can_build_unit'))}, "
                           f"улучшения={_mask_len(rec.get('can_build_improvement'))}; "
                           f"годных типов={len(_allowed_production_types(rec, type_names) or [])}"
                           f"{'' if _allowed_production_types(rec, type_names) is not None else ' (масок нет — не режем)'}; "
+                          f"предложено сервером: {', '.join(_offered) or '—'}; "
                           f"в очереди ценность с дисконтом {_now_value:.4f}; лучшие: "
                           + ", ".join(f"{n} {v:.4f} за {t:.0f} ход. (с диск. "
                                       f"{v * (_gamma ** t):.4f})" for n, v, t in _top),
@@ -1984,6 +2071,43 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
                        probe_offers=probe_offers, facts=world,
                        production_of=productions, type_price_of=type_price)
 
+def _terrain_work_unit_ids(units, offered_map, my_id, work_actions):
+    """Own non-carrier units with an offered terrain-work action."""
+    from env.entity_extractor import is_population_carrier
+
+    selected = []
+    for unit_id, unit in (units or {}).items():
+        if not isinstance(unit, dict):
+            continue
+        if (my_id is not None and unit.get("owner") is not None
+                and str(unit.get("owner")) != str(my_id)):
+            continue
+        if is_population_carrier(unit):
+            continue
+        suffix = str(unit_id).split("_", 1)[1] if "_" in str(unit_id) else str(unit_id)
+        acts = None
+        if suffix.isdigit():
+            acts = offered_map.get(int(suffix))
+        if not isinstance(acts, dict):
+            acts = offered_map.get(suffix)
+        if not isinstance(acts, dict):
+            acts = offered_map.get(str(unit_id))
+        if isinstance(acts, dict) and any(acts.get(action) for action in work_actions):
+            selected.append(str(unit_id))
+    return tuple(selected)
+
+
+def _production_offer_names(offered: Any) -> tuple[str, ...]:
+    """Sorted unit/improvement names for city production actions offered now."""
+    if not isinstance(offered, dict):
+        return ()
+    return tuple(sorted(
+        str(name)[len("produce_"):]
+        for name, params in offered.items()
+        if str(name).startswith("produce_") and params
+    ))
+
+
 def worker_work_choice(obs, info, extractor, my_id):
     """Лучшая работа рабочего с ненулевой выгодой: `('unit', ключ, действие)` или None (§13.259).
 
@@ -2003,16 +2127,9 @@ def worker_work_choice(obs, info, extractor, my_id):
         units = as_dict(obs.get("unit"))
     except Exception:  # noqa: BLE001
         return None
-    workers = []
-    for ukey, u in units.items():
-        if not isinstance(u, dict):
-            continue
-        if my_id is not None and u.get("owner") is not None \
-                and str(u.get("owner")) != str(my_id):
-            continue
-        tname = str(u.get("type_rule_name") or u.get("type") or "")
-        if "Worker" in tname or "Engineer" in tname:
-            workers.append(ukey)
+    offered_map = as_dict(as_dict(info.get("available_actions")).get("unit"))
+    workers = _terrain_work_unit_ids(
+        units, offered_map, my_id, tuple(WORK_ACTION_EXTRA))
     if not workers:
         return None
 
@@ -2021,7 +2138,6 @@ def worker_work_choice(obs, info, extractor, my_id):
     except Exception:  # noqa: BLE001
         return None
     gains = getattr(bridge, "terrain_work_gain_by_unit", {}) or {}
-    offered_map = as_dict(as_dict(info.get("available_actions")).get("unit"))
 
     best: tuple[float, tuple[str, str, str]] | None = None
     for ukey in workers:
