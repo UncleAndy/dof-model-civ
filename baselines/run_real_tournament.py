@@ -3101,8 +3101,17 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                     # (`HeuristicGenerator._preference_score`). Нужен, чтобы отделить
                     # САМУ ИГРУ (основание городов, рост, производство) от наших
                     # надстроек: пока игра не идёт не хуже его, индекс накладывать не на что.
+                    _raw_cands = gen.generate_candidates(dof.state, avail)
+                    if os.environ.get("DOF_TILE_DEBUG") == "1":
+                        # §13.292: где теряется постановка жителя. Считаем клеточные действия
+                        # НА ВЫХОДЕ генератора (до наших правил): если их нет уже здесь, виноват
+                        # картограф, а не правила.
+                        _rw = [str((_to_action(c) or ("", "", ""))[2]) for c in _raw_cands]
+                        print(f"  [генератор] всего {len(_raw_cands)}, city_work "
+                              f"{sum(1 for n in _rw if n.startswith('city_work_'))}, city_unwork "
+                              f"{sum(1 for n in _rw if n.startswith('city_unwork_'))}", flush=True)
                     descore = _apply_common_rules(
-                        gen.generate_candidates(dof.state, avail), obs, extractor,
+                        _raw_cands, obs, extractor,
                         env_getter, avail)
                     # §13.288: работу клетки выбирает ПЕРЕНОСЁННОЕ правило встроенного ИИ,
                     # а не счёт совпадений со списком. На ОБЩЕМ пути: у решения рабочего
@@ -3134,6 +3143,15 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                     if os.environ.get("DOF_TILE_DEBUG") == "1":
                         _tiles_in = [c.get("action_name") for c in descore
                                      if str(c.get("action_name") or "").startswith(("city_work_", "city_unwork_"))]
+                        # §13.292: сырые действия города с параметрами. Вопрос, который это
+                        # решает: `city_work` отброшен НАМИ (пустые параметры = по нашему
+                        # правилу «сервер не примет») или его вовсе нет среди предложенных.
+                        _raw_city = as_dict(as_dict(avail).get("city")) or {}
+                        for _cid, _acts in list(_raw_city.items())[:1]:
+                            _pairs = [(str(_n), bool(_pp) if not hasattr(_pp, "shape")
+                                       else bool(getattr(_pp, "size", 0)))
+                                      for _n, _pp in list(as_dict(_acts).items())]
+                            print(f"  [город-сырые-действия] актёр {_cid}: {_pairs}", flush=True)
                         print(f"  [клетка-отладка] кандидатов {len(descore)}, из них клеток "
                               f"{len(_tiles_in)}: {_tiles_in[:6]}; контекст "
                               f"{'есть' if _LAST_CTX is not None else 'НЕТ'}", flush=True)
