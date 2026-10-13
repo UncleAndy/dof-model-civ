@@ -563,6 +563,97 @@ def _my_units_classes(env_getter, my_id):
 #: Последний собранный контекст прогноза: в нём живёт дверь его чисел для клеток.
 #: Ставится `_production_candidate` каждый ход и читается выбором без DoF.
 _LAST_CTX = None
+#: Наблюдение текущего решения — для оценки клеток города по правилам мира (§13.292).
+_LAST_OBS = None
+
+
+def _city_tile_diag(why: str) -> None:
+    """Почему оценка клеток города по правилам промолчала — молчание обязано быть отличимо."""
+    if os.environ.get("DOF_TILE_DEBUG") == "1":
+        print(f"  [клетка-правила] молчит: {why}", flush=True)
+
+
+def _city_tile_gains_from_rules(city_id, cands) -> dict:
+    """Выигрыш постановки/снятия жителя по ПРАВИЛАМ мира — когда своих чисел нет (§13.292).
+
+    Числа: выходы клетки из правил (`tile_outputs_from_rules`) и ценность перенесённым
+    `city_tile_value` (`infracache.c:293`). Порядок «снять плохую → занять лучшую» — его:
+    у клиента `city_work` недействителен без свободного горожанина
+    (`city/city_actions.py:150`), поэтому снятие оправдано только лучшей свободной клеткой.
+
+    Возвращает `{имя действия: выигрыш}`. Пустой словарь, если данных нет: молчание обязано
+    быть отличимо от нуля.
+    """
+    obs = _LAST_OBS
+    if not isinstance(obs, dict):
+        _city_tile_diag("нет наблюдения")
+        return {}
+    try:
+        from brain.ai_default.city_tiles import (
+            parse_city_tile_action, tile_value_from_rules, unwork_gain, work_gain,
+            workable_offsets,
+        )
+        from env.terrain_work import tile_terrain_extras
+    except Exception as _exc:  # noqa: BLE001
+        _city_tile_diag(f"импорт упал: {_exc!r}")
+        return {}
+
+    _cities = as_dict(obs.get("city")) or {}
+    # Ключи записи города приходят ЦЕЛЫМИ числами (измерено: ключи ['int']), а id из имени
+    # действия — строкой. Ищем все три вида, иначе дверь чисел пустеет на ровном месте.
+    rec = _cities.get(city_id)
+    if rec is None:
+        for _key in (str(city_id), int(city_id) if str(city_id).lstrip("-").isdigit() else None):
+            if _key is not None and _key in _cities:
+                rec = _cities[_key]
+                break
+    if not isinstance(rec, dict) or rec.get("x") is None or rec.get("y") is None:
+        _city_tile_diag(f"город {city_id} не найден среди {list(_cities)[:6]} (ключи "
+                        f"{[type(k).__name__ for k in list(_cities)[:3]]})")
+        return {}
+    cx, cy = int(rec["x"]), int(rec["y"])
+    map_obs = as_dict(obs.get("map")) or {}
+
+    def _value(dx: int, dy: int):
+        try:
+            terrain, extras = tile_terrain_extras(map_obs, cx + dx, cy + dy)
+        except Exception:  # noqa: BLE001
+            return None
+        return tile_value_from_rules(terrain, extras)
+
+    # Какие клетки заняты: говорит сам стенд — он предлагает снятие именно с занятых.
+    worked, free_offered = {}, {}
+    for c in cands or ():
+        if str(c.get("ctrl_type")) != "city" or str(c.get("actor_id")) != str(city_id):
+            continue
+        name = str(c.get("action_name") or "")
+        parsed = parse_city_tile_action(name)
+        if parsed is None:
+            continue
+        _idx, dx, dy = parsed
+        if name.startswith("city_unwork_"):
+            worked[name] = _value(dx, dy)
+        elif name.startswith("city_work_"):
+            free_offered[name] = _value(dx, dy)
+
+    # Свободные клетки: городской радиус минус занятые. Радиус — правило движка
+    # (`common/map.c:628`, `common/map.h:397`).
+    taken = {(parse_city_tile_action(n)[1], parse_city_tile_action(n)[2]) for n in worked}
+    free_values = [v for (dx, dy) in workable_offsets(rec.get("city_radius_sq"))
+                   if (dx, dy) not in taken and (v := _value(dx, dy)) is not None]
+    free_values += [v for v in free_offered.values() if v is not None]
+
+    gains = {}
+    for name, value in worked.items():
+        gains[name] = unwork_gain(value, free_values)
+    best_worked = max([v for v in worked.values() if v is not None], default=None)
+    for name, value in free_offered.items():
+        gains[name] = work_gain(value, best_worked)
+    if os.environ.get("DOF_TILE_DEBUG") == "1" and gains:
+        print(f"  [клетка-правила] город {city_id}: занято {len(worked)}, свободно "
+              f"{len(free_values)}; выигрыши "
+              f"{ {k: round(v, 1) for k, v in gains.items()} }", flush=True)
+    return gains
 
 
 def _tile_score_of(ctx, ctrl_type, action_name, actor_id=None):
@@ -682,8 +773,11 @@ def _production_candidate(obs: dict, info: dict, dof_state, extractor,
         if _filters_trace():
             print("  [постановка] контекст не собран или выбор закрыт — пропуск", flush=True)
         return None
-    global _LAST_CTX
+    global _LAST_CTX, _LAST_OBS
     _LAST_CTX = ctx
+    # §13.292: наблюдение нужно, чтобы оценить клетки города правилами мира, когда свои
+    # числа пусты. Держим его рядом с контекстом — там же, где живёт всё остальное.
+    _LAST_OBS = obs
     cities = (obs or {}).get("city") or {}
     # Его правило: чудеса строит ТОЛЬКО город чудес (`daicity.c:1972`). Без этой проверки
     # наш город населением 3 ставил `Colossus` (измерено, игра 6001: `produce_Colossus` ×5) —
@@ -3043,10 +3137,26 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                         print(f"  [клетка-отладка] кандидатов {len(descore)}, из них клеток "
                               f"{len(_tiles_in)}: {_tiles_in[:6]}; контекст "
                               f"{'есть' if _LAST_CTX is not None else 'НЕТ'}", flush=True)
+                    _rule_gains: dict = {}
+                    _tile_cities = sorted({
+                        str(c.get("actor_id")) for c in descore
+                        if str(c.get("ctrl_type")) == "city"
+                        and str(c.get("action_name") or "").startswith(
+                            ("city_work_", "city_unwork_"))})
+                    for _cid in _tile_cities:
+                        _rule_gains.update(_city_tile_gains_from_rules(_cid, descore))
                     for _cand in descore:
                         _gain = _tile_score_of(_LAST_CTX, _cand.get("ctrl_type"),
                                                _cand.get("action_name"),
                                                _cand.get("actor_id"))
+                        if _gain is None or _gain <= 0.0:
+                            # §13.292: своих чисел на клетку города нет вовсе (измерено:
+                            # «строк 0»). Тогда ценность клетки берётся перенесённым числом
+                            # по правилам мира, а выигрыш — по порядку «снять плохую →
+                            # занять лучшую», тоже его.
+                            _rule_gain = _rule_gains.get(str(_cand.get("action_name") or ""))
+                            if _rule_gain:
+                                _gain = _rule_gain
                         if _gain is None or _gain <= 0.0:
                             continue
                         if _best_tile is None or _gain > _best_tile[0]:
