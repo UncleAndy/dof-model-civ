@@ -1007,24 +1007,7 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
             # Цену типа спрашиваем С ГОРОДОМ: у улучшений она считается по его эффектам
             # и по этому городу (выходы, недовольные), у юнитов — как раньше.
             # §13.xxx — Workers/Settlers: цена = желание города (по формулам встроенного ИИ).
-            if type_name == "Workers":
-                _w, _reason = worker_want(rec)
-                if _w > 0.0:
-                    from env.rules_costs import build_cost_of
-                    _cost = build_cost_of(type_name) or world.cost(type_name) or spec_costs.get(type_name) or 10.0
-                    priced = (_w, float(_cost))
-                else:
-                    priced = None
-            elif type_name == "Settlers":
-                _w, _reason = founder_want(rec)
-                if _w > 0.0:
-                    from env.rules_costs import build_cost_of
-                    _cost = build_cost_of(type_name) or world.cost(type_name) or spec_costs.get(type_name) or 10.0
-                    priced = (_w, float(_cost))
-                else:
-                    priced = None
-            else:
-                priced = type_price(type_name, rec)
+            priced = type_price(type_name, rec)
             if priced is None:
                 unpriced.add(type_name)
                 # Запоминаем предложение для самозамера — но ТОЛЬКО если тип
@@ -1744,6 +1727,29 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
         своими опциями, а строить новых поселенцев прогноз должен уметь и после
         этого. Каталог извлекателя здесь не спасает — он неполон.
         """
+        # Workers/Settlers: цена — ЖЕЛАНИЕ города (формулы встроенного ИИ, перенесены
+        # из `daicity.c`/`daisettler.c`). Живёт ЗДЕСЬ, а не у вызывающего: иначе общий
+        # путь (без DoF) брал обычную цену, желание не спрашивалось вовсе, и поселенец
+        # после первого города не ставился никогда — измерено: за 12 ходов ни одной
+        # строки `[желание]`, город остался единственным. Правило обязано действовать
+        # везде, где этот род можно выбрать.
+        if city_rec is not None and str(name) in ("Workers", "Settlers"):
+            _want, _reason = (worker_want(city_rec) if str(name) == "Workers"
+                              else founder_want(city_rec))
+            if os.environ.get("DOF_TRACE_FILTERS") == "1":
+                print(f"  [желание] {name}: {_want:.3f} — {_reason}", flush=True)
+            if _want <= 0.0:
+                return None
+            _cost = world.cost(name) or spec_costs.get(name)
+            if _cost is None:
+                try:
+                    from env.rules_costs import build_cost_of as _rules_cost
+                    _cost = _rules_cost(name)
+                except Exception:  # noqa: BLE001
+                    _cost = None
+            if _cost is None:
+                return None
+            return float(_want), float(_cost)
         rec = live_by_type.get(name)
         if rec is not None:
             cost = _num(rec.get("type_build_cost"), 0.0)
