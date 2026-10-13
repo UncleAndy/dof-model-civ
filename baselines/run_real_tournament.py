@@ -206,7 +206,7 @@ from env.config import AXIOM4_PENALTY_OPTIONS, CORE_DOF_SCALE, EPSILON
 from env.entity_extractor import GameStateExtractor, as_dict, compute_total_dof_index
 from env.experiments import note_choice
 from env import food_gate
-from env.wedged import record_success, record_wedged
+from env.wedged import is_wedged_family, is_wedged_here, record_success, record_wedged
 from env.world_model import FALSE_CLAIM_MARKER, Provenance
 from brain.generator.heuristics import ALL_STRATEGIES, DEFENSIVE, HeuristicGenerator
 from metrics.tracker import MatchMetrics, agent_turns
@@ -819,6 +819,56 @@ def _production_candidate(obs: dict, info: dict, dof_state, extractor,
                 "action_name": f"produce_{best[1]}",
                 "projected_dof_delta": {}, "is_reversible": True}
     return None
+
+
+def _is_action_wedged(ctrl: str, name: str, position) -> bool:
+    """Заклинивало ли уже это действие — по правилу §13.274.
+
+    Семейно режем БЕЗНАДЁЖНОЕ (отказов >= 2 и ни одного успеха), исправное — только в той
+    клетке, где оно уже падало. Измерено на живом реестре: `unit/plant` — 26 отказов,
+    0 успехов (резать), `unit/build_city` — 3 отказа, 37 успехов (играть; семейный запрет
+    убил бы основание города).
+    """
+    try:
+        if is_wedged_family(ctrl, name):
+            return True
+    except Exception:  # noqa: BLE001
+        return False
+    if position is None:
+        return False
+    try:
+        # Падало ли ИМЕННО ЗДЕСЬ. Не `is_wedged(context=...)`: он складывает с устаревшими
+        # семейными отказами и резал `build_city` в новых клетках — 176 исключений за прогон.
+        return bool(is_wedged_here(ctrl, name, position))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _drop_wedged_candidates(cands: list, dof_state) -> list:
+    """Выкинуть кандидатов, о которых известно, что стенд на них заклинивает.
+
+    Живьём экономическая рука залипала на втором ходу в КАЖДОЙ партии (`unit/plant`),
+    потому что путь юнитов реестр не спрашивал вовсе: сыграно 1 ход из 20, счёт 0.7
+    против 5.7 у экспансиониста.
+    """
+    positions = getattr(dof_state, "positions", None) or {}
+    out = []
+    for c in cands:
+        act = _to_action(c)
+        if not act:
+            out.append(c)
+            continue
+        ctrl = str(act[0])
+        actor = str(act[1]) if len(act) >= 2 else ""
+        name = str(act[2]) if len(act) >= 3 else ""
+        position = positions.get(actor) or positions.get(f"{ctrl}_{actor}")
+        if _is_action_wedged(ctrl, name, position):
+            if os.environ.get("DOF_TRACE_FILTERS") == "1":
+                print(f"  [клин] {ctrl}/{name} — известно, что заклинивает; исключено",
+                      flush=True)
+            continue
+        out.append(c)
+    return out
 
 
 def _apply_common_rules(cands: list, obs: dict, extractor, env_getter,
@@ -2796,6 +2846,9 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                     descore = _apply_common_rules(
                         gen.generate_candidates(dof.state, avail), obs, extractor,
                         env_getter, avail)
+                    # §13.274: клин — ИЗМЕРЕННЫЙ факт, и он обязан отсекать действие
+                    # ЛЮБОГО рода. Без этого `unit/plant` ставился снова и залипал.
+                    descore = _drop_wedged_candidates(descore, dof.state)
                     # §13.210: постановку в городе ставим МЫ — стенд этого действия не
                     # предлагает вовсе (§13.209), и без него очередь додерживала Warriors.
                     _prod = _production_candidate(

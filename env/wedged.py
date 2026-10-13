@@ -143,6 +143,57 @@ def is_wedged(ctrl_type: str, action_name: str, *,
                             int(entry.get("resolved_seen", 0)))
 
 
+def is_wedged_here(ctrl_type: str, action_name: str, position) -> bool:
+    """Падало ли действие ИМЕННО В ЭТОЙ клетке (§13.275).
+
+    Отдельно от `is_wedged(context=...)`, потому что тот складывает `global_active`
+    (устаревшие отказы без координат) с `local_active`. Измерено: `unit/build_city` — 3
+    отказа и 37 успехов — резался им в НОВЫХ клетках, 176 исключений за прогон, обе руки
+    получили счёт 0.0. Здесь спрашивается только своя клетка: исправное действие режем
+    лишь там, где оно уже падало.
+    """
+    if not ctrl_type or not action_name or position is None:
+        return False
+    entry = load_wedged().get(key_of(ctrl_type, action_name))
+    if not entry:
+        return False
+    try:
+        key = _scope_key((int(position[0]), int(position[1])))
+    except (TypeError, ValueError, IndexError, KeyError):
+        return False
+    scope = (entry.get("scopes") or {}).get(key)
+    if not scope:
+        return False
+    return _active_failures(str(scope.get("reason", "timeout")),
+                            int(scope.get("seen", 0)),
+                            int(scope.get("resolved_seen", 0)))
+
+
+def is_wedged_family(ctrl_type: str, action_name: str) -> bool:
+    """Семейный запрет ТОЛЬКО для действия, которое ни разу не удалось (§13.274).
+
+    Почему это отдельное правило, а не `is_wedged` без координат: там порог считается по
+    накопленным отказам и успех в одной позиции не разрешает другие — нарочное решение,
+    закреплённое тестом. Здесь же вопрос другой: «стоит ли вообще рассматривать это
+    действие». Ответ — нет, если оно падало неоднократно и НИ РАЗУ не прошло.
+
+    Ни один параметр не вводится: порог тот же, что у семейного правила (`>= 2`), а новое
+    условие — «успехов ноль». На живых данных оно разделяет случаи точно:
+    `unit/plant` — 26 отказов, 0 успехов → резать; `unit/build_city` — 3 отказа и 37
+    успехов → играть; `city/city_work` — 53 отказа без координат, 0 успехов → резать.
+    """
+    if not ctrl_type or not action_name:
+        return False
+    entry = load_wedged().get(key_of(ctrl_type, action_name))
+    if not entry:
+        return False
+    if int(entry.get("successes", 0) or 0) > 0:
+        return False
+    return _active_failures(str(entry.get("reason", "timeout")),
+                            int(entry.get("seen", 1)),
+                            int(entry.get("resolved_seen", 0)))
+
+
 def _new_wedge_entry(ctrl_type, action_name, turn, context):
     return {
         "ctrl_type": str(ctrl_type), "action_name": str(action_name),
