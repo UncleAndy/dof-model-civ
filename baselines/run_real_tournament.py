@@ -204,6 +204,7 @@ from civrealm.agents import RandomAgent, BaseAgent
 from env import config as env_config
 from env.config import AXIOM4_PENALTY_OPTIONS, CORE_DOF_SCALE, EPSILON
 from env.entity_extractor import GameStateExtractor, as_dict, compute_total_dof_index
+from env.entity_extractor import truthy  # пустые параметры = мир не примет
 from env.experiments import note_choice
 from env import food_gate
 from env.wedged import is_wedged_family, is_wedged_here, record_success, record_wedged
@@ -573,7 +574,62 @@ def _city_tile_diag(why: str) -> None:
         print(f"  [клетка-правила] молчит: {why}", flush=True)
 
 
-def _city_tile_gains_from_rules(city_id, cands) -> dict:
+def _city_tile_candidate(obs: dict, avail: dict):
+    """Какое действие по клетке города отправить — по перенесённой оценке (§13.294).
+
+    Мир предлагает до 21 клетки радиуса с непустыми параметрами (`city_work_*`), но короткий
+    список генератора их не берёт: прирост DoF у постановки жителя почти нулевой. У его
+    управляющего городом расстановка жителей — обязательная часть хода (`cm.c`), поэтому
+    кандидат собирается напрямую из предложенного, а выбирает его перенесённое число.
+
+    Возвращает `(ctrl, actor, action)` или None. None — если данных нет ИЛИ лучший ход был бы
+    обратным к нашему же прошлому ходу по этой клетке (чередование измеренно вредит).
+    """
+    city_actions = as_dict(as_dict(avail).get("city")) or {}
+    best = None
+    for cid, actions in city_actions.items():
+        names = [str(n) for n, params in as_dict(actions).items()
+                 if str(n).startswith(("city_work_", "city_unwork_")) and truthy(params)]
+        if not names:
+            continue
+        cands = [{"ctrl_type": "city", "actor_id": cid, "action_name": n} for n in names]
+        gains = _city_tile_gains_from_rules(cid, cands, obs=obs)
+        if not gains:
+            continue
+        # Обратный ход к нашему же прошлому действию по той же клетке не отправляем.
+        # Ключ хранится СТРОКОЙ, поэтому и читается строкой: измерено — при записи целым
+        # защита от чередования не видела прошлого действия, и житель дёргался туда-обратно
+        # 30 из 30 ходов (city_work_16_-1_2 ↔ city_unwork_16_-1_2).
+        _prev = _LAST_TILE_ACTION.get(str(cid))
+        _prev_bench = None
+        if _prev:
+            _prev_bench = (str(_prev)[len("city_unwork_"):]
+                           if str(_prev).startswith("city_unwork_")
+                           else str(_prev)[len("city_work_"):])
+        for name in sorted(gains, key=lambda n: -gains[n]):
+            gain = gains[name]
+            if gain <= 0:
+                break
+            if _prev_bench is not None and name[len("city_unwork_"):] == _prev_bench \
+                    and (name.startswith("city_unwork_") != str(_prev).startswith("city_unwork_")):
+                if os.environ.get("DOF_TRACE_FILTERS") == "1":
+                    print(f"  [клетка-ход] {name} пропущено: обратный ход к {_prev}", flush=True)
+                continue
+            if best is None or gain > best[0]:
+                # Ключ актёра сохраняем КАК ЕСТЬ: он приходит ЦЕЛЫМ, и подмена его строкой
+                # ломает поиск по словарям ниже (измерено: `KeyError: '121'`, 0 ходов).
+                best = (gain, cid, name)
+            break
+    if best is None:
+        return None
+    gain, cid, name = best
+    _LAST_TILE_ACTION[str(cid)] = name
+    if os.environ.get("DOF_TRACE_FILTERS") == "1":
+        print(f"  [клетка-ход] город {cid}: {name} (перенесённая оценка +{gain:.1f})", flush=True)
+    return ("city", cid, name)
+
+
+def _city_tile_gains_from_rules(city_id, cands, obs=None) -> dict:
     """Выигрыш постановки/снятия жителя по ПРАВИЛАМ мира — когда своих чисел нет (§13.292).
 
     Числа: выходы клетки из правил (`tile_outputs_from_rules`) и ценность перенесённым
@@ -584,7 +640,7 @@ def _city_tile_gains_from_rules(city_id, cands) -> dict:
     Возвращает `{имя действия: выигрыш}`. Пустой словарь, если данных нет: молчание обязано
     быть отличимо от нуля.
     """
-    obs = _LAST_OBS
+    obs = obs if isinstance(obs, dict) else _LAST_OBS
     if not isinstance(obs, dict):
         _city_tile_diag("нет наблюдения")
         return {}
@@ -3123,6 +3179,12 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                     descore = _drop_wedged_candidates(descore, dof.state)
                     # §13.210: постановку в городе ставим МЫ — стенд этого действия не
                     # предлагает вовсе (§13.209), и без него очередь додерживала Warriors.
+                    # §13.294: ход по клетке города — ПЕРВЫМ. Измерено (13.293): короткий
+                    # список генератора не берёт `city_work_*` (нулевой прирост DoF), поэтому
+                    # освобождённого горожанина поставить нечем и город стоит на размере 1.
+                    _tile_pick = _city_tile_candidate(obs, avail)
+                    if _tile_pick is not None:
+                        return _tile_pick
                     _prod = _production_candidate(
                         obs, info, dof.state, extractor,
                         _production_names(env_getter())
