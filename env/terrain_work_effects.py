@@ -20,8 +20,9 @@ TERRAIN_WORK_EFFECTS: dict[str, dict[str, float]] = {
 
 #: дорога/железная дорога → собственные приросты экстры.
 ROAD_EFFECTS: dict[str, dict[str, float]] = {
-    "railroad": {},
-    "road": {},
+    "railroad": {'shield_bonus': 50.0},
+    "river": {'trade_incr_const': 1.0},
+    "road": {'trade_incr': 1.0},
 }
 
 #: террейн → процент применения приростов дороги.

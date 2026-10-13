@@ -18,6 +18,7 @@ from __future__ import annotations
 import pathlib
 import re
 import subprocess
+import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 OUT = ROOT / "env" / "terrain_work_effects.py"
@@ -31,9 +32,11 @@ TERRAIN_FIELDS = ("irrigation_food_incr", "irrigation_shield_incr", "irrigation_
 
 
 def read_ruleset() -> str:
-    result = subprocess.run(["docker", "exec", CONTAINER, "cat", RULESET],
-                            capture_output=True, text=True, check=True)
-    return result.stdout
+    with tempfile.TemporaryDirectory(prefix="dof_rules_") as directory:
+        destination = pathlib.Path(directory) / "terrain.ruleset"
+        subprocess.run(["docker", "cp", f"{CONTAINER}:{RULESET}", str(destination)],
+                       capture_output=True, text=True, check=True)
+        return destination.read_text(encoding="utf-8")
 
 
 def sections(text: str, prefix: str) -> dict[str, dict[str, str]]:
@@ -60,7 +63,7 @@ def sections(text: str, prefix: str) -> dict[str, dict[str, str]]:
 def main() -> None:
     text = read_ruleset()
     terrains = sections(text, "terrain_")
-    extras = sections(text, "extra_")
+    road_types = sections(text, "road_")
 
     table: dict[str, dict[str, float]] = {}
     for name, fields in sorted(terrains.items()):
@@ -71,12 +74,12 @@ def main() -> None:
 
     # Дороги: у самой экстры свои приросты, у террейна — проценты их применения.
     roads: dict[str, dict[str, float]] = {}
-    for name, fields in sorted(extras.items()):
-        if name not in ("extra_road", "extra_railroad"):
-            continue
-        row = {k: float(fields[k]) for k in ("food_incr", "shield_incr", "trade_incr")
+    for name, fields in sorted(road_types.items()):
+        effect_fields = tuple(f"{output}_{suffix}" for output in ("food", "shield", "trade")
+                              for suffix in ("incr", "incr_const", "bonus"))
+        row = {k: float(fields[k]) for k in effect_fields
                if k in fields and float(fields[k]) != 0.0}
-        roads[name[len("extra_"):]] = row
+        roads[name[len("road_"):]] = row
 
     lines = [
         '"""ЭФФЕКТ РАБОТЫ ПО КЛЕТКЕ — прочитан из правил мира, не выдуман.\n',

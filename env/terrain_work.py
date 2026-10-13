@@ -128,16 +128,19 @@ def world_effect(extra: str, terrain: str) -> Optional[tuple[float, float, float
     if extra == "Mine":
         return (row.get("mining_food_incr", 0.0), row.get("mining_shield_incr", 0.0),
                 row.get("mining_trade_incr", 0.0))
-    if extra in ("Road", "Railroad"):
-        own = ROAD_EFFECTS.get(extra) or {}
-        if not own:
-            # В правилах у этой экстры своих приростов нет — тогда и добавить нечего.
-            return (0.0, 0.0, 0.0)
+    if extra in ("Road", "Railroad", "River"):
+        own = ROAD_EFFECTS.get(extra.lower())
+        if own is None or any(own.get(f"{output}_bonus", 0.0)
+                              for output in ("food", "shield", "trade")):
+            # Процентный бонус (Railroad) требует текущего выхода клетки.
+            # Без него прирост неизвестен, а не нулевой.
+            return None
         pct = row.get("road_food_incr_pct", 0.0) / 100.0
         pct_shield = row.get("road_shield_incr_pct", 0.0) / 100.0
         pct_trade = row.get("road_trade_incr_pct", 0.0) / 100.0
-        return (own.get("food_incr", 0.0) * pct, own.get("shield_incr", 0.0) * pct_shield,
-                own.get("trade_incr", 0.0) * pct_trade)
+        return (own.get("food_incr_const", 0.0) + own.get("food_incr", 0.0) * pct,
+                own.get("shield_incr_const", 0.0) + own.get("shield_incr", 0.0) * pct_shield,
+                own.get("trade_incr_const", 0.0) + own.get("trade_incr", 0.0) * pct_trade)
     return None
 
 

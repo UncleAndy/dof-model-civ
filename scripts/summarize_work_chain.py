@@ -49,18 +49,29 @@ def main() -> int:
                f"{r.get('terrain')}{'+' + ','.join(r.get('extras') or []) if r.get('extras') else ''}")
         ob = r.get("output_before") or [0, 0, 0]
         oa = r.get("output") or [0, 0, 0]
-        if len(ob) >= 3 and len(oa) >= 3:
+        extras_before = r.get("extras_before") or []
+        extras_after = r.get("extras") or []
+        # map.output не видит улучшений (Irrigation, Road и т.п.):
+        # если террейн/экстры изменились, а output — нет, дельта НЕ ИЗМЕРЕНА.
+        if tuple(ob) == tuple(oa) and (r.get("terrain_before") != r.get("terrain") or extras_before != extras_after):
+            transforms[key].append(None)
+        elif len(ob) >= 3 and len(oa) >= 3:
             delta = tuple(oa[i] - ob[i] for i in range(3))
-        else:
-            delta = (0, 0, 0)
-        transforms[key].append(delta)
+            transforms[key].append(delta)
     if not transforms:
         print("  нет завершённых превращений в этих данных")
     for (action, before, after), deltas in sorted(transforms.items()):
         n = len(deltas)
-        mean = tuple(sum(d[i] for d in deltas) / n for i in range(3))
-        print(f"  {action:<18} {before:<28} → {after:<28} "
-              f"Δеда/щиты/торговля = {mean[0]:+.2f}/{mean[1]:+.2f}/{mean[2]:+.2f}  (n={n})")
+        measured = [d for d in deltas if d is not None]
+        none_count = sum(1 for d in deltas if d is None)
+        if not measured:
+            print(f"  {action:<18} {before:<28} → {after:<28} "
+                  f"НЕ ИЗМЕРЕНО (map.output не видит улучшений)  (n={n})")
+        else:
+            mean = tuple(sum(d[i] for d in measured) / len(measured) for i in range(3))
+            suffix = f"; +{none_count} не измерено" if none_count else ""
+            print(f"  {action:<18} {before:<28} → {after:<28} "
+                  f"Δеда/щиты/торговля = {mean[0]:+.2f}/{mean[1]:+.2f}/{mean[2]:+.2f}  (n={n}{suffix})")
     print()
 
     # ── 2. Цепочка: что стало валидным после завершения работы ─────────────

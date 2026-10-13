@@ -26,6 +26,11 @@ sys.path.insert(0, os.path.join(HERE, "civrealm", "src"))
 sys.path.insert(0, HERE)
 
 from civrealm.freeciv.map.map_const import EXTRA_NAMES, TERRAIN_NAMES  # noqa: E402
+from env.terrain_output import paired_output_deltas, server_tile_outputs  # noqa: E402
+
+
+def city_output(env, x, y):
+    return server_tile_outputs(env.unwrapped.civ_controller.city_ctrl.prop_actions._action_dict, x, y)
 
 WORK_PREFIXES = ("irrigation", "irrigate", "mine", "build_road", "road", "railroad",
                  "cultivate", "transform", "plant", "fortress", "airbase")
@@ -149,6 +154,7 @@ def main():
 
         # 2. Ставим первую доступную работу и следим за клеткой.
         watch = {}          # unit_id -> (x, y, action, before, terrain, extras)
+        server_before = {}
         results = defaultdict(list)
         last_turn = None
         stuck = 0
@@ -186,6 +192,7 @@ def main():
                     continue
                 tname, extras, before = tile_of(obs, x, y)
                 watch[actor_id] = (x, y, name, before, tname, extras)
+                server_before[actor_id] = city_output(env, x, y)
                 busy_tiles.add((x, y))
                 placed.append(f"unit {actor_id} @({x},{y}) {tname}"
                               f"{'+' + ','.join(extras) if extras else ''} -> {name} "
@@ -202,10 +209,11 @@ def main():
                 # выглядит как «работа не завершилась».
                 if now != before or list(now_e) != list(extras) or now_t != tname:
                     key = (now_t, tuple(now_e), name)
-                    delta = tuple(int(n) - int(b) for n, b in zip(now, before))
-                    results[key].append(delta)
+                    delta = paired_output_deltas(server_before[actor_id], city_output(env, x, y))
+                    if delta:
+                        results[key].append(delta)
                     print(f"turn {turn}: ИЗМЕНЕНИЕ {tname} @({x},{y}) {name}: "
-                          f"{before} -> {now} (Δ={delta}); "
+                          f"base_map_output {before} -> {now}; server Δ={delta or 'НЕ ИЗМЕРЕНО'}; "
                           f"террейн {tname} -> {now_t}; "
                           f"экстры {list(extras)} -> {list(now_e)}")
                     watch.pop(actor_id)
@@ -217,7 +225,7 @@ def main():
 
         print("\n=== ИТОГ ЗАМЕРА: террейн + работа -> Δ(еда, щиты, торговля) ===")
         if not results:
-            print("  изменений не поймано (работа не завершилась в пределах прогона)")
+            print("  нет парного серверного замера: работа не завершилась или датчик недоступен")
         for (tname, extras, name), deltas in sorted(results.items()):
             ex = f"+{','.join(extras)}" if extras else ""
             print(f"  {tname}{ex} {name}: {deltas}")

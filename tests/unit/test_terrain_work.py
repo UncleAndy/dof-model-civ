@@ -111,31 +111,31 @@ class TestEffectTable:
         assert ours == ["измерено"]
         assert world == ["правила мира"]
 
-    def test_measured_work_on_a_given_terrain_is_recorded(self):
-        # Замерено на живом стенде: ирригация на равнине ставит экстру за 3 хода,
-        # но выхода не добавляет (смысл — открыть ферму, а не еду).
-        assert tile_effect("Irrigation", "Grassland", (), self.VALS) == (0.0, 0.0, 0.0)
-        # Расхождение источников (§13.258): замер дал ноль, а правила classic обещают
-        # +1 пищу. Пока расхождение не разрешено, приоритет у НАШЕГО замера — и сторож
-        # это фиксирует, чтобы «удобное» число не подменило измеренное молча.
+    def test_blind_map_sensor_does_not_override_rules(self):
+        # Прежний ноль отозван: map.output улучшений не учитывает.
+        # Это базовый прирост правил, не чистый выход при любом правительстве.
+        assert tile_effect("Irrigation", "Grassland", (), self.VALS) == (1.0, 0.0, 0.0)
+        assert tile_effect("Irrigation", "Plains", (), self.VALS) == (1.0, 0.0, 0.0)
         assert tile_effect("Irrigation", "Desert", (), self.VALS) == (1.0, 0.0, 0.0), (
             "пустыня: измерения нет, значит берём правила мира (irrigation_food_incr = 1)"
         )
 
-    def test_measured_roads_place_the_extra_without_output(self):
-        # Замерено на трёх террейнах: дорога ставит экстру Road, выхода не даёт
-        # (в этой версии стенда дорога — только перемещение).
-        for terrain in ("Grassland", "Plains", "Hills"):
+    def test_road_rule_is_read_from_road_type_not_extra_section(self):
+        # trade_incr=1 применяется с road_trade_incr_pct террейна.
+        # Нули map.output не измеряли дорогу и больше не перекрывают правила.
+        for terrain in ("Grassland", "Plains"):
+            assert tile_effect("Road", terrain, (), self.VALS) == (0.0, 0.0, 1.0)
+        for terrain in ("Hills", "Forest"):
             assert tile_effect("Road", terrain, (), self.VALS) == (0.0, 0.0, 0.0)
-        # Лес: своих приростов у дороги в правилах нет, значит и добавить нечего —
-        # ноль ЭТО ЗНАНИЕ, а не «не знаем» (совпало с живым замером на Plains).
-        assert tile_effect("Road", "Forest", (), self.VALS) == (0.0, 0.0, 0.0)
 
     def test_extra_already_present_is_worthless(self):
         assert tile_effect("Coal", "Hills", ("Coal",), self.VALS) == (0.0, 0.0, 0.0)
 
-    def test_non_effect_extras_are_recorded_as_zero(self):
-        assert tile_effect("River", "Forest", (), self.VALS) == (0.0, 0.0, 0.0)
+    def test_river_uses_constant_road_type_bonus_not_blind_sensor_zero(self):
+        assert tile_effect("River", "Forest", (), self.VALS) == (0.0, 0.0, 1.0)
+
+    def test_percentage_railroad_bonus_requires_current_tile_output(self):
+        assert tile_effect("Railroad", "Hills", (), self.VALS) is None
 
 
 class TestWorkGainReachesTheCity:
@@ -159,12 +159,12 @@ class TestWorkGainReachesTheCity:
         assert report["city"] == "city_121"
         assert report["effect"] == [0.0, 1.0, 0.0]
 
-    def test_unmeasured_work_pays_nothing(self):
+    def test_rules_work_is_not_zeroed_by_blind_map_sensor(self):
         obs = make_obs(tiles={(6, 6): ("Grassland", (2, 0, 0)),
                               (6, 7): ("Grassland", (2, 0, 0))},
                        cities=a_city(x=6, y=6), units=a_worker(x=6, y=7))
         bridge = self._bridge(obs=obs)
-        assert bridge.terrain_work_gain_by_unit == {}
+        assert bridge.terrain_work_gain_by_unit["unit_8"]["Irrigation"] > 0
 
     def test_no_city_in_range_pays_nothing(self):
         obs = make_obs(tiles={(6, 6): ("Grassland", (2, 0, 0)),
