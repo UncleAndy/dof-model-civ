@@ -1503,6 +1503,32 @@ def _production_candidate(obs: dict, info: dict, dof_state, extractor,
     # §13.292: наблюдение нужно, чтобы оценить клетки города правилами мира, когда свои
     # числа пусты. Держим его рядом с контекстом — там же, где живёт всё остальное.
     _LAST_OBS = obs
+    # §13.360: ЧЕМ ЕГО ПРАВИЛО МЕРИТ ПОСТАНОВКУ. Без этих двух чисел спор «почему войско, а не
+    # поселенец» не решается: нужен и выбор правила по городу, и цены типов в той же мере.
+    if os.environ.get("DOF_CHOICE_DEBUG") == "1":
+        try:
+            _po = getattr(ctx, "production_of", None) or {}
+            _tp = getattr(ctx, "type_price_of", None) or {}
+            _rows = []
+            for _cid in list(((obs or {}).get("city") or {}).keys())[:2]:
+                _rec = None
+                try:
+                    _rec = (_po(_cid) if callable(_po)
+                            else (_po.get(_cid) if isinstance(_po, dict) else None))
+                except Exception as _exc2:  # noqa: BLE001
+                    _rec = f"<{type(_exc2).__name__}: {_exc2}>"
+                _rows.append(f"город {_cid}: выбор {str(_rec)[:70]!r}")
+            def _price(_nm):
+                try:
+                    return (_tp(_nm) if callable(_tp)
+                            else (_tp.get(_nm) if isinstance(_tp, dict) else None))
+                except Exception as _exc3:  # noqa: BLE001
+                    return f"<{type(_exc3).__name__}>"
+            print("  [выбор-производства] " + "; ".join(_rows)
+                  + f" | цены: Settlers {_price('Settlers')}, Warriors {_price('Warriors')}",
+                  flush=True)
+        except Exception as _exc:  # noqa: BLE001
+            print(f"  [выбор-производства] проба упала: {type(_exc).__name__}: {_exc}", flush=True)
     cities = (obs or {}).get("city") or {}
     # Его правило: чудеса строит ТОЛЬКО город чудес (`daicity.c:1972`). Без этой проверки
     # наш город населением 3 ставил `Colossus` (измерено, игра 6001: `produce_Colossus` ×5) —
