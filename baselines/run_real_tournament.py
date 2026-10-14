@@ -594,6 +594,49 @@ def _city_tile_diag(why: str) -> None:
         print(f"  [клетка-правила] молчит: {why}", flush=True)
 
 
+def _land_work_want(obs: dict, map_obs: dict, offered: dict, pos) -> float:
+    """ЕГО `best_impr` поселенца: лучшая работа, доступная ему СЕЙЧАС (`autoworkers.c:439`).
+
+    Работы берутся из предложения мира (`build_road`, `mine`, `irrigation`, …) — то, что он может
+    сделать на своей клетке немедленно. У него это обход всего радиуса города с маршрутизатором и
+    оценкой `city_tile_value`; здесь — подмножество (та же арифметика, меньше охват; сказано
+    в `brain/ai_default/worker_want.py`).
+    """
+    try:
+        from brain.ai_default.tile_outputs import tile_outputs_from_rules
+        from brain.ai_default.worker_want import best_improvement_want, tile_value
+        from env.terrain_work import WORK_ACTION_EXTRA, tile_effect, tile_terrain_extras
+        from env.terrain_work_times import TERRAIN_WORK_TIMES
+    except Exception:  # noqa: BLE001
+        return 0.0
+    try:
+        terrain, extras = tile_terrain_extras(map_obs, pos[0], pos[1])
+    except Exception:  # noqa: BLE001
+        return 0.0
+    cur = tile_outputs_from_rules(terrain, extras)
+    if cur is None:
+        return 0.0
+    _times = TERRAIN_WORK_TIMES.get(str(terrain).lower(), {}) or {}
+    entries: list[tuple[float, float, int]] = []
+    _vals: dict = {}
+    for name, params in (as_dict(offered) or {}).items():
+        if not truthy(params):
+            continue
+        _nm = str(name)
+        extra = WORK_ACTION_EXTRA.get(_nm)
+        if extra is None:
+            continue            # смена террейна (`cultivate`) не оценена — не выдумываем
+        delta = tile_effect(extra, terrain, extras, _vals)
+        if delta is None:
+            continue            # «не знаем» — не подставляем ноль как знание
+        after = (float(cur[0]) + float(delta[0]), float(cur[1]) + float(delta[1]),
+                 float(cur[2]) + float(delta[2]))
+        _key = "road" if _nm == "build_road" else _nm
+        delay = int(_times.get(_key) or 1)      # нет числа — 1 ход, наименьшее известное
+        entries.append((tile_value(*cur), tile_value(*after), delay))
+    return best_improvement_want(entries)
+
+
 def _founder_step(obs: dict, avail: dict, mindist: int | None = None):
     """Поселенец идёт к лучшей площадке по ЕГО числам, а не основывает где стоит (§13.306).
 
@@ -660,6 +703,15 @@ def _founder_step(obs: dict, avail: dict, mindist: int | None = None):
             _mindist = 0
             _mindist_src = "неизвестно"
     _known_cities = city_positions(obs)
+    if os.environ.get("DOF_FOUND_DEBUG") == "1":
+        _cities_raw = as_dict((as_dict(obs) or {}).get("city")) or {}
+        _who = {}
+        for _cid, _crec in _cities_raw.items():
+            _r = as_dict(_crec) or {}
+            _own = _r.get("owner")
+            _who[_own] = _who.get(_own, 0) + 1
+        print(f"  [слой-город] в наблюдении {len(_cities_raw)} городов, по владельцам {_who}; "
+              f"известных клеток {len(_known_cities)}", flush=True)
     # ── §13.355: ЕГО КАРТА ЗАНЯТОСТИ МЕСТ (`common/aicore/citymap.c`) и уход с задачи
     # основания освобождает место (`daitools.c:665-671`): если поселенца больше нет среди
     # способных действовать (основал город, погиб), его резерв снимается.
@@ -753,19 +805,42 @@ def _founder_step(obs: dict, avail: dict, mindist: int | None = None):
         on_best = (int(best[0]), int(best[1])) == tuple(pos)
         starved = bool(getattr(site, "starved_food", False)
                        or getattr(site, "starved_shield", False))
+        # ── §13.356: ЕГО ВЫБОР (`daisettler.c:1121-1134`): ценность площадки против ценности
+        # работы на земле. `result->result > best_impr` — идём основывать; иначе, если работа
+        # есть (`best_impr > 0`), он становится AUT_AUTO_SETTLER и работает на земле.
+        _city_want = float(best[3])                                   # его `result->result`
+        _impr_want = _land_work_want(obs, map_obs, offered, pos)       # его `best_impr`
+        _city_wins = _city_want > _impr_want
         if os.environ.get("DOF_FOUND_DEBUG") == "1":
             _h_now = _FOUND_TARGET.get(str(uid))
             print(f"  [поселенец-ход] unit/{uid} на {tuple(pos)} "
                   f"{'цель ' + str(_h_now) if _h_now else 'цели нет'}; "
-                  f"основать_здесь={can_found_here}, голоден={starved}", flush=True)
+                  f"основать_здесь={can_found_here}, голоден={starved}; город {_city_want:.1f} "
+                  f"против работы {_impr_want:.1f} → "
+                  f"{'ГОРОД' if _city_wins else 'земля (его AUT_AUTO_SETTLER)'}", flush=True)
+        if not _city_wins:
+            # Земля важнее площадки: его `else if (best_impr > 0)` — работаем на земле и снимаем
+            # задачу основания (`dai_unit_new_task` освобождает и место, `daitools.c:665-671`).
+            _was = _FOUND_TARGET.pop(str(uid), None)
+            if _was is not None:
+                _cmap.free_city_spot(_was[0], _was[1], uid)
+            continue
         if on_best and can_found_here:
-            if os.environ.get("DOF_FOUND_DEBUG") == "1":
-                print(f"  [пропуск] unit/{uid} на {tuple(pos)}: на лучшей площадке, "
-                      f"основывает общий путь", flush=True)
-            _prev = _FOUND_TARGET.pop(str(uid), None)   # стоим на лучшей: основывает общий путь
+            # ── ЕГО `dai_do_build_city` (`daisettler.c:1053-1070`): пришли на место и можно —
+            # ОСНОВЫВАЕМ САМИ. Прежде здесь стояло «основывает общий путь», и это было ИЗМЕРЕНО
+            # как потеря: у поселенца верхним кандидатом общего пути шли работы на земле
+            # (`build_road=2.0`, `cultivate=2.0`), основание не посылалось вовсе — 18 поселенцев
+            # за 150 ходов и 5 приказов `build_city`.
+            _prev = _FOUND_TARGET.pop(str(uid), None)
             if _prev is not None:
                 _cmap.free_city_spot(_prev[0], _prev[1], uid)
-            continue                      # лучшая и есть текущая — его правило основывает здесь
+            if founding:
+                if os.environ.get("DOF_FOUND_DEBUG") == "1":
+                    print(f"  [основание] unit/{uid} на {tuple(pos)}: основать_здесь "
+                          f"(город {_city_want:.1f} > работы {_impr_want:.1f}) — приказ "
+                          f"{founding[0]} (его dai_do_build_city)", flush=True)
+                return ("unit", uid, founding[0])
+            continue
         if can_found_here and not starved and here is not None \
                 and float(best[3]) <= float(here[2]):
             if os.environ.get("DOF_FOUND_DEBUG") == "1":
@@ -780,10 +855,29 @@ def _founder_step(obs: dict, avail: dict, mindist: int | None = None):
         # ведём поселенца к НЕЙ, а не к пересчитанной заново. По прибытии — не мешаем общему
         # пути основать (`build_city`), цель снимаем. Цель стала недостижимой — пересчитываем.
         _held = _FOUND_TARGET.get(str(uid))
+        if _held is not None and _known_cities:
+            # ── ЕГО ОТМЕНА (`daisettler.c:1040-1045`): если основывать в цели УЖЕ нельзя
+            # (появился город ближе положенного — `citymindist_prevents_city_on_tile`,
+            # `common/city.c:1445`), задача снимается и место освобождается. Измерено (`cmp1`):
+            # поселенец пришёл в (16,33), где мир отказывает (`основать_здесь=False`) — цель была
+            # выбрана до появления столицы и держалась, поэтому основание не срабатывало.
+            from brain.ai_default.founder_destination import citymindist_blocks as _blocks
+            if _blocks(_held[0], _held[1], _known_cities, _mindist):
+                _FOUND_TARGET.pop(str(uid), None)
+                _cmap.free_city_spot(_held[0], _held[1], uid)
+                if os.environ.get("DOF_FOUND_DEBUG") == "1":
+                    print(f"  [отмена] unit/{uid}: цель {_held} стала негодной "
+                          f"(город ближе citymindist) — ищем заново", flush=True)
+                _held = None
         if _held is not None:
             if (int(pos[0]), int(pos[1])) == _held:
                 _FOUND_TARGET.pop(str(uid), None)
                 _cmap.free_city_spot(_held[0], _held[1], uid)   # пришли: место отдаём городу
+                if can_found_here and founding:
+                    if os.environ.get("DOF_FOUND_DEBUG") == "1":
+                        print(f"  [основание] unit/{uid} пришёл на {tuple(pos)}: приказ "
+                              f"{founding[0]} (его dai_do_build_city)", flush=True)
+                    return ("unit", uid, founding[0])
                 continue
             _step_held = step_toward(tuple(pos), _held, offered=gotos or None,
                                      blocked=_blocked_step)
@@ -3877,6 +3971,9 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                 # §13.340: НЕПРЕРЫВНЫЙ след очереди по нашим городам — каждый ход, независимо от
                 # того, дозвал ли ход до выбора производства. Без него замер «применился ли приказ»
                 # опирался на редкие строки (1–6 за партию), и пар «приказ ↔ очередь» не набиралось.
+                if os.environ.get("DOF_FOUND_DEBUG") == "1":
+                    print(f"  [слой-город-ход] ход {info.get('turn')}: в наблюдении "
+                          f"{len(as_dict((obs or {}).get('city')) or {})} городов", flush=True)
                 if os.environ.get("DOF_TRACE_FILTERS") == "1":
                     for _cid, _rec in (as_dict((obs or {}).get("city")) or {}).items():
                         _r = as_dict(_rec) or {}
