@@ -84,6 +84,15 @@ class SiteEvaluation:
     ai_want: float = 0.0         # его `result->total` для нового города на этой площадке
     starved_food: bool = False   # его `food_starvation`
     starved_shield: bool = False  # его `shield_starvation`
+    #: ── Диагностика §13.320: та же площадка, но из ОДНОЙ совместной расстановки ──
+    #: Ресурсы выше набраны НЕЗАВИСИМО (еда по лучшим по еде, щиты по лучшим по щитам),
+    #: поэтому одни клетки считаются дважды. Здесь — честное «что город реально может».
+    joint_food: float = 0.0
+    joint_shields: float = 0.0
+    joint_trade: float = 0.0
+    joint_fed: bool = False
+    #: Насколько независимый набор завысил щиты относительно совместного (диагностика).
+    shields_inflated: float = 0.0
     viable: bool = False         # прошла ли гейт минимального качества
     reason: str = ""
 
@@ -100,6 +109,11 @@ class SiteEvaluation:
             "gate_food_high": round(self.gate_food_high, 3),
             "coastal": self.coastal, "resource_types": list(self.resource_types),
             "option_bonus": round(self.option_bonus, 3),
+            "joint_food": round(self.joint_food, 3),
+            "joint_shields": round(self.joint_shields, 3),
+            "joint_trade": round(self.joint_trade, 3),
+            "joint_fed": self.joint_fed,
+            "shields_inflated": round(self.shields_inflated, 3),
             "viable": self.viable, "reason": self.reason,
         }
 
@@ -190,6 +204,45 @@ def city_centre_output(map_obs: dict[str, Any], x: int, y: int
             max(trade, CITY_CENTRE_MIN), known)
 
 
+def joint_site_outputs(tiles, size, food_cost):
+    """ВЫХОДЫ ПЛОЩАДКИ ИЗ ОДНОЙ СОВМЕСТНОЙ РАССТАНОВКИ (§13.320).
+
+    Центр работает бесплатно, `size` рабочих клеток выбираются ВМЕСТЕ — город не может
+    работать «лучшие по еде» и «лучшие по щитам» одновременно. Возвращает
+    `(food, shields, trade, fed)` лучшей расстановки, которая кормит `size` жителей
+    (среди кормящих берём наибольшие щиты); если не кормит ни одна — берём наибольшую еду
+    и `fed=False`. Число сочетаний ограничено: при переборе сверх предела берём жадную
+    расстановку (и это видно по `fed=False` вместе с пометкой в замечании вызывающего).
+    """
+    tiles = list(tiles or [])
+    if not tiles:
+        return (0.0, 0.0, 0.0, False)
+    centre, rest = tiles[0], list(tiles[1:])
+    k = min(len(rest), max(1, int(size)))
+    need_food = food_cost * max(1, int(size))
+    best_fed = None   # (щиты, еда, торговля)
+    best_any = None   # (еда, щиты, торговля)
+    import itertools, math
+    n_comb = math.comb(len(rest), k) if len(rest) >= k else 0
+    combos = itertools.combinations(range(len(rest)), k) if n_comb <= 150000 else None
+    if combos is None:
+        order = sorted(range(len(rest)), key=lambda i: (rest[i][0], rest[i][1]), reverse=True)
+        combos = [tuple(order[:k])]
+    for combo in combos:
+        f = centre[0] + sum(rest[i][0] for i in combo)
+        s = centre[1] + sum(rest[i][1] for i in combo)
+        tr = centre[2] + sum(rest[i][2] for i in combo)
+        if best_any is None or (f, s) > (best_any[0], best_any[1]):
+            best_any = (f, s, tr)
+        if f >= need_food and (best_fed is None or (s, f) > (best_fed[0], best_fed[1])):
+            best_fed = (s, f, tr)
+    if best_fed is not None:
+        s, f, tr = best_fed
+        return (float(f), float(s), float(tr), True)
+    f, s, tr = best_any
+    return (float(f), float(s), float(tr), False)
+
+
 def evaluate_site(map_obs: dict[str, Any], x: int, y: int, *,
                   size: int = 1, vals: dict[str, Any] | None = None) -> SiteEvaluation:
     """Оценить площадку: лучшие `size + 1` клеток в радиусе, включая центр.
@@ -247,6 +300,18 @@ def evaluate_site(map_obs: dict[str, Any], x: int, y: int, *,
     site.food_high = float(sum(t[0] for t in high))
 
     site.food_surplus = site.food - food_cost * max(1, size)
+
+    # ── §13.320: честная совместная оценка (диагностика; решения НЕ меняет) ──
+    _jt = joint_site_outputs(effective, size, food_cost)
+    site.joint_food, site.joint_shields, site.joint_trade, site.joint_fed = _jt
+    site.shields_inflated = site.shields - site.joint_shields
+    import os as _os
+    if _os.environ.get("DOF_SITE_DEBUG") == "1":
+        print("  [площадка] (%d,%d) размер %d: наша оценка еда %.0f щиты %.0f | "
+              "СОВМЕСТНО еда %.0f щиты %.0f (кормит=%s) → щиты завышены на %.0f"
+              % (x, y, size, site.food, site.shields,
+                 site.joint_food, site.joint_shields, site.joint_fed,
+                 site.shields_inflated), flush=True)
 
     # Гейт проверяется на размере `SITE_GATE_SIZE`: смысл порога —
     # «прокормить двух жителей + запас», то есть площадка должна кормить не
