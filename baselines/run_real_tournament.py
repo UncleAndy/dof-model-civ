@@ -568,6 +568,11 @@ _LAST_CTX = None
 _LAST_OBS = None
 
 
+#: Работы клетки, которые выбирает ПЕРЕНОСЁННОЕ правило встроенного ИИ (13.288, 13.297).
+#: Дороги включены после проверки связки процента по правилам (terrain.ruleset:119).
+_PORT_WORK_NAMES = ("mine", "irrigation", "road", "build_road", "railroad", "build_railroad")
+
+
 def _city_tile_diag(why: str) -> None:
     """Почему оценка клеток города по правилам промолчала — молчание обязано быть отличимо."""
     if os.environ.get("DOF_TILE_DEBUG") == "1":
@@ -1070,7 +1075,7 @@ def _prefer_port_work_choice(cands: list, obs: dict, dof_state, avail=None) -> l
         if not act or str(act[0]) != "unit":
             continue
         name = str(act[2])
-        if name in ("mine", "irrigation"):
+        if name in _PORT_WORK_NAMES:
             by_actor.setdefault(str(act[1]), []).append(name)
     if not by_actor:
         return cands
@@ -1091,7 +1096,7 @@ def _prefer_port_work_choice(cands: list, obs: dict, dof_state, avail=None) -> l
             continue
         ctrl, actor, name = str(act[0]), str(act[1]), str(act[2])
         chosen = keep.get(actor)
-        if ctrl == "unit" and chosen and name in ("mine", "irrigation") and name != chosen:
+        if ctrl == "unit" and chosen and name in _PORT_WORK_NAMES and name != chosen:
             if os.environ.get("DOF_TRACE_FILTERS") == "1":
                 print(f"  [работа-перенос] unit/{actor}: {name} отложено — его правило "
                       f"выбрало {chosen}", flush=True)

@@ -166,6 +166,64 @@ WORK_INCREMENT_FIELDS: dict[str, tuple[str, int]] = {
 }
 
 
+#: Работы дорожного рода → ключ в `ROAD_EFFECTS`; доля берётся у террейна.
+#: Связка подтверждена САМИМИ правилами: `road_trade_incr_pct = percent of road trade_incr
+#: applied to this terrain` (terrain.ruleset:119). Раньше дороги были исключены, пока связка
+#: не проверена: торговля в его весах стоит 18, то есть дороже щитов (17), и включать её
+#: наугад было нельзя.
+ROAD_WORK_NAMES: dict[str, str] = {
+    "road": "road",
+    "build_road": "road",
+    "railroad": "railroad",
+    "build_railroad": "railroad",
+}
+
+
+def road_option_from_rules(terrain: str, outputs, work: str):
+    """Вариант дорожной работы: `(новая тройка выходов, срок)` или None.
+
+    Прирост = собственный прирост экстры (`ROAD_EFFECTS`) в доле, заданной ТЕРРЕЙНОМ
+    (`road_trade_incr_pct` / `road_shield_incr_pct`). Ноль в правилах означает «дорога здесь
+    ничего не даёт» — тогда работы не предлагаем, чтобы не тратить ходы впустую.
+    """
+    from env.terrain_work_effects import ROAD_EFFECTS, TERRAIN_WORK_EFFECTS
+    from env.terrain_work_times import TERRAIN_WORK_TIMES
+
+    key = str(terrain or "").strip().lower().replace(" ", "_")
+    road_key = ROAD_WORK_NAMES.get(str(work))
+    if road_key is None:
+        return None
+    times = TERRAIN_WORK_TIMES.get(key, {}) or {}
+    if road_key not in times:
+        return None
+    effects = TERRAIN_WORK_EFFECTS.get(key, {}) or {}
+    pct = float(effects.get(ROAD_PCT_FIELD.get(road_key, ""), 0.0) or 0.0)
+    if pct == 0.0:
+        return None
+    own = ROAD_EFFECTS.get(road_key, {}) or {}
+    new_outputs = list(outputs)
+    changed = False
+    for field, index in (("trade_incr", 2), ("shield_incr", 1), ("food_incr", 0),
+                         ("trade_incr_const", 2), ("shield_bonus", 1)):
+        if field not in own:
+            continue
+        gain = float(own[field]) * (pct / 100.0)
+        if gain == 0.0:
+            continue
+        new_outputs[index] = new_outputs[index] + gain
+        changed = True
+    if not changed:
+        return None
+    return tuple(new_outputs), int(times[road_key])
+
+
+#: Ключ процента по дорожному роду.
+ROAD_PCT_FIELD: dict[str, str] = {
+    "road": "road_trade_incr_pct",
+    "railroad": "road_shield_incr_pct",
+}
+
+
 def work_options_from_rules(terrain: str, outputs, offered) -> dict:
     """Варианты работ для клетки: `{работа: (новая тройка выходов, срок)}` — из правил мира.
 
@@ -184,6 +242,11 @@ def work_options_from_rules(terrain: str, outputs, offered) -> dict:
     out: dict = {}
     for work in offered:
         name = str(work)
+        if name in ROAD_WORK_NAMES:
+            road = road_option_from_rules(terrain, outputs, name)
+            if road is not None:
+                out[name] = road
+            continue
         field = WORK_INCREMENT_FIELDS.get(name)
         if field is None:
             continue

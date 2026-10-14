@@ -34,9 +34,15 @@ def test_work_not_in_the_rules_is_not_offered():
     assert work_options_from_rules("mountains", (0, 1, 0), ["irrigation"]) == {}
 
 
-def test_road_is_deliberately_absent():
-    """Дороги не включены: их прирост выражен процентом по террейну и требует проверки."""
-    assert work_options_from_rules("grassland", (2, 0, 0), ["road", "build_road"]) == {}
+def test_roads_were_absent_until_the_percent_linkage_was_verified():
+    """Дороги были исключены СОЗНАТЕЛЬНО, пока связка процента не проверена.
+
+    Прежний сторож требовал пустоты. Теперь связка подтверждена самими правилами
+    (`terrain.ruleset:119`), и требование снято — но не отменено молча: этот тест стережёт,
+    что дорога предлагается, а холмы с нулевым процентом — нет.
+    """
+    assert work_options_from_rules("grassland", (2, 0, 0), ["build_road"])
+    assert work_options_from_rules("hills", (1, 0, 0), ["build_road"]) == {}
 
 
 def test_unworked_tiles_compare_TOTALS_not_gains():
@@ -74,3 +80,25 @@ def test_rules_tables_are_not_empty():
     assert TERRAIN_WORK_EFFECTS.get("grassland", {}).get("irrigation_food_incr") == 1.0
     assert TERRAIN_WORK_TIMES.get("grassland", {}).get("irrigation") == 5
     assert TERRAIN_WORK_TIMES.get("hills", {}).get("mine") == 10
+
+
+def test_road_on_grassland_is_offered_with_the_rules_percent():
+    """Дорога: прирост = `road.trade_incr` × `road_trade_incr_pct` террейна.
+
+    Связка — из самих правил: `road_trade_incr_pct = percent of road trade_incr applied to
+    this terrain` (terrain.ruleset:119). Луг: 100 % от 1 → `+1 торговли` за 2 хода.
+    """
+    assert work_options_from_rules("grassland", (2, 0, 0), ["build_road"]) == {
+        "build_road": ((2, 0, 1.0), 2)}
+
+
+def test_road_on_hills_is_not_offered_because_the_rules_say_zero_percent():
+    """Холмы: `road_trade_incr_pct = 0` → дорога не предлагается (не тратим ходы впустую)."""
+    assert work_options_from_rules("hills", (1, 0, 0), ["build_road"]) == {}
+
+
+def test_trade_is_worth_more_than_shields_in_his_weights():
+    """Факт его весов: `+1 торговли (18)` чуть дороже `+1 щита (17)` — поэтому дорогу включать
+    было нельзя без проверки связки, а теперь можно."""
+    assert city_tile_value(2, 0, 1) - city_tile_value(2, 0, 0) == 27.0   # 18 + половина 9*2
+    assert city_tile_value(2, 1, 0) - city_tile_value(2, 0, 0) == 25.5   # 17 + половина 8.5*2
