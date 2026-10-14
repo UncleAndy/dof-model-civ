@@ -4650,6 +4650,25 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
                                 continue
                             print(f"  [счёт сторон] {_names.get(_pid_i, _p)} (id {_pid_i})"
                                   f" = {float(_ser[-1]):.0f}", flush=True)
+                    # §13.333: не только счёт, но и СОСТАВ по каждой стороне — тогда
+                    # видно, в какой статье встроенный ИИ уходит вперёд (города, население,
+                    # земля, производство), а не только «он в 10 раз больше».
+                    _rows: dict[int, dict[str, float]] = {}
+                    for _tag, _per in (cats or {}).items():
+                        if not isinstance(_per, dict):
+                            continue
+                        for _p, _ser in _per.items():
+                            if not _ser:
+                                continue
+                            try:
+                                _ppi = int(_p)
+                            except (TypeError, ValueError):
+                                continue
+                            _rows.setdefault(_ppi, {})[str(_tag)] = float(_ser[-1])
+                    for _ppi in sorted(_rows):
+                        _vals = ", ".join(f"{k}={v:.0f}" for k, v in sorted(_rows[_ppi].items()))
+                        print(f"  [состав сторон] {_names.get(_ppi, _ppi)} (id {_ppi}): {_vals}",
+                              flush=True)
                 except Exception as _exc:  # noqa: BLE001 - диагностика не рушит серию
                     print(f"  [счёт сторон] не прочитан: {type(_exc).__name__}: {_exc}",
                           flush=True)
