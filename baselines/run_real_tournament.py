@@ -1011,7 +1011,7 @@ def _port_work_choice_for(actor, candidates, obs, dof_state, avail=None):
         _port_diag("нет карты в наблюдении", None)
         return None
     try:
-        terrain, _extras = tile_terrain_extras(map_obs, x, y)
+        terrain, _extras_here = tile_terrain_extras(map_obs, x, y)
     except Exception:  # noqa: BLE001
         return None
     if not terrain:
@@ -1038,13 +1038,17 @@ def _port_work_choice_for(actor, candidates, obs, dof_state, avail=None):
         # Город сообщает выходы только своих клеток, а рабочий часто стоит ВНЕ радиуса
         # (измерено: 6 обращений подряд). Основа выходов — свойство террейна и лежит в
         # правилах мира, поэтому берём её оттуда, а не из наблюдения и не нулём.
-        from env.terrain_work_times import TERRAIN_BASE_OUTPUTS
+        # Выходы = основа террейна ПЛЮС уже имеющиеся улучшения клетки (экстры приходят в
+        # том же слое, что и террейн). Без этого работа на уже улучшенной клетке выглядела бы
+        # выгоднее, чем она есть: прирост считался бы от чистой основы.
+        from brain.ai_default.tile_outputs import tile_outputs_from_rules
 
-        outputs = TERRAIN_BASE_OUTPUTS.get(str(terrain))
+        outputs = tile_outputs_from_rules(terrain, _extras_here)
         if outputs is None:
             _port_diag(f"нет основы выходов для террейна {terrain}", None)
             return None
-        _port_diag(f"клетка вне радиуса — основа из правил: {terrain} {tuple(outputs)}", None)
+        _port_diag(f"клетка вне радиуса — правила: {terrain} {tuple(_extras_here)} "
+                   f"→ {tuple(outputs)}", None)
 
     offered = []
     for c in candidates:
