@@ -563,6 +563,10 @@ def _my_units_classes(env_getter, my_id):
 
 
 #: Последний собранный контекст прогноза: в нём живёт дверь его чисел для клеток.
+#: §13.336: «что город строит и с каким запасом щитов» — по городам. Пока запас растёт,
+#: предмет держим и приказа не шлём (его правило), заново решаем только после завершения.
+_LAST_PROD: dict = {}
+
 #: Ставится `_production_candidate` каждый ход и читается выбором без DoF.
 _LAST_CTX = None
 #: Наблюдение текущего решения — для оценки клеток города по правилам мира (§13.292).
@@ -1159,6 +1163,28 @@ def _production_candidate(obs: dict, info: dict, dof_state, extractor,
             current = (type_names or {}).get(int(rec.get("production_value")))
         except (TypeError, ValueError):
             current = None
+        # §13.336 (перенос, буквально): его ИИ НЕ меняет уже начатое производство, пока предмет
+        # ещё можно строить. `server/cityturn.c:2330-2353`, `choose_build_target`:
+        #   «Try building the same thing again. Repeat building doesn't require a call to
+        #    change_build_target, so just return.»
+        # и `ai/default/daicity.c:256-261`: «Don't change existing productions unless we have to.»
+        # У нас совет (сборщик цен) звался КАЖДЫЙ ход, и город дёргался: приказ на поселенца
+        # (40 щитов) жил 5 ходов и выбивался нашим же следующим, щиты уходили на дешёвого воина
+        # (10) — отсюда `units_built=9` при `military_units=9` и стопка 16 воинов (измерено).
+        # `allowed` — это маска МИРА (`_world_production_names`), то есть «город построит это
+        # СЕЙЧАС»; она и есть его `can_city_build_*_now`.
+        _prev = _LAST_PROD.get(str(cid))
+        if (current and _prev and str(_prev[0]) == str(current) and stock >= float(_prev[1])
+                and any(str(current) == str(a) for a in allowed)):
+            if _filters_trace():
+                print(f"  [постановка] город {cid}: строит {current!r}, щитов {stock:.0f} "
+                      f"(было {float(_prev[1]):.0f}) — накопление идёт, приказа не шлём", flush=True)
+            _LAST_PROD[str(cid)] = (str(current), stock)
+            continue
+        if current and _prev and str(_prev[0]) == str(current) and stock < float(_prev[1]):
+            if _filters_trace():
+                print(f"  [постановка] город {cid}: щиты упали {float(_prev[1]):.0f}→{stock:.0f} — "
+                      f"{current!r} завершён, решаем заново", flush=True)
         shields = float(rec.get("prod_shield") or 0.0)
         if shields <= 0.0:
             continue
@@ -1239,6 +1265,12 @@ def _production_candidate(obs: dict, info: dict, dof_state, extractor,
                       f"ни один не оценён — постановку не меняем", flush=True)
             continue
         if _filters_trace():
+            # §13.335: сырые числа очереди — чтобы отличить «приказ не применён» от
+            # «имя предмета прочитано неверно». `production_kind/value` — то, что
+            # уходит в пакет `packet_city_change` (`city_actions.py:383`).
+            _raw = {k: rec.get(k) for k in ("production_kind", "production_value",
+                                            "shield_stock", "did_buy")}
+            print(f"  [очередь-сырое] город {cid}: {_raw}", flush=True)
             _top = sorted(scored, key=lambda r: r[0], reverse=True)[:5]
             print(f"  [постановка] город {cid}: маски {len(allowed)} типов; оценено "
                   f"{len(scored)}; лучший {best[1]} (ценность {best[0]:.3f} за {best[2]} ход.); "
@@ -1249,6 +1281,11 @@ def _production_candidate(obs: dict, info: dict, dof_state, extractor,
         return {"ctrl_type": "city", "actor_id": cid,
                 "action_name": f"produce_{best[1]}",
                 "current_name": str(current) if current else None,
+                # §13.336: помним ЧТО И С КАКИМ ЗАПАСОМ ЩИТОВ мы поставили. Пока щиты растут,
+                # город держит предмет (его правило «don't change existing productions unless we
+                # have to», `daicity.c:256-261`); заново решаем только когда постройка
+                # завершилась — падение запаса, что и есть его `city_built_last_turn`.
+                "_committed": (str(best[1]), float(stock)),
                 "projected_dof_delta": {}, "is_reversible": True}
     return None
 
