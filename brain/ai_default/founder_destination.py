@@ -85,6 +85,65 @@ def step_toward(pos: tuple[int, int], target: tuple[int, int],
     return None if best is None else best[1]
 
 
+def _wrap(x: int, y: int, shape) -> tuple[int, int] | None:
+    """Клетка после шага: X — цилиндр, за полюсом клетки нет (`map_pos_to_tile`, §13.347)."""
+    if shape is None:
+        return (int(x), int(y))
+    w, h = int(shape[0]), int(shape[1])
+    if w > 0:
+        x = int(x) % w
+    if h > 0 and not 0 <= int(y) < h:
+        return None
+    return (int(x), int(y))
+
+
+def path_first_step(pos: tuple[int, int], target: tuple[int, int], passable,
+                    *, shape=None, max_nodes: int = 3000) -> tuple[int, int] | None:
+    """ПЕРВЫЙ ШАГ КРАТЧАЙШЕГО ПУТИ — перенос его `dai_unit_goto` (`daitools.c:242-291`).
+
+    У него путь ищет маршрутизатор (`pf_map` — обход клеток по цене хода) и юнит идёт по НЕМУ;
+    у нас был один ЖАДНЫЙ шаг (`step_toward`), который упирался в воду или в местный минимум и
+    стоял: измерено (§13.348) `goto_4`/`goto_3` 66-72 раза подряд без движения. У поселенца один
+    ход за ход, поэтому поиск в ширину по восьми соседям даёт ровно цену пути в ходах, как у него.
+
+    `passable(x, y)` — законность клетки (у него это `pf_map` по правилам движения);
+    возвращается клетка ПЕРВОГО шага (куда встать), или None, если пути нет.
+    """
+    start = (int(pos[0]), int(pos[1]))
+    goal = (int(target[0]), int(target[1]))
+    if start == goal:
+        return None
+    from collections import deque
+
+    prev: dict[tuple[int, int], tuple[int, int] | None] = {start: None}
+    queue: deque[tuple[int, int]] = deque([start])
+    seen = 0
+    while queue and seen < max_nodes:
+        cur = queue.popleft()
+        seen += 1
+        if cur == goal:
+            break
+        for dx, dy in GOTO_DIRECTIONS.values():
+            nxt = _wrap(cur[0] + dx, cur[1] + dy, shape)
+            if nxt is None or nxt in prev:
+                continue
+            if nxt != goal and not bool(passable(nxt[0], nxt[1])):
+                continue
+            prev[nxt] = cur
+            queue.append(nxt)
+    if goal not in prev:
+        return None
+    node = goal
+    while prev.get(node) is not None and prev[node] != start:
+        node = prev[node]
+    return node if prev.get(node) == start else None
+
+
+def goto_name_to(pos: tuple[int, int], dest: tuple[int, int]) -> str | None:
+    """Имя шага `goto_*`, который встаёт РОВНО на `dest` (для хода по найденному пути)."""
+    return goto_name(int(dest[0]) - int(pos[0]), int(dest[1]) - int(pos[1]))
+
+
 def citymindist_blocks(x: int, y: int,
                        cities: Iterable[tuple[int, int]],
                        mindist: int) -> bool:

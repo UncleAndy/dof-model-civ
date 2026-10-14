@@ -725,12 +725,16 @@ def _founder_step(obs: dict, avail: dict, mindist: int | None = None, env_getter
 
     try:
         from brain.ai_default.founder_destination import (
-            city_positions, rank_sites, step_toward,
+            city_positions, goto_name_to, path_first_step, rank_sites, step_toward,
         )
         from env.food_gate import food_cost_of
         from env.site_eval import evaluate_site
     except Exception:  # noqa: BLE001
         return None
+    # ── §13.358: форма карты и проходимость — для поиска ПУТИ (его маршрутизатор, `pf_map`).
+    _shape = getattr((as_dict((as_dict(obs) or {}).get("map")) or {}).get("output"),
+                     "shape", None)
+    _passable = lambda _x, _y: not _blocked_step(_x, _y)   # noqa: E731
     # ── §13.353: МИНИМАЛЬНОЕ РАССТОЯНИЕ МЕЖДУ ГОРОДАМИ — из мира (считает вызывающий,
     # у него есть доступ к контроллеру). Мир отказывает в основании, если ближе `citymindist`
     # (`common/city.c:1445`), а наша оценка площадки этого не знала: поселенцы сгруживались,
@@ -925,8 +929,17 @@ def _founder_step(obs: dict, avail: dict, mindist: int | None = None, env_getter
                               f"{founding[0]} (его dai_do_build_city)", flush=True)
                     return ("unit", uid, founding[0])
                 continue
-            _step_held = step_toward(tuple(pos), _held, offered=gotos or None,
-                                     blocked=_blocked_step)
+            # ── §13.358: ЕГО ПУТЬ (`dai_unit_goto`, `daitools.c:242-291`) — идём по кратчайшему
+            # пути, а не одним жадным шагом: жадный упирался в воду/тупик и стоял (§13.348).
+            _step_held = None
+            _nx = path_first_step(tuple(pos), _held, _passable, shape=_shape)
+            if _nx is not None:
+                _nm = goto_name_to(tuple(pos), _nx)
+                if _nm is not None and (not gotos or _nm in gotos):
+                    _step_held = _nm
+            if _step_held is None:
+                _step_held = step_toward(tuple(pos), _held, offered=gotos or None,
+                                         blocked=_blocked_step)
             if _step_held is not None:
                 if os.environ.get("DOF_TRACE_FILTERS") == "1":
                     print(f"  [поселенец] unit/{uid}: держу цель {_held} (его миссия) "
@@ -940,7 +953,17 @@ def _founder_step(obs: dict, avail: dict, mindist: int | None = None, env_getter
         step = None
         target = None
         for cand in ranked:
-            step = step_toward(tuple(pos), (cand[0], cand[1]), offered=gotos or None,
+            # ЕГО `pf_map`: площадка годится, только если до неё ЕСТЬ путь, а не только
+            # направление. Жадный шаг вёл к воде и в тупики — поселенцы не доходили.
+            _cx, _cy = int(cand[0]), int(cand[1])
+            _nx = path_first_step(tuple(pos), (_cx, _cy), _passable, shape=_shape)
+            if _nx is None:
+                continue
+            _nm = goto_name_to(tuple(pos), _nx)
+            if _nm is not None and _nm in gotos:
+                step, target = _nm, cand
+                break
+            step = step_toward(tuple(pos), (_cx, _cy), offered=gotos or None,
                                blocked=_blocked_step)
             if step is not None:
                 target = cand
