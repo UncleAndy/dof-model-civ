@@ -68,11 +68,17 @@ def step_toward(pos: tuple[int, int], target: tuple[int, int],
     return None if best is None else best[1]
 
 
-def best_site(obs: dict, *, size: int = 1, exclude: Iterable[tuple[int, int]] = (),
-              reference: tuple[int, int] | None = None, move_rate: float = 1.0,
-              settler_shield_cost: float = 0.0, limit: int = 200,
-              revealed: Iterable[tuple[int, int]] | None = None):
-    """Лучшая площадка по ЕГО числам: `(x, y, ai_want, want)` или `None`.
+def rank_sites(obs: dict, *, size: int = 1, exclude: Iterable[tuple[int, int]] = (),
+               reference: tuple[int, int] | None = None, move_rate: float = 1.0,
+               settler_shield_cost: float = 0.0, limit: int = 200,
+               revealed: Iterable[tuple[int, int]] | None = None,
+               top: int = 20) -> list[tuple[int, int, float, float]]:
+    """Площадки по ЕГО числам, лучшие первыми: `[(x, y, ai_want, want), …]`.
+
+    Список нужен, а не одна лучшая: у него поселенец идёт по достижимой площадке, и если
+    шаг к лучшей невозможен (клетка недостижима для юнита), берётся следующая. Это
+    измеренная поправка: без неё поселенец 11 раз подряд выбирал шаг `goto_7` к воде и
+    НЕ СДВИГАЛСЯ, то есть вообще не основывал город.
 
     Перебираются ВИДИМЫЕ клетки; площадки с его флагами голода (`food_starvation` /
     `shield_starvation` из `cityresult_fill`) и занятые городами отбрасываются — ровно как
@@ -89,7 +95,7 @@ def best_site(obs: dict, *, size: int = 1, exclude: Iterable[tuple[int, int]] = 
         from brain.forecast.live import revealed_tiles
         revealed = revealed_tiles(map_obs)
     skip = {(int(x), int(y)) for x, y in exclude}
-    best = None
+    found: list[tuple[int, int, float, float]] = []
     for tile in list(revealed)[:limit]:
         x, y = int(tile[0]), int(tile[1])
         if (x, y) in skip:
@@ -111,9 +117,15 @@ def best_site(obs: dict, *, size: int = 1, exclude: Iterable[tuple[int, int]] = 
             from brain.ai_default.values import settler_want
             want = settler_want(total, travel_turns=turns,
                                 settler_shield_cost=float(settler_shield_cost or 0.0))
-        if best is None or want > best[3]:
-            best = (x, y, total, want)
-    return best
+        found.append((x, y, total, want))
+    found.sort(key=lambda r: -r[3])
+    return found[:max(1, int(top))]
+
+
+def best_site(obs: dict, **kwargs):
+    """Лучшая площадка — первый из `rank_sites` (совместимость и читаемость)."""
+    got = rank_sites(obs, **kwargs)
+    return got[0] if got else None
 
 
 def city_positions(obs: dict) -> set[tuple[int, int]]:

@@ -596,7 +596,7 @@ def _founder_step(obs: dict, avail: dict):
     map_obs = as_dict(as_dict(obs).get("map")) or {}
     try:
         from brain.ai_default.founder_destination import (
-            best_site, city_positions, step_toward,
+            city_positions, rank_sites, step_toward,
         )
         from env.food_gate import food_cost_of
         from env.site_eval import evaluate_site
@@ -620,16 +620,25 @@ def _founder_step(obs: dict, avail: dict):
                 or getattr(site, "starved_shield", False)):
             continue                      # площадка годна — пусть основывает
         try:
-            target = best_site(obs, exclude=city_positions(obs) | {tuple(pos)},
-                               reference=tuple(pos), settler_shield_cost=0.0)
+            ranked = rank_sites(obs, exclude=city_positions(obs) | {tuple(pos)},
+                                reference=tuple(pos), settler_shield_cost=0.0)
         except Exception:  # noqa: BLE001
-            target = None
-        if target is None:
+            ranked = []
+        if not ranked:
             continue                      # некуда идти — не мешаем основанию
         gotos = [str(n) for n, params in offered.items()
                  if str(n).startswith("goto_") and truthy(params)]
-        step = step_toward(tuple(pos), (target[0], target[1]), offered=gotos or None)
-        if step is None:
+        # Берётся ПЕРВАЯ площадка, к которой мир предлагает законный шаг. Измерено: без
+        # этого поселенец 11 раз подряд выбирал шаг к воде, не сдвигался и не основывал
+        # город вовсе — цена площадки без достижимости вредна.
+        step = None
+        target = None
+        for cand in ranked:
+            step = step_toward(tuple(pos), (cand[0], cand[1]), offered=gotos or None)
+            if step is not None:
+                target = cand
+                break
+        if step is None or target is None:
             continue
         if os.environ.get("DOF_TRACE_FILTERS") == "1":
             print(f"  [поселенец] unit/{uid}: площадка {pos} голодная "
