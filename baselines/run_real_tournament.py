@@ -660,6 +660,19 @@ def _founder_step(obs: dict, avail: dict, mindist: int | None = None):
             _mindist = 0
             _mindist_src = "неизвестно"
     _known_cities = city_positions(obs)
+    # ── §13.355: ЕГО КАРТА ЗАНЯТОСТИ МЕСТ (`common/aicore/citymap.c`) и уход с задачи
+    # основания освобождает место (`daitools.c:665-671`): если поселенца больше нет среди
+    # способных действовать (основал город, погиб), его резерв снимается.
+    from brain.ai_default.citymap import CityMap
+    _cmap = globals().setdefault("_CITY_MAP", CityMap())
+    # Освобождение — только когда поселенца НЕТ в наблюдении (основал город или погиб).
+    # Проверка «нет в текущем меню» неверна: меню сжимается по ходу (60→48→36→21→10), и
+    # резерв снимался у живого поселенца — измерено: пять поселенцев заняли ОДНО (17,14).
+    for _key, _gt in list(_FOUND_TARGET.items()):
+        _uid_gone = int(_key) if _key.lstrip("-").isdigit() else _key
+        if _unit_pos(obs, _uid_gone) is None:
+            _FOUND_TARGET.pop(_key, None)
+            _cmap.free_city_spot(_gt[0], _gt[1], _uid_gone)
     if os.environ.get("DOF_FOUND_DEBUG") == "1":
         _seen_cm = globals().setdefault("_CM_SEEN", set())
         if _mindist_src not in _seen_cm:
@@ -698,7 +711,8 @@ def _founder_step(obs: dict, avail: dict, mindist: int | None = None):
                 _seen.add((uid, tuple(pos)))
                 try:
                     _all = rank_sites(obs, exclude=city_positions(obs), reference=tuple(pos),
-                                      cities=_known_cities, mindist=_mindist)
+                                      cities=_known_cities, mindist=_mindist,
+                                      reserved=_cmap)
                 except Exception:  # noqa: BLE001
                     _all = []
                 _here = next((c for c in _all
@@ -724,7 +738,8 @@ def _founder_step(obs: dict, avail: dict, mindist: int | None = None):
         try:
             ranked_all = rank_sites(obs, exclude=city_positions(obs),
                                     reference=tuple(pos), settler_shield_cost=0.0,
-                                    cities=_known_cities, mindist=_mindist)
+                                    cities=_known_cities, mindist=_mindist,
+                                    reserved=_cmap)
         except Exception:  # noqa: BLE001
             ranked_all = []
         if not ranked_all:
@@ -742,7 +757,9 @@ def _founder_step(obs: dict, avail: dict, mindist: int | None = None):
             if os.environ.get("DOF_FOUND_DEBUG") == "1":
                 print(f"  [пропуск] unit/{uid} на {tuple(pos)}: на лучшей площадке, "
                       f"основывает общий путь", flush=True)
-            _FOUND_TARGET.pop(str(uid), None)   # стоим на лучшей: основывает общий путь
+            _prev = _FOUND_TARGET.pop(str(uid), None)   # стоим на лучшей: основывает общий путь
+            if _prev is not None:
+                _cmap.free_city_spot(_prev[0], _prev[1], uid)
             continue                      # лучшая и есть текущая — его правило основывает здесь
         if can_found_here and not starved and here is not None \
                 and float(best[3]) <= float(here[2]):
@@ -761,6 +778,7 @@ def _founder_step(obs: dict, avail: dict, mindist: int | None = None):
         if _held is not None:
             if (int(pos[0]), int(pos[1])) == _held:
                 _FOUND_TARGET.pop(str(uid), None)
+                _cmap.free_city_spot(_held[0], _held[1], uid)   # пришли: место отдаём городу
                 continue
             _step_held = step_toward(tuple(pos), _held, offered=gotos or None,
                                      blocked=_blocked_step)
@@ -770,6 +788,7 @@ def _founder_step(obs: dict, avail: dict, mindist: int | None = None):
                           f"→ шаг {_step_held}", flush=True)
                 return ("unit", uid, _step_held)
             _FOUND_TARGET.pop(str(uid), None)
+            _cmap.free_city_spot(_held[0], _held[1], uid)   # цель недостижима — место свободно
         # Берётся ПЕРВАЯ площадка, к которой мир предлагает законный шаг. Измерено: без
         # этого поселенец 11 раз подряд выбирал шаг к воде, не сдвигался и не основывал
         # город вовсе — цена площадки без достижимости вредна.
@@ -784,6 +803,21 @@ def _founder_step(obs: dict, avail: dict, mindist: int | None = None):
         if step is None or target is None:
             continue
         _FOUND_TARGET[str(uid)] = (int(target[0]), int(target[1]))   # §13.348: держим до прибытия
+        # ── ЕГО ЗАНЯТИЕ МЕСТА: место города (`daitools.c:708`) и клетка первого жителя
+        # (`daisettler.c:1139`). Другие поселенцы это место площадкой уже не считают
+        # (`city_desirability`, `:715-719`).
+        _cmap.reserve_city_spot(int(target[0]), int(target[1]), uid)
+        try:
+            from env.food_gate import food_cost_of as _fco
+            _bt = evaluate_site(map_obs, int(target[0]), int(target[1]),
+                                vals={"FOOD_COST": _fco(obs)})
+            if getattr(_bt, "best_other_x", -1) >= 0:
+                _cmap.reserve_tile(int(_bt.best_other_x), int(_bt.best_other_y), uid)
+        except Exception:  # noqa: BLE001
+            pass
+        if os.environ.get("DOF_FOUND_DEBUG") == "1":
+            print(f"  [резерв] unit/{uid} занял место {(int(target[0]), int(target[1]))} "
+                  f"(его citymap_reserve_city_spot, daitools.c:708)", flush=True)
         if os.environ.get("DOF_TRACE_FILTERS") == "1":
             print(f"  [поселенец] unit/{uid}: площадка {pos} голодная "
                   f"({getattr(site, 'reason', '')}) → иду к {target[:2]} (его total "

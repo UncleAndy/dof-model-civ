@@ -82,6 +82,13 @@ class SiteEvaluation:
     ai_best_sum: float = 0.0
     ai_remaining: float = 0.0
     ai_want: float = 0.0         # его `result->total` для нового города на этой площадке
+    #: ЕГО `is_terrain_class_near_tile(ptile, TC_OCEAN)` (`common/terrain.c:626`) — один из
+    #: ВОСЬМИ соседей класса океана. Нужен для его `naval_bonus` (`daisettler.c:614`).
+    ocean_adjacent: bool = False
+    #: ЕГО `result->best_other.tile` — клетка, которую будет работать первый житель. Нужна его
+    #: `citymap_reserve_tile` (`daisettler.c:1139`), а нам — для резерва площадки.
+    best_other_x: int = -1
+    best_other_y: int = -1
     starved_food: bool = False   # его `food_starvation`
     starved_shield: bool = False  # его `shield_starvation`
     #: ── Диагностика §13.320: та же площадка, но из ОДНОЙ совместной расстановки ──
@@ -107,7 +114,9 @@ class SiteEvaluation:
             "food_surplus": round(self.food_surplus, 3),
             "gate_size": self.gate_size, "gate_food": round(self.gate_food, 3),
             "gate_food_high": round(self.gate_food_high, 3),
-            "coastal": self.coastal, "resource_types": list(self.resource_types),
+            "coastal": self.coastal, "ocean_adjacent": self.ocean_adjacent,
+            "best_other": (self.best_other_x, self.best_other_y),
+            "resource_types": list(self.resource_types),
             "option_bonus": round(self.option_bonus, 3),
             "joint_food": round(self.joint_food, 3),
             "joint_shields": round(self.joint_shields, 3),
@@ -255,11 +264,13 @@ def evaluate_site(map_obs: dict[str, Any], x: int, y: int, *,
     min_food = float(vals.get("SITE_MIN_FOOD", 6.0))
 
     tiles: list[tuple[float, float, float, bool]] = [city_centre_output(map_obs, x, y)]
+    tiles_xy: list[tuple[int, int]] = [(int(x), int(y))]
     for dx, dy in WORKABLE_OFFSETS:
         # Клетки за краем карты (полюса) в набор НЕ входят: у площадки у полюса
         # рабочих клеток меньше, а не «такие же, но чужие».
         if in_bounds(map_obs, x + dx, y + dy):
             tiles.append(tile_output(map_obs, x + dx, y + dy))
+            tiles_xy.append((int(x) + dx, int(y) + dy))
 
     known = [t for t in tiles if t[3]]
     unknown_n = len(tiles) - len(known)
@@ -363,13 +374,28 @@ def evaluate_site(map_obs: dict[str, Any], x: int, y: int, *,
     # Оценка площадки — по ВИДИМОМУ (его `result->total` на реальных клетках),
     # а порог голода — по ЛУЧШЕМУ ВИДИМОМУ на неразведанных (см. `_optimistic`).
     ai_center_known = _ai_tile(tiles[0], center=True)
-    known_workable = sorted((_ai_tile(t) for t in tiles[1:]), key=lambda t: t.sum, reverse=True)
+    _pairs = sorted(((_ai_tile(t), i) for i, t in enumerate(tiles[1:])),
+                    key=lambda pair: pair[0].sum, reverse=True)
+    known_workable = [p_[0] for p_ in _pairs]
+    if _pairs:
+        site.best_other_x, site.best_other_y = tiles_xy[_pairs[0][1] + 1]
     site.ai_center_sum = ai_center_known.sum
     site.ai_best_sum = known_workable[0].sum if known_workable else 0.0
     site.ai_remaining = sum(t.sum for t in known_workable[1:]) / _ai.GROWTH_POTENTIAL_DEEMPHASIS
+    # ── §13.355: его `is_terrain_class_near_tile(…, TC_OCEAN)` — ВОСЕМЬ соседей.
+    # Состав взят у мира: в наборе правил стенда класс "Oceanic" у Lake, Ocean и Deep Ocean
+    # (`classic/terrain.ruleset`, строки 258/307/357), то есть озеро морской бонус ТОЖЕ даёт.
+    _ocean = tuple(vals.get("OCEAN_TERRAINS", ("Lake", "Ocean", "Deep Ocean")))
+    for _dx in (-1, 0, 1):
+        for _dy in (-1, 0, 1):
+            if (_dx or _dy) and in_bounds(map_obs, x + _dx, y + _dy):
+                _nm, _ = tile_terrain_extras(map_obs, x + _dx, y + _dy)
+                if _nm in _ocean:
+                    site.ocean_adjacent = True
     site.ai_want = _ai.site_total(ai_center_known,
                                   known_workable[0] if known_workable else None,
-                                  known_workable[1:])
+                                  known_workable[1:],
+                                  ocean_near=site.ocean_adjacent)
     site.starved_food = _ai.food_starvation(ai_center, ai_best, food_cost)
     site.starved_shield = _ai.shield_starvation(ai_center, ai_best)
     if site.starved_food:

@@ -93,8 +93,36 @@ def shield_starvation(center: TileValue, best_other: TileValue | None) -> bool:
     return shields == 0
 
 
+def result_defense_bonus(total: float, defense_bonus: int = 10) -> int:
+    """ЕГО `result_defense_bonus` (`daisettler.c:585`) — целочисленно, как в C.
+
+    `100 / (total + 1) * (100 / defense_bonus * DEFENSE_EMPHASIS)`. В C оба деления
+    ЦЕЛЫЕ, поэтому при `total >= 100` первое даёт ровно **0** и слагаемое исчезает: у него
+    самого это «довесок для ничьей» (его комментарий «as tie breaker mostly»), а не оценка.
+    Формула оставлена буквально, вместе с этой её особенностью.
+
+    `defense_bonus` — «10 + бонус обороны террейна/10 + бонусы улучшений». Числа террейна
+    в картине мира пока нет, поэтому берётся основа 10; при `total >= 100` это на результат
+    не влияет вовсе.
+    """
+    if defense_bonus <= 0:
+        return 0
+    return (100 // (int(total) + 1)) * ((100 // int(defense_bonus)) * DEFENSE_EMPHASIS)
+
+
+def naval_bonus(total: float, ocean_near: bool) -> int:
+    """ЕГО `naval_bonus` (`daisettler.c:614`): `total * NAVAL_EMPHASIS / 100` при океане рядом.
+
+    «Рядом» — его `is_terrain_class_near_tile(tile, TC_OCEAN)` (`common/terrain.c:626`):
+    один из ВОСЬМИ соседей — класса океана (озеро — другой класс, TC_LAKE, и сюда не входит).
+    """
+    if not ocean_near:
+        return 0
+    return (int(total) * NAVAL_EMPHASIS) // 100
+
+
 def site_total(center: TileValue, best_other: TileValue | None,
-               others: list[TileValue]) -> float:
+               others: list[TileValue], *, ocean_near: bool = False) -> float:
     """`result->total` для НОВОГО города (daisettler.c, ветка `virtual_city`).
 
     Площадка = центр + лучшая рабочая клетка; все прочие делятся на
@@ -102,8 +130,14 @@ def site_total(center: TileValue, best_other: TileValue | None,
     моря сюда не входят: они нужны только на карте с террейном и водой, и я их
     добавляю отдельным слагаемым там, где эти данные есть.
     """
-    total = center.sum + (best_other.sum if best_other else 0.0)
-    total += sum(t.sum for t in others) / GROWTH_POTENTIAL_DEEMPHASIS
+    base = center.sum + (best_other.sum if best_other else 0.0)
+    remaining = sum(t.sum for t in others) / GROWTH_POTENTIAL_DEEMPHASIS
+    # ── §13.355: ПОРЯДОК ЕГО СЛОЖЕНИЯ (`city_desirability`, daisettler.c:774-780):
+    # `total += result_defense_bonus; total += naval_bonus; total += remaining`.
+    # Морской бонус считается от УЖЕ увеличенного total — как у него.
+    total = base + result_defense_bonus(base)
+    total += naval_bonus(total, ocean_near)
+    total += remaining
     return max(0.0, total)
 
 

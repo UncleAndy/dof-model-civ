@@ -19,7 +19,11 @@
 from __future__ import annotations
 
 import math
+import os
 from typing import Any, Iterable
+
+#: ЕГО `RESULT_IS_ENOUGH` (`daisettler.c:94`) — «хватит искать дальше» для раннего выхода.
+from brain.ai_default.values import RESULT_IS_ENOUGH
 
 #: Направление каждого `goto_*` в координатах (dx, dy). Нумерация не круговая.
 GOTO_DIRECTIONS: dict[str, tuple[int, int]] = {
@@ -105,7 +109,7 @@ def rank_sites(obs: dict, *, size: int = 1, exclude: Iterable[tuple[int, int]] =
                settler_shield_cost: float = 0.0, limit: int = 200,
                revealed: Iterable[tuple[int, int]] | None = None,
                top: int = 20, cities: Iterable[tuple[int, int]] = (),
-               mindist: int = 0) -> list[tuple[int, int, float, float]]:
+               mindist: int = 0, reserved=None) -> list[tuple[int, int, float, float]]:
     """Площадки по ЕГО числам, лучшие первыми: `[(x, y, ai_want, want), …]`.
 
     Список нужен, а не одна лучшая: у него поселенец идёт по достижимой площадке, и если
@@ -138,10 +142,42 @@ def rank_sites(obs: dict, *, size: int = 1, exclude: Iterable[tuple[int, int]] =
                 for _dy in range(-_r, _r + 1):
                     skip.add((_cx + _dx, _cy + _dy))
     found: list[tuple[int, int, float, float]] = []
-    for tile in list(revealed)[:limit]:
-        x, y = int(tile[0]), int(tile[1])
+    # ── §13.355: ЕГО порядок перебора — по возрастанию цены пути (у него это обход
+    # маршрутизатора `pf_map_move_costs_iterate`). Без порядка невозможен ни его ранний
+    # выход по `RESULT_IS_ENOUGH`, ни честное «хватит искать».
+    _iter: list[tuple[float, int, int]] = []
+    for _tile in list(revealed)[:limit]:
+        _x, _y = int(_tile[0]), int(_tile[1])
+        _d = (max(abs(_x - int(reference[0])), abs(_y - int(reference[1])))
+              if reference is not None else 0)
+        _iter.append((float(_d), _x, _y))
+    _iter.sort(key=lambda r: r[0])
+    _best_want: float | None = None
+    _best_dist: float | None = None
+    for _dist, x, y in _iter:
         if (x, y) in skip:
             continue
+        # ── ЕГО `city_desirability` (`daisettler.c:715-719`): площадка отбрасывается, если
+        # ЛЮБАЯ клетка в пределах `citymindist-1` от неё уже занята (`citymap_is_reserved`).
+        if reserved is not None:
+            _r = max(0, int(mindist or 0) - 1)
+            _taken = False
+            for _dx in range(-_r, _r + 1):
+                for _dy in range(-_r, _r + 1):
+                    try:
+                        if reserved.is_reserved(x + _dx, y + _dy):
+                            _taken = True
+                            break
+                    except AttributeError:
+                        _taken = False
+                        break
+                if _taken:
+                    break
+            if _taken:
+                if os.environ.get("DOF_FOUND_DEBUG") == "1":
+                    print(f"  [резерв-отказ] площадка {(x, y)}: занято в пределах "
+                          f"citymindist-1 (его city_desirability)", flush=True)
+                continue
         try:
             site = evaluate_site(map_obs, x, y, size=size)
         except Exception:  # noqa: BLE001
@@ -160,6 +196,15 @@ def rank_sites(obs: dict, *, size: int = 1, exclude: Iterable[tuple[int, int]] =
             want = settler_want(total, travel_turns=turns,
                                 settler_shield_cost=float(settler_shield_cost or 0.0))
         found.append((x, y, total, want))
+        # ── ЕГО `settler_map_iterate` (`daisettler.c:839-849`): лучшая площадка и её «ходы»
+        # помнятся, а выход наступает, когда лучшая уже «достаточно хороша»
+        # (`RESULT_IS_ENOUGH`), находится дальше одного хода пути и БЛИЖЕ текущей.
+        if _best_want is None or want > _best_want:
+            _best_want, _best_dist = want, _dist
+        if (_best_want is not None and _best_want > float(RESULT_IS_ENOUGH)
+                and _dist > float(move_rate or 1.0)
+                and _best_dist is not None and _best_dist < _dist):
+            break
     found.sort(key=lambda r: -r[3])
     return found[:max(1, int(top))]
 
