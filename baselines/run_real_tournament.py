@@ -4296,6 +4296,13 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
             players = as_dict(obs.get('player')) or {}
             names = sorted(str(rec.get('name')) for rec in players.values()
                            if isinstance(rec, dict))
+            if os.environ.get("DOF_PLAYERS_DEBUG") == "1":
+                for _pid, _rec in sorted(players.items()):
+                    if not isinstance(_rec, dict):
+                        continue
+                    _num = {k: _rec[k] for k in _rec
+                            if isinstance(_rec[k], (int, float)) and not isinstance(_rec[k], bool)}
+                    print(f"  [игрок {_pid}] имя={_rec.get('name')!r} числа={_num}", flush=True)
             print(f"  [состав] сторона видит игроков: {names} "
                   f"(мой player_id={getattr(extractor, 'my_player_id', None)})",
                   flush=True)
@@ -4622,6 +4629,30 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
                 if final:
                     print(f"  [счёт по категориям] " + ", ".join(
                         f"{k}={v:.0f}" for k, v in sorted(final.items())), flush=True)
+                # §13.332: ЭТАЛОН НА СВОЁМ СТЕНДЕ. Мир публикует счёт КАЖДОЙ стороны
+                # (`evaluate_game` отдаёт срезы по player_id), поэтому встроенный ИИ
+                # можно мерить на той же карте и в той же партии, а не ссылаться на
+                # давний чужой замер 152.50 (§13.317).
+                try:
+                    _names: dict[int, str] = {}
+                    for _p, _r in (as_dict(obs.get("player")) or {}).items():
+                        if isinstance(_r, dict):
+                            _names[int(_r.get("player_id", _p) if str(_r.get("player_id", _p)).lstrip("-").isdigit() else _p)] = str(_r.get("name") or _p)
+                    for _tag, _per in (cats or {}).items():
+                        if str(_tag) != "score" or not isinstance(_per, dict):
+                            continue
+                        for _p, _ser in _per.items():
+                            if not _ser:
+                                continue
+                            try:
+                                _pid_i = int(_p)
+                            except (TypeError, ValueError):
+                                continue
+                            print(f"  [счёт сторон] {_names.get(_pid_i, _p)} (id {_pid_i})"
+                                  f" = {float(_ser[-1]):.0f}", flush=True)
+                except Exception as _exc:  # noqa: BLE001 - диагностика не рушит серию
+                    print(f"  [счёт сторон] не прочитан: {type(_exc).__name__}: {_exc}",
+                          flush=True)
             except Exception as exc:  # noqa: BLE001 - состав счёта не должен рушить серию
                 print(f"  [счёт по категориям] не прочитан: {type(exc).__name__}: {exc}",
                       flush=True)
