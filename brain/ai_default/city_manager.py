@@ -14,6 +14,8 @@
 
 from __future__ import annotations
 
+import math
+
 # ── Веса управляющего (`cityturn.c:325-352`, дословно) ──────────────────────────────
 #: Пища, город размера 1: «Growing to size 2 is the highest priority».
 FOOD_FACTOR_GROWING_TO_TWO = 20
@@ -96,8 +98,51 @@ def score(food: float, shield: float, gold: float, science: float,
             + float(science) * SCIENCE_FACTOR)
 
 
+def min_food_surplus_for_fastest_growth(*, city_size: int, food_stock: float, food_cost: float,
+                                        center_food: float, tile_foods=(), specialists: int = 0
+                                        ) -> int:
+    """Порог пищи ПОД СКОРЕЙШИЙ РОСТ — его `min_food_surplus_for_fastest_growth`
+    (`common/aicore/cm.c:1928`), а не наши постоянные 1/0.
+
+    Почему это важно. При `max_growth` он НЕ берёт постоянный порог: `cm.c:1992-1995`
+    подменяет `minimal_surplus[O_FOOD]` этим числом. Значит город обязан держать прирост,
+    дающий скорейший рост, — а не просто «не меньше единицы». Измерено у нас: город размера 2
+    с излишком 0 стоял и не рос, хотя это ровно то, что его порог запрещает.
+
+    Формула, слагаемое в слагаемое:
+
+        max_surplus = −food_cost × размер + еда свободных клеток центра
+        если max_surplus <= 0      → вернуть его (отрицательным: ограничение снимается)
+        need = размер_житницы(размер) − склад;   если need <= 0 → 0 (житница полна)
+        добрать лучшими по еде клетками, пока не кончатся жители, которых надо кормить
+            (специалисты еды не дают и в счёт не идут)
+        min_turns = ceil(need / max_surplus)
+        порог = ceil(need / min_turns)
+    """
+    size = int(city_size or 0)
+    surplus = -float(food_cost or 0.0) * size
+    surplus += float(center_food or 0.0)
+    if surplus <= 0.0:
+        return int(surplus)
+    need = granary_size(size) - float(food_stock or 0.0)
+    if need <= 0.0:
+        return 0
+    workers = max(0, size - int(specialists or 0))
+    for food in sorted((float(f) for f in tile_foods), reverse=True):
+        if workers <= 0:
+            break
+        surplus += food
+        workers -= 1
+    if surplus <= 0.0:
+        return int(surplus)
+    min_turns = math.ceil(need / surplus)
+    if min_turns <= 0:
+        return 0
+    return math.ceil(need / min_turns)
+
+
 def minimums_ok(food_surplus: float | None, shield_surplus: float | None,
-                granary_is_full: bool) -> bool:
+                granary_is_full: bool, food_need: int | None = None) -> bool:
     """Наименьшие приросты управляющего.
 
     Незнание прироста не запрещает: запрет выдаётся только на ИЗМЕРЕННОМ нарушении
@@ -105,7 +150,10 @@ def minimums_ok(food_surplus: float | None, shield_surplus: float | None,
     отвергается: это его `minimal_surplus`, а не наш порог.
     """
     if food_surplus is not None:
-        need = MIN_SURPLUS_FOOD_GRANARY_FULL if granary_is_full else MIN_SURPLUS_FOOD
+        if food_need is not None:
+            need = int(food_need)          # его число для скорейшего роста (`cm.c:1928`)
+        else:
+            need = MIN_SURPLUS_FOOD_GRANARY_FULL if granary_is_full else MIN_SURPLUS_FOOD
         if float(food_surplus) < need:
             return False
     if shield_surplus is not None and float(shield_surplus) < MIN_SURPLUS_SHIELD:
