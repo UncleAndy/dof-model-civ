@@ -1710,6 +1710,36 @@ def _tile_out(obs: dict, x, y):
     return row
 
 
+def _city_workable_tiles(obs: dict, rec: dict) -> list:
+    """Клетки в радиусе города с ЕДОЙ/ЩИТАМИ/ТОРГОВЛЕЙ по нашему читателю карты.
+
+    Зачем в срезе. Расстановку жителей у него выбирает управляющий по взвешенной сумме
+    (`cm.c`), а наш путь меряет клетку мерой рабочего (`infracache.c`). Чтобы решить, менять ли
+    путь, нужен замер на ОДНИХ И ТЕХ ЖЕ числах — тех, что видит живой путь (`site_eval.tile_output`,
+    а не `окно_клеток`, где порядок чисел не подтверждён).
+    """
+    from brain.ai_default.city_tiles import workable_offsets
+    from env.site_eval import tile_output
+    mp = (obs or {}).get("map")
+    if not isinstance(mp, dict):
+        return []
+    try:
+        cx, cy = int(rec.get("x")), int(rec.get("y"))
+    except (TypeError, ValueError):
+        return []
+    out = []
+    for dx, dy in workable_offsets(5):
+        if dx == 0 and dy == 0:
+            continue
+        try:
+            food, shield, trade, known = tile_output(mp, cx + dx, cy + dy)
+        except Exception:  # noqa: BLE001
+            continue
+        out.append({"dx": int(dx), "dy": int(dy), "food": float(food),
+                    "shield": float(shield), "trade": float(trade), "known": bool(known)})
+    return out
+
+
 def _city_window(obs: dict, cx, cy, r: int = 2):
     """Выходы клеток вокруг города в ОБЕИХ ориентациях, по смещениям.
 
@@ -1770,6 +1800,7 @@ def _dump_state(env, obs, info, extractor, turn: int, port=None) -> None:
                # напрямую, а не выводить из дельт между ходами.
                "ключи_записи": sorted(rec.keys()),
                "окно_клеток": _city_window(obs, rec.get("x"), rec.get("y")),
+               "рабочие_клетки": _city_workable_tiles(obs, rec),
                "выходы_массивами": {
                    k: _plain(rec[k]) for k in rec
                    if (isinstance(rec.get(k), (list, tuple))
