@@ -682,6 +682,16 @@ def _city_tile_gains_from_rules(city_id, cands, obs=None) -> dict:
             return None
         return tile_value_from_rules(terrain, extras)
 
+    def _food(dx: int, dy: int):
+        """ЕДА клетки по правилам — нужна для условия годности (см. ниже)."""
+        try:
+            from brain.ai_default.tile_outputs import tile_outputs_from_rules
+            terrain, extras = tile_terrain_extras(map_obs, cx + dx, cy + dy)
+        except Exception:  # noqa: BLE001
+            return None
+        got = tile_outputs_from_rules(terrain, extras)
+        return None if got is None else float(got[0])
+
     # Какие клетки заняты: говорит сам стенд — он предлагает снятие именно с занятых.
     worked, free_offered = {}, {}
     for c in cands or ():
@@ -710,6 +720,39 @@ def _city_tile_gains_from_rules(city_id, cands, obs=None) -> dict:
     best_worked = max([v for v in worked.values() if v is not None], default=None)
     for name, value in free_offered.items():
         gains[name] = work_gain(value, best_worked)
+    # ── ГОДНОСТЬ: ОН ОТБРАСЫВАЕТ ГОЛОДНЫЙ ВАРИАНТ ЦЕЛИКОМ, ДО СРАВНЕНИЯ ВЫГОДЫ ──
+    #     `common/aicore/cm.c:623`:
+    #       if (surplus[stat_index] < parameter->minimal_surplus[stat_index]) {
+    #         fitness.sufficient = FALSE;
+    #       }
+    #     Без этого условия мы выбрали бы клетку со щитами и без еды: измерено — город
+    #     погиб от голода («Famine destroys … entirely.»), потому что жителя сняли в
+    #     специалиста, и еда стала нулевой. Веса без годности — половина его правила.
+    food_blocked = {}
+    _surplus = rec.get("surplus_food")
+    if _surplus is not None:
+        try:
+            _surplus = float(_surplus)
+        except (TypeError, ValueError):
+            _surplus = None
+    if _surplus is not None:
+        for _name in list(gains):
+            _parsed = parse_city_tile_action(_name)
+            if _parsed is None:
+                continue
+            _f = _food(_parsed[1], _parsed[2])
+            if _f is None:
+                continue
+            _new = _surplus - _f if _name.startswith("city_unwork_") else _surplus + _f
+            if _new < 0.0:
+                food_blocked[_name] = _new
+                gains.pop(_name)
+        if food_blocked and os.environ.get("DOF_TILE_DEBUG") == "1":
+            print(f"  [клетка-годность] город {city_id}: отброшено голодных вариантов "
+                  f"{len(food_blocked)} — { {k: round(v, 1) for k, v in food_blocked.items()} } "
+                  f"(при излишке {_surplus:g})", flush=True)
+    if not gains:
+        _city_tile_diag(f"город {city_id}: все варианты клетки голодные — хода нет")
     if os.environ.get("DOF_TILE_DEBUG") == "1" and gains:
         print(f"  [клетка-правила] город {city_id}: занято {len(worked)}, свободно "
               f"{len(free_values)}; выигрыши "
