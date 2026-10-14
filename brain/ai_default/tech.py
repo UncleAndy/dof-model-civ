@@ -114,5 +114,57 @@ def city_want_with(city_want: Callable[..., float], city_obs: dict[str, Any], te
     return city_want(with_extra, **kwargs)
 
 
+def best_of(values: Mapping[str, float]) -> str | None:
+    """Технология с наибольшим хотением — его `ai_choose_tech` (`daitech.c`).
+
+    Он берёт максимум строгим сравнением (`if (tech_want[a] > best)`), поэтому при РАВЕНСТВЕ
+    побеждает та, что встретилась первой, а не случайная. Порядок задаёт мир: словарь
+    заполняется в порядке предложения, и переставлять его нельзя — иначе выбор перестанет
+    быть повторяемым на одинаковом входе.
+    """
+    best_name: str | None = None
+    best_value: float | None = None
+    for name, value in values.items():
+        if value is None:
+            continue
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            continue
+        if best_value is None or v > best_value:
+            best_name, best_value = str(name), v
+    return best_name
+
+
+def keep_best_tech(cands: list, *, name_of, value_of, family_prefix: str) -> list:
+    """Оставить в семье технологии только лучшую по его числу (§13.311).
+
+    Зачем семьёй, а не общим счётом: сравнивать хотение технологии с хотением постановки
+    города на одной шкале нельзя — у него это РАЗНЫЕ решения, и общего коэффициента между
+    ними он не задаёт. Здесь выбирается ТОЛЬКО то, ЧТО исследовать, а место семьи в общем
+    решении остаётся прежним.
+
+    Если его число не посчиталось НИ ДЛЯ ОДНОЙ технологии (нет данных мира — номера построек,
+    списка открываемого), семья возвращается нетронутой: действовать по незнанию нельзя,
+    это оговорено правилом проекта.
+    """
+    family = [c for c in cands if str(name_of(c) or "").startswith(family_prefix)]
+    if len(family) < 2:
+        return cands
+    values: dict[str, float] = {}
+    for c in family:
+        v = value_of(c)
+        if v is not None:
+            values[str(name_of(c))] = v
+    if not values:
+        return cands
+    best = best_of(values)
+    if best is None:
+        return cands
+    return [c for c in cands
+            if not str(name_of(c) or "").startswith(family_prefix)
+            or str(name_of(c)) == best]
+
+
 __all__ = ["TECH_WANT_FACTOR", "tech_want", "tech_want_total", "unlocked_by",
-           "improvement_index", "city_want_with"]
+           "improvement_index", "city_want_with", "best_of", "keep_best_tech"]

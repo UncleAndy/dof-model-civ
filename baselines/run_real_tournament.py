@@ -1356,6 +1356,99 @@ def _drop_wedged_candidates(cands: list, dof_state) -> list:
     return out
 
 
+# ── §13.311: выбор ТЕХНОЛОГИИ — его argmax, а не плоское совпадение со списком ──
+#
+# Измерено: за прогон предлагалось НЕСКОЛЬКО технологий (`research_tech_Alphabet_`,
+# `research_tech_Advanced Flight_`, `research_tech_Amphibious Warfare_`), и все получали
+# одинаковое предпочтение 1.0 — какая исследуется, решал порядок, а не ценность. У него это
+# `ai_choose_tech` (`daitech.c`): берётся технология с наибольшим `tech_want`, который есть
+# прирост оценки ГОРОДОВ от открываемых ею построек, × 14/8.
+
+_TECH_ACTION_PREFIXES = ("research_tech_", "set_tech_goal_")
+
+
+def _tech_action_name(action_name) -> str | None:
+    """`research_tech_Advanced Flight_` → `Advanced Flight` — имя технологии МИРА."""
+    name = str(action_name or "")
+    for prefix in _TECH_ACTION_PREFIXES:
+        if name.startswith(prefix):
+            tech = name[len(prefix):].strip().rstrip("_").strip()
+            return tech or None
+    return None
+
+
+def _cand_action_name(cand) -> str:
+    act = _to_action(cand)
+    return str(act[2]) if act else ""
+
+
+def _tech_named(cands) -> int:
+    """Сколько кандидатов называют технологию — чтобы «не сработало» отличать от «нечего решать»."""
+    return sum(1 for c in cands if _tech_action_name(_cand_action_name(c)) is not None)
+
+
+def _tech_values(obs: dict, extractor, action_names) -> dict[str, float]:
+    """Хотение технологии по его числу: прирост оценки НАШИХ городов × 14/8.
+
+    Пропуск данных честен: технология, открывающая пустое (нет номера постройки в фактах
+    мира), получает ноль — это и есть его счёт для неё, а не выдуманная оценка.
+    """
+    try:
+        from brain.ai_default.effects import city_want as _his_city_want
+        from brain.ai_default.tech import city_want_with, tech_want_total
+        from env.entity_extractor import city_options
+    except Exception:  # noqa: BLE001
+        return {}
+    model = getattr(extractor, "model", None)
+    my_id = getattr(extractor, "my_player_id", None)
+    cities = as_dict(as_dict(obs).get("city"))
+    mine = [rec for rec in cities.values()
+            if isinstance(rec, dict) and (my_id is None or rec.get("owner") == my_id)]
+    if not mine:
+        return {}
+    out: dict[str, float] = {}
+    for action_name in action_names:
+        tech = _tech_action_name(action_name)
+        if tech is None or tech in out:
+            continue
+        pairs = []
+        for rec in mine:
+            try:
+                before = float(city_options(rec, model=model))
+                after = float(city_want_with(city_options, rec, tech, model=model))
+            except Exception:  # noqa: BLE001
+                continue
+            pairs.append((before, after))
+        if pairs:
+            out[tech] = float(tech_want_total(pairs))
+    return out
+
+
+def _prefer_port_tech_choice(cands: list, obs: dict, extractor) -> list:
+    """Оставить в каждой семье технологии ту, что выбрал бы он (§13.311).
+
+    Семьи разделены намеренно: `research_tech` меняет исследование, `set_tech_goal` — только
+    указание, и у него это разные решения. Сравнивать хотение технологии с хотением постановки
+    города на одной шкале НЕЛЬЗЯ: у него между ними нет общего коэффициента.
+    """
+    from brain.ai_default.tech import keep_best_tech
+    values = _tech_values(obs, extractor, [_cand_action_name(c) for c in cands])
+    if not values:
+        return cands
+    out = cands
+    for prefix in _TECH_ACTION_PREFIXES:
+        out = keep_best_tech(
+            out, name_of=_cand_action_name,
+            value_of=lambda c, _v=values: _v.get(_tech_action_name(_cand_action_name(c))),
+            family_prefix=prefix)
+    if os.environ.get("DOF_TRACE_FILTERS") == "1" and _tech_named(cands) >= 2:
+        print(f"  [технология] его числа: "
+              f"{ {k: round(v, 2) for k, v in sorted(values.items())} } → оставлено "
+              f"{[ _cand_action_name(c) for c in out if _tech_action_name(_cand_action_name(c)) is not None ]}",
+              flush=True)
+    return out
+
+
 def _apply_common_rules(cands: list, obs: dict, extractor, env_getter,
                         avail=None) -> list:
     """ОБЩИЕ правила, обязательные для любого решателя (§13.206–13.208).
@@ -1381,6 +1474,10 @@ def _apply_common_rules(cands: list, obs: dict, extractor, env_getter,
         military = set()
     kept = _hold_military_candidates(
         held, obs, getattr(extractor, "my_player_id", None), military, type_names)
+    # §13.311: ЧТО исследовать — решает его `ai_choose_tech`, а не порядок предложения.
+    # Стоит здесь, в теле общей функции, потому что её зовут оба пути: правило, живущее
+    # только в одном, уже пять раз оказывалось неработающим (13.273/13.280/13.286/13.301/13.308).
+    kept = _prefer_port_tech_choice(kept, obs, extractor)
     if getattr(ARGS, "no_tile_actions", False):
         # Флаг обязан доходить и до ПРОГНОЗА: его кандидаты клеток строятся в
         # `brain/forecast/options.py`, мимо общего фильтра (измерено: с флагом в прогоне
