@@ -579,6 +579,75 @@ def _city_tile_diag(why: str) -> None:
         print(f"  [клетка-правила] молчит: {why}", flush=True)
 
 
+def _city_tile_rescue(obs: dict, avail: dict):
+    """Спасение ГОЛОДАЮЩЕГО города: у него годность идёт ПЕРЕД выгодой (§13.305).
+
+    `common/aicore/cm.c:623` решает так: сначала `fitness.sufficient` (все статьи не ниже
+    `minimal_surplus`), и только среди годных берётся `fitness.weighted`. Наш же отбор брал
+    лишь ходы с ПОЛОЖИТЕЛЬНЫМ выигрышем (`if gain <= 0: break`) — поэтому ход, который убирает
+    голод, но не даёт выигрыша по весам, отбрасывался, и город продолжал голодать
+    (измерено: 4 наблюдения с излишком −1 при размере городов 1 и 2).
+
+    Возвращает `(ctrl, actor, name)` — ход, улучшающий сальдо еды, или None.
+    """
+    city_actions = as_dict(as_dict(avail).get("city")) or {}
+    cities = as_dict(as_dict(obs).get("city")) or {}
+    map_obs = as_dict(as_dict(obs).get("map")) or {}
+    try:
+        from brain.ai_default.city_tiles import parse_city_tile_action
+        from brain.ai_default.tile_outputs import tile_outputs_from_rules
+        from env.terrain_work import tile_terrain_extras
+    except Exception:  # noqa: BLE001
+        return None
+    best = None
+    for cid, actions in city_actions.items():
+        rec = None
+        for _key in (cid, str(cid), int(cid) if str(cid).lstrip("-").isdigit() else None):
+            if _key is not None and _key in cities:
+                rec = cities[_key]
+                break
+        if not isinstance(rec, dict) or rec.get("x") is None or rec.get("y") is None:
+            continue
+        _raw = rec.get("surplus_food")
+        if _raw is None:
+            continue
+        try:
+            surplus = float(_raw)
+        except (TypeError, ValueError):
+            continue
+        if surplus >= 0.0:
+            continue          # город не голодает — спасать нечего
+        cx, cy = int(rec["x"]), int(rec["y"])
+        for name, params in as_dict(actions).items():
+            name = str(name)
+            if not (name.startswith("city_work_") or name.startswith("city_unwork_")) \
+                    or not truthy(params):
+                continue
+            parsed = parse_city_tile_action(name)
+            if parsed is None:
+                continue
+            try:
+                terrain, extras = tile_terrain_extras(map_obs, cx + parsed[1], cy + parsed[2])
+            except Exception:  # noqa: BLE001
+                continue
+            got = tile_outputs_from_rules(terrain, extras)
+            if got is None:
+                continue
+            food = float(got[0])
+            after = surplus - food if name.startswith("city_unwork_") else surplus + food
+            if after <= surplus:
+                continue      # сальдо не улучшается — это не спасение
+            if best is None or after > best[0]:
+                best = (after, cid, name, surplus)
+    if best is None:
+        return None
+    after, cid, name, surplus = best
+    if os.environ.get("DOF_TRACE_FILTERS") == "1":
+        print(f"  [клетка-спасение] город {cid}: {name} — излишек {surplus:g} → {after:g} "
+              f"(годность ПЕРЕД выгодой, cm.c:623)", flush=True)
+    return ("city", cid, name)
+
+
 def _city_tile_candidate(obs: dict, avail: dict):
     """Какое действие по клетке города отправить — по перенесённой оценке (§13.294).
 
@@ -590,6 +659,12 @@ def _city_tile_candidate(obs: dict, avail: dict):
     Возвращает `(ctrl, actor, action)` или None. None — если данных нет ИЛИ лучший ход был бы
     обратным к нашему же прошлому ходу по этой клетке (чередование измеренно вредит).
     """
+    # Сперва — спасение голодающего города: годность ПЕРЕД выгодой (его порядок).
+    # Только если спасать нечего, переходим к выбору по выигрышу.
+    _rescue = _city_tile_rescue(obs, avail)
+    if _rescue is not None:
+        _LAST_TILE_ACTION[str(_rescue[1])] = _rescue[2]
+        return _rescue
     city_actions = as_dict(as_dict(avail).get("city")) or {}
     best = None
     for cid, actions in city_actions.items():
