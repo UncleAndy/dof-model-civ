@@ -122,12 +122,6 @@ def rank_sites(obs: dict, *, size: int = 1, exclude: Iterable[tuple[int, int]] =
     return found[:max(1, int(top))]
 
 
-def best_site(obs: dict, **kwargs):
-    """Лучшая площадка — первый из `rank_sites` (совместимость и читаемость)."""
-    got = rank_sites(obs, **kwargs)
-    return got[0] if got else None
-
-
 def city_positions(obs: dict) -> set[tuple[int, int]]:
     """Клетки, занятые ЛЮБЫМ видимым городом: у него такие площадками не считаются."""
     out: set[tuple[int, int]] = set()
