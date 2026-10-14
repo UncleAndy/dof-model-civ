@@ -567,6 +567,10 @@ def _my_units_classes(env_getter, my_id):
 #: предмет держим и приказа не шлём (его правило), заново решаем только после завершения.
 _LAST_PROD: dict = {}
 
+#: §13.339: проба «действует ли путь `ctrl_type=city` в этом стенде». Помним, какой ход по
+#: клетке заказан и какими были выходы города; на следующем появлении города сравниваем.
+_LAST_TILE_SENT: dict = {}
+
 #: Ставится `_production_candidate` каждый ход и читается выбором без DoF.
 _LAST_CTX = None
 #: Наблюдение текущего решения — для оценки клеток города по правилам мира (§13.292).
@@ -782,6 +786,23 @@ def _city_tile_candidate(obs: dict, avail: dict):
                  if str(n).startswith(("city_work_", "city_unwork_")) and truthy(params)]
         if not names:
             continue
+        _pend = _LAST_TILE_SENT.pop(str(cid), None)
+        if _pend is not None and os.environ.get("DOF_TILE_DEBUG") == "1":
+            _now = None
+            for _k, _v in as_dict((obs or {}).get("city")).items():
+                if str(_k) == str(cid):
+                    _now = _v
+                    break
+            _now = as_dict(_now) or {}
+            def _g(v):
+                try:
+                    return float(v)
+                except (TypeError, ValueError):
+                    return None
+            print(f"  [проба-city] город {cid}: заказали {_pend['name']}; выходы города "
+                  f"еда {_pend['food']}→{_g(_now.get('prod_food'))}, "
+                  f"щиты {_pend['shield']}→{_g(_now.get('prod_shield'))}, "
+                  f"торговля {_pend['trade']}→{_g(_now.get('prod_trade'))}", flush=True)
         cands = [{"ctrl_type": "city", "actor_id": cid, "action_name": n} for n in names]
         gains = _city_tile_gains_from_rules(cid, cands, obs=obs)
         if not gains:
@@ -814,6 +835,25 @@ def _city_tile_candidate(obs: dict, avail: dict):
         return None
     gain, cid, name = best
     _LAST_TILE_ACTION[str(cid)] = name
+    if os.environ.get("DOF_TILE_DEBUG") == "1":
+        # §13.339: проба пути `city`. Измеряем и «что заказали», и «что стало с выходами
+        # города»: иначе «ход по клетке не применён» неотличимо от «применили не тот ход».
+        _co = None
+        for _k, _v in as_dict((obs or {}).get("city")).items():
+            if str(_k) == str(cid):
+                _co = _v
+                break
+        _co = as_dict(_co) or {}
+        def _f(v):  # noqa: E306 — местный: `_num` здесь не в области видимости
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                return None
+        _LAST_TILE_SENT[str(cid)] = {
+            "name": name, "obs": _co,
+            "food": _f(_co.get("prod_food")),
+            "shield": _f(_co.get("prod_shield")),
+            "trade": _f(_co.get("prod_trade"))}
     if os.environ.get("DOF_TRACE_FILTERS") == "1":
         print(f"  [клетка-ход] город {cid}: {name} (перенесённая оценка +{gain:.1f})", flush=True)
     return ("city", cid, name)
@@ -3707,6 +3747,30 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                             print(f"  [постановка] ход {info.get('turn')}: отправляю "
                                   f"{_prod['action_name']} городу {_prod['actor_id']} "
                                   f"(в очереди было {_prod.get('current_name')!r})", flush=True)
+                        # §13.339: ЧТО НЕСЁТ САМО ДЕЙСТВИЕ СРЕДЫ. Наш приказ уходит по имени,
+                        # а номер предмета подставляет среда; если её номер не тот, что ждёт
+                        # сервер, приказ молча пропадает — и никакой строки об ошибке не будет.
+                        try:
+                            _env = env_getter()
+                            _tm = getattr(getattr(getattr(_env, "unwrapped", None),
+                                                  "civ_controller", None),
+                                          "turn_manager", None)
+                            _obj = _tm._get_action_object(("city", _prod["actor_id"],
+                                                           _prod["action_name"]))
+                            _ub = None
+                            try:
+                                _ub = (getattr(_tm, "_turn_state", None) or {}).get("num_impr_types")
+                            except Exception:  # noqa: BLE001
+                                _ub = None
+                            print(f"  [действие-среды] {_prod['action_name']}: "
+                                  f"тип={type(_obj).__name__}, "
+                                  f"prod_kind={getattr(_obj, 'prod_kind', None)}, "
+                                  f"prod_value={getattr(_obj, 'prod_value', None)}, "
+                                  f"имя={getattr(_obj, 'prod_name', None)}, "
+                                  f"годно={_obj.is_action_valid() if _obj else None}", flush=True)
+                        except Exception as _exc:  # noqa: BLE001
+                            print(f"  [действие-среды] не прочитано: {type(_exc).__name__}: {_exc}",
+                                  flush=True)
                         return _to_action(_prod)
                     # Жителя переставляет ЕГО управляющий (`server/cityturn.c:313`):
                     # строгое улучшение взвешенной суммы. Замер: до этого у клеток в режиме
