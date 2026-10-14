@@ -616,16 +616,52 @@ def _founder_step(obs: dict, avail: dict):
                                  vals={"FOOD_COST": food_cost_of(obs)})
         except Exception:  # noqa: BLE001
             continue
-        if not (getattr(site, "starved_food", False)
-                or getattr(site, "starved_shield", False)):
-            continue                      # площадка годна — пусть основывает
+        # ── §13.322: что выбрало бы ЕГО правило — основать здесь или идти к лучшей
+        # достижимой площадке (`daisettler.c:1113-1140`). ТОЛЬКО ЗАМЕР: решений не меняет,
+        # поэтому идёт до проверки голода и включается отдельным ключом.
+        if os.environ.get("DOF_FOUND_DEBUG") == "1":
+            _seen = globals().setdefault("_FOUND_DEBUG_SEEN", set())
+            if (uid, tuple(pos)) not in _seen:
+                _seen.add((uid, tuple(pos)))
+                try:
+                    _all = rank_sites(obs, exclude=city_positions(obs), reference=tuple(pos))
+                except Exception:  # noqa: BLE001
+                    _all = []
+                _here = next((c for c in _all
+                              if (int(c[0]), int(c[1])) == tuple(pos)), None)
+                _best = _all[0] if _all else None
+                if _best is not None:
+                    _same = (int(_best[0]), int(_best[1])) == tuple(pos)
+                    _h = ("—" if _here is None
+                          else f"total {_here[2]:.1f}, want {_here[3]:.1f}")
+                    print(f"  [основание] unit/{uid} на {tuple(pos)} (здесь: {_h}) | "
+                          f"лучшая достижимая {(_best[0], _best[1])} "
+                          f"(total {_best[2]:.1f}, want {_best[3]:.1f}) → его правило: "
+                          f"{'основать здесь' if _same else 'ИДТИ'}", flush=True)
+        # ── ЕГО правило выбора задачи (`daisettler.c:1113-1140`): поселенец идёт к лучшей
+        # ДОСТИЖИМОЙ площадке, если её ценность — уже с вычетом дороги — выше того, что даёт
+        # основание здесь. «Основать где стою» у него не отдельное правило, а частный случай.
+        # Измерено (§13.323): на 45 ходах его правило уходит в 6 случаях из 8, и выигрыш
+        # переживает стоимость пути (380.2 против 348.5; 541.8 против 469.7; 469.8 против 421.2),
+        # а мы основывали на месте и получали землю с 8 щитами на 21 клетку.
         try:
-            ranked = rank_sites(obs, exclude=city_positions(obs) | {tuple(pos)},
-                                reference=tuple(pos), settler_shield_cost=0.0)
+            ranked_all = rank_sites(obs, exclude=city_positions(obs),
+                                    reference=tuple(pos), settler_shield_cost=0.0)
         except Exception:  # noqa: BLE001
-            ranked = []
-        if not ranked:
+            ranked_all = []
+        if not ranked_all:
             continue                      # некуда идти — не мешаем основанию
+        here = next((c for c in ranked_all
+                     if (int(c[0]), int(c[1])) == tuple(pos)), None)
+        best = ranked_all[0]
+        on_best = (int(best[0]), int(best[1])) == tuple(pos)
+        starved = bool(getattr(site, "starved_food", False)
+                       or getattr(site, "starved_shield", False))
+        if on_best:
+            continue                      # лучшая и есть текущая — его правило основывает здесь
+        if not starved and here is not None and float(best[3]) <= float(here[2]):
+            continue                      # лучше, но не настолько: дорога съедает выигрыш
+        ranked = [c for c in ranked_all if (int(c[0]), int(c[1])) != tuple(pos)]
         gotos = [str(n) for n, params in offered.items()
                  if str(n).startswith("goto_") and truthy(params)]
         # Берётся ПЕРВАЯ площадка, к которой мир предлагает законный шаг. Измерено: без
