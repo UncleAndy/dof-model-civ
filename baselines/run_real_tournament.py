@@ -1078,6 +1078,11 @@ def _tile_score_of(ctx, ctrl_type, action_name, actor_id=None):
     return None
 
 
+def _filters_name(name) -> str:
+    """Имя текущего предмета для следа — как есть, без подстановок."""
+    return repr(name)
+
+
 def _is_wonder_name(name: str) -> bool:
     """Чудо ли это — по роду, прочитанному из правил мира.
 
@@ -1213,6 +1218,25 @@ def _production_candidate(obs: dict, info: dict, dof_state, extractor,
         # (10) — отсюда `units_built=9` при `military_units=9` и стопка 16 воинов (измерено).
         # `allowed` — это маска МИРА (`_world_production_names`), то есть «город построит это
         # СЕЙЧАС»; она и есть его `can_city_build_*_now`.
+        shields = float(rec.get("prod_shield") or 0.0)
+        if shields <= 0.0:
+            continue
+        stock = float(rec.get("shield_stock") or 0.0)
+        # §13.335: СЫРЫЕ числа очереди печатаются ДО решения (ниже), а щиты и выход города
+        # читаются ЗДЕСЬ: правило удержания (§13.336) сравнивает запас, и раньше `stock`
+        # вычислялся НИЖЕ него — порядок был бы неверен, если бы правило вообще срабатывало.
+        # §13.340: ПРИБОР — принудительный приказ одному городу каждый ход (`DOF_FORCE_PROD=<Имя>`).
+        # Нужен, чтобы отделить «канал не принимает» от «наш выбор не тот»: приказ идёт ровно один
+        # и тот же, и по сырой очереди видно, применился ли он. Не нормативный, только измерение.
+        _force = os.environ.get("DOF_FORCE_PROD")
+        if _force and any(str(_force) == str(a) for a in allowed):
+            if _filters_trace():
+                print(f"  [приказ-прибор] ход {info.get('turn')}: город {cid}: "
+                      f"produce_{_force} (в очереди было {_filters_name(current)})", flush=True)
+            return {"ctrl_type": "city", "actor_id": cid,
+                    "action_name": f"produce_{_force}",
+                    "current_name": str(current) if current else None,
+                    "_committed": (str(_force), float(stock))}
         _prev = _LAST_PROD.get(str(cid))
         if (current and _prev and str(_prev[0]) == str(current) and stock >= float(_prev[1])
                 and any(str(current) == str(a) for a in allowed)):
@@ -1239,10 +1263,6 @@ def _production_candidate(obs: dict, info: dict, dof_state, extractor,
             if _filters_trace():
                 print(f"  [постановка] город {cid}: щиты упали {float(_prev[1]):.0f}→{stock:.0f} — "
                       f"{current!r} завершён, решаем заново", flush=True)
-        shields = float(rec.get("prod_shield") or 0.0)
-        if shields <= 0.0:
-            continue
-        stock = float(rec.get("shield_stock") or 0.0)
         # Предохранитель 1: ставим только то, что СТЕНД СЕЙЧАС ПРЕДЛАГАЕТ городу.
         # Синтезированный приказ по имени, которого нет в списке законных, вешает контроллер:
         # измерено — `timeout: wedged on city/produce_Library at turn 1`, и то же с
@@ -3666,6 +3686,17 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                     _sent_cm = _send_city_manager(env_getter, obs, extractor)
                     if os.environ.get("DOF_CM_DEBUG") == "1":
                         print(f"        [управляющий-вызов] отправок {_sent_cm}", flush=True)
+
+                # §13.340: НЕПРЕРЫВНЫЙ след очереди по нашим городам — каждый ход, независимо от
+                # того, дозвал ли ход до выбора производства. Без него замер «применился ли приказ»
+                # опирался на редкие строки (1–6 за партию), и пар «приказ ↔ очередь» не набиралось.
+                if os.environ.get("DOF_TRACE_FILTERS") == "1":
+                    for _cid, _rec in (as_dict((obs or {}).get("city")) or {}).items():
+                        _r = as_dict(_rec) or {}
+                        print(f"  [очередь-ход] ход {info.get('turn')}: город {_cid}: "
+                              f"kind={_r.get('production_kind')}, "
+                              f"value={_r.get('production_value')}, "
+                              f"stock={_r.get('shield_stock')}", flush=True)
 
                 if not getattr(self, "_impr_published", False) and env_getter is not None:
                     try:
