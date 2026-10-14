@@ -42,7 +42,8 @@ def _weighted(tile: dict, food_factor: int) -> float:
 def _arrangements(city: dict, tiles: list[dict]):
     """Две расстановки: по мере рабочего и по мере управляющего (обе — лучшие `размер` клеток)."""
     size = int(city.get("size") or 1)
-    known = [t for t in tiles if t.get("known")]
+    known = [t for t in tiles if t.get("known") and not t.get("center")]
+    center = [t for t in tiles if t.get("known") and t.get("center")]
     if not known:
         return None
     by_worker = sorted(known, key=lambda t: -float(
@@ -50,10 +51,11 @@ def _arrangements(city: dict, tiles: list[dict]):
     granary_full = bool(int(city.get("food_stock") or 0) >= cm.granary_size(size))
     factor = cm.food_factor(size, granary_full)
     by_manager = sorted(known, key=lambda t: -_weighted(t, factor))[:size]
-    return size, by_worker, by_manager, granary_full
+    return size, by_worker + center, by_manager + center, granary_full
 
 
 def _totals(tiles: list[dict], size: int, food_cost: float) -> tuple[float, float]:
+    # центр уже добавлен вызывающим: он обрабатывается без жителя
     food = sum(t["food"] for t in tiles)
     shield = sum(t["shield"] for t in tiles)
     return food - food_cost * size, shield
