@@ -819,21 +819,54 @@ def _city_tile_gains_from_rules(city_id, cands, obs=None) -> dict:
     cx, cy = int(rec["x"]), int(rec["y"])
     map_obs = as_dict(obs.get("map")) or {}
 
-    def _value(dx: int, dy: int):
-        try:
-            terrain, extras = tile_terrain_extras(map_obs, cx + dx, cy + dy)
-        except Exception:  # noqa: BLE001
-            return None
-        return tile_value_from_rules(terrain, extras)
+    # ── §13.316: ценность клетки — ЕГО ВЗВЕШЕННАЯ СУММА УПРАВЛЯЮЩЕГО (`cm.c`), а не мера
+    # рабочего (`city_tile_value`, `infracache.c:293`). Это РАЗНЫЕ решения у него: клетки
+    # жителей выбирает управляющий, клетку для улучшения — советник рабочих.
+    # Измерено на числах живого пути: расстановки различаются в 32 из 48 наблюдений, и всякий
+    # раз у управляющего излишек еды ВЫШЕ (суммарно +32). Причина видна в весах: на городе,
+    # растущем до второго размера, у него пища весит 20 против 5 у щитов (`cityturn.c:325-341`),
+    # а у меры рабочего 30 против 17 — поэтому она берёт щиты там, где он берёт еду.
+    from brain.ai_default import city_manager as _cm
 
-    def _food(dx: int, dy: int):
-        """ЕДА клетки по правилам — нужна для условия годности (см. ниже)."""
+    def _f(value, default=None):
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    _size = int(_f(rec.get("size"), 1) or 1)
+    _stock = _f(rec.get("food_stock"), 0.0) or 0.0
+    _granary_full = _stock >= float(_cm.granary_size(_size))
+    _factor = float(_cm.food_factor(_size, _granary_full))
+    _trade = _f(rec.get("prod_trade"), 0.0) or 0.0
+    _sci_out, _gold_out = _f(rec.get("science")), _f(rec.get("gold"))
+    if _trade > 0.0 and _sci_out is not None and _gold_out is not None:
+        _sci_rate, _gold_rate = _sci_out / _trade, _gold_out / _trade
+    else:
+        _sci_rate = _gold_rate = 0.0
+
+    def _outputs(dx: int, dy: int):
+        """Выходы клетки по правилам и с её улучшениями — те же числа, что видит решение."""
         try:
             from brain.ai_default.tile_outputs import tile_outputs_from_rules
             terrain, extras = tile_terrain_extras(map_obs, cx + dx, cy + dy)
         except Exception:  # noqa: BLE001
             return None
-        got = tile_outputs_from_rules(terrain, extras)
+        return tile_outputs_from_rules(terrain, extras)
+
+    def _value(dx: int, dy: int):
+        got = _outputs(dx, dy)
+        if got is None:
+            return None
+        food, shield = float(got[0]), float(got[1])
+        trade = float(got[2]) if len(got) > 2 else 0.0
+        # Торговля делится ставками города — как в `dai_city_want`: роскошь веса не имеет.
+        return _cm.score(food, shield, trade * _gold_rate, trade * _sci_rate,
+                         _size, _granary_full)
+
+    def _food(dx: int, dy: int):
+        """ЕДА клетки по правилам — нужна для условия годности (см. ниже)."""
+        got = _outputs(dx, dy)
         return None if got is None else float(got[0])
 
     # Какие клетки заняты: говорит сам стенд — он предлагает снятие именно с занятых.
@@ -872,6 +905,12 @@ def _city_tile_gains_from_rules(city_id, cands, obs=None) -> dict:
     #     Без этого условия мы выбрали бы клетку со щитами и без еды: измерено — город
     #     погиб от голода («Famine destroys … entirely.»), потому что жителя сняли в
     #     специалиста, и еда стала нулевой. Веса без годности — половина его правила.
+    # ── ГОДНОСТЬ ПО ЕГО ПОРОГУ И ЕГО ПОВТОР ПРИ НЕУДАЧЕ (§13.316) ──
+    # Порог: `cityturn.c:346-350` — `minimal_surplus[O_FOOD]` равен 1, а при полной житнице 0.
+    # Прежде мы отбрасывали только ГОЛОДНЫЕ варианты («излишек < 0»), то есть допускали
+    # расстановку с излишком 0 там, где он требует 1, — а именно излишек 0 и означал застой.
+    # Повтор: `cityturn.c:430-434` — если ни один вариант порог не проходит, он ПОВТОРЯЕТ с
+    # ослабленными порогами (пища 0, щиты 0), а не оставляет город без решения.
     food_blocked = {}
     _surplus = rec.get("surplus_food")
     if _surplus is not None:
@@ -880,6 +919,7 @@ def _city_tile_gains_from_rules(city_id, cands, obs=None) -> dict:
         except (TypeError, ValueError):
             _surplus = None
     if _surplus is not None:
+        _after = {}
         for _name in list(gains):
             _parsed = parse_city_tile_action(_name)
             if _parsed is None:
@@ -887,14 +927,26 @@ def _city_tile_gains_from_rules(city_id, cands, obs=None) -> dict:
             _f = _food(_parsed[1], _parsed[2])
             if _f is None:
                 continue
-            _new = _surplus - _f if _name.startswith("city_unwork_") else _surplus + _f
-            if _new < 0.0:
-                food_blocked[_name] = _new
+            _after[_name] = _surplus - _f if _name.startswith("city_unwork_") else _surplus + _f
+        _need = 0.0 if _granary_full else float(_cm.MIN_SURPLUS_FOOD)
+        _kept = {n for n, v in _after.items() if v >= _need}
+        _relaxed = False
+        if not _kept and _after:
+            # ЕГО ПОВТОР: пороги ослаблены до нуля — но голодный вариант не берём и здесь.
+            _kept = {n for n, v in _after.items() if v >= 0.0}
+            _relaxed = True
+        for _name in list(gains):
+            if _name in _after and _name not in _kept:
+                food_blocked[_name] = _after[_name]
                 gains.pop(_name)
-        if food_blocked and os.environ.get("DOF_TILE_DEBUG") == "1":
-            print(f"  [клетка-годность] город {city_id}: отброшено голодных вариантов "
-                  f"{len(food_blocked)} — { {k: round(v, 1) for k, v in food_blocked.items()} } "
-                  f"(при излишке {_surplus:g})", flush=True)
+        if (_food_blocked_seen := (food_blocked or _relaxed)) and os.environ.get(
+                "DOF_TILE_DEBUG") == "1":
+            print(f"  [клетка-годность] город {city_id}: порог {_need:g}"
+                  f"{' → ПОВТОР с ослабленными (его `cityturn.c:430-434`)' if _relaxed else ''}; "
+                  f"отброшено {len(food_blocked)} — "
+                  f"{ {k: round(v, 1) for k, v in food_blocked.items()} } "
+                  f"(при излишке {_surplus:g}, житница {'полна' if _granary_full else 'не полна'})",
+                  flush=True)
     if not gains:
         _city_tile_diag(f"город {city_id}: все варианты клетки голодные — хода нет")
     if os.environ.get("DOF_TILE_DEBUG") == "1" and gains:
@@ -1719,7 +1771,8 @@ def _city_workable_tiles(obs: dict, rec: dict) -> list:
     а не `окно_клеток`, где порядок чисел не подтверждён).
     """
     from brain.ai_default.city_tiles import workable_offsets
-    from env.site_eval import tile_output
+    from brain.ai_default.tile_outputs import tile_outputs_from_rules
+    from env.terrain_work import tile_terrain_extras
     mp = (obs or {}).get("map")
     if not isinstance(mp, dict):
         return []
@@ -1729,14 +1782,27 @@ def _city_workable_tiles(obs: dict, rec: dict) -> list:
         return []
     out = []
     for dx, dy in workable_offsets(5):
-        if dx == 0 and dy == 0:
-            continue
+        # Центр города обрабатывается БЕЗ жителя («свободно обрабатываемая клетка» у него же,
+        # `is_free_worked_index` в `cm.c:1944`). Выбрасывать его нельзя: без него сумма выходов
+        # города ниже фактической, и любой замер по такому срезу сравнивает не то.
+        is_center = (dx == 0 and dy == 0)
         try:
-            food, shield, trade, known = tile_output(mp, cx + dx, cy + dy)
+            # ЧИСЛА — ПО ПРАВИЛАМ И С УЛУЧШЕНИЯМИ, как их считает живой путь. `map.output` —
+            # только база: на ней орошённый луг неотличим от неорошённого, и замер по ней
+            # сравнивает не то, что видит решение (моя ошибка, поймана сравнением с фактом:
+            # «расстановки дают излишек 1» против фактических 2).
+            terrain, extras = tile_terrain_extras(mp, cx + dx, cy + dy)
+            outs = tile_outputs_from_rules(terrain, extras)
         except Exception:  # noqa: BLE001
             continue
+        if not outs:
+            continue
+        food, shield = outs[0], outs[1]
+        trade = outs[2] if len(outs) > 2 else 0.0
+        known = True
         out.append({"dx": int(dx), "dy": int(dy), "food": float(food),
-                    "shield": float(shield), "trade": float(trade), "known": bool(known)})
+                    "shield": float(shield), "trade": float(trade),
+                    "known": bool(known), "center": bool(is_center)})
     return out
 
 
