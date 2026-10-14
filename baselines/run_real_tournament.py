@@ -609,6 +609,20 @@ def _founder_step(obs: dict, avail: dict):
     if not unit_actions:
         return None
     map_obs = as_dict(as_dict(obs).get("map")) or {}
+    # §13.350: клетка-назначение шага обязана быть проходимой. Мир ПРЕДЛАГАЕТ шаг в воду,
+    # а сам его не выполняет: поселенец 66-72 раза подряд получал один и тот же `goto_N`
+    # и не сдвигался ни на клетку (измерено §13.348). Море берём из слоя террейна.
+    _sea_words = ("ocean", "sea", "lake", "coast")
+
+    def _blocked_step(x: int, y: int) -> bool:
+        try:
+            from env.terrain_work import tile_terrain_extras
+            _nm, _ex = tile_terrain_extras(map_obs, int(x), int(y))
+        except Exception:  # noqa: BLE001
+            return False
+        _nm = str(_nm).strip().lower().replace(" ", "_")
+        return any(w in _nm for w in _sea_words)
+
     try:
         from brain.ai_default.founder_destination import (
             city_positions, rank_sites, step_toward,
@@ -621,8 +635,12 @@ def _founder_step(obs: dict, avail: dict):
         offered = as_dict(actions) or {}
         founding = [str(n) for n, params in offered.items()
                     if str(n).startswith(("build_city", "found_city")) and truthy(params)]
-        if not founding:
-            continue
+        # ── §13.349: ЕГО правило миссии (`daisettler.c:1036-1040`): если город ЗДЕСЬ основать
+        # нельзя (`!city_can_be_built_here`), задача отменяется и поселенец идёт к лучшей
+        # площадке. У нас вмешательство шло ТОЛЬКО при голодной площадке, поэтому поселенец,
+        # вставший там, где основывать нельзя (например, ближе положенного к своему городу),
+        # стоял 148 ходов и не делал НИЧЕГО: общего пути кандидат не даётся, а правило молчало.
+        can_found_here = bool(founding)
         pos = _unit_pos(obs, uid)
         if pos is None:
             continue
@@ -672,10 +690,11 @@ def _founder_step(obs: dict, avail: dict):
         on_best = (int(best[0]), int(best[1])) == tuple(pos)
         starved = bool(getattr(site, "starved_food", False)
                        or getattr(site, "starved_shield", False))
-        if on_best:
+        if on_best and can_found_here:
             _FOUND_TARGET.pop(str(uid), None)   # стоим на лучшей: основывает общий путь
             continue                      # лучшая и есть текущая — его правило основывает здесь
-        if not starved and here is not None and float(best[3]) <= float(here[2]):
+        if can_found_here and not starved and here is not None \
+                and float(best[3]) <= float(here[2]):
             continue                      # лучше, но не настолько: дорога съедает выигрыш
         ranked = [c for c in ranked_all if (int(c[0]), int(c[1])) != tuple(pos)]
         gotos = [str(n) for n, params in offered.items()
@@ -688,7 +707,8 @@ def _founder_step(obs: dict, avail: dict):
             if (int(pos[0]), int(pos[1])) == _held:
                 _FOUND_TARGET.pop(str(uid), None)
                 continue
-            _step_held = step_toward(tuple(pos), _held, offered=gotos or None)
+            _step_held = step_toward(tuple(pos), _held, offered=gotos or None,
+                                     blocked=_blocked_step)
             if _step_held is not None:
                 if os.environ.get("DOF_TRACE_FILTERS") == "1":
                     print(f"  [поселенец] unit/{uid}: держу цель {_held} (его миссия) "
@@ -701,7 +721,8 @@ def _founder_step(obs: dict, avail: dict):
         step = None
         target = None
         for cand in ranked:
-            step = step_toward(tuple(pos), (cand[0], cand[1]), offered=gotos or None)
+            step = step_toward(tuple(pos), (cand[0], cand[1]), offered=gotos or None,
+                               blocked=_blocked_step)
             if step is not None:
                 target = cand
                 break
@@ -3811,6 +3832,41 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                     # §13.306: поселенец сперва идёт к годной площадке. Его ИИ не
                     # основывает город там, где юнит оказался (`daisettler.c`), а ведёт
                     # его к лучшей площадке — без этого город гибнет от голода.
+                    # §13.348: ОТСТАВАНИЕ позиции — замер в одном ходу: наблюдение против
+                    # живого контроллера. Правило берёт позицию из `obs["unit"]`, дамп — тоже,
+                    # но после `env.step`; если контроллер показывает ту же клетку, что дамп,
+                    # значит отстаёт НАБЛЮДЕНИЕ, и шаг считается от покинутой клетки.
+                    if os.environ.get("DOF_FOUND_DEBUG") == "1":
+                        try:
+                            _obs_pos = []
+                            for _k, _v in (as_dict((obs or {}).get("unit")) or {}).items():
+                                _v = as_dict(_v) or {}
+                                if str(_v.get("type_rule_name")) == "Settlers":
+                                    _obs_pos.append((_k, _v.get("x"), _v.get("y")))
+                            # Карта владельцев — ТРЕТИЙ канал (после `obs["unit"]` и контроллера):
+                            # если поселенец виден на карте НЕ там, где в наблюдении, значит
+                            # отстаёт наблюдение, и шаг считается от покинутой клетки.
+                            _live = []
+                            _mid = getattr(extractor, "my_player_id", None)
+                            _grid = as_dict((as_dict((obs or {}).get("map")) or {}).get("unit_owner"))
+                            _mine_tiles = []
+                            if isinstance(_grid, (list, tuple)) and _mid is not None:
+                                for _x, _col in enumerate(_grid):
+                                    if not isinstance(_col, (list, tuple)):
+                                        continue
+                                    for _y, _v in enumerate(_col):
+                                        try:
+                                            if _v is not None and int(_v) == int(_mid):
+                                                _mine_tiles.append((_x, _y))
+                                        except (TypeError, ValueError):
+                                            continue
+                            _live = _mine_tiles
+                            print(f"  [карта] мой id={_mid!r}, слой владельцев: тип "
+                                  f"{type(_grid).__name__}, наши клетки {len(_mine_tiles)}", flush=True)
+                            print(f"  [позиции] ход {info.get('turn')}: наблюдение {_obs_pos} | "
+                                  f"контроллер {_live}", flush=True)
+                        except Exception as _exc:  # noqa: BLE001
+                            print(f"  [позиции] ошибка: {type(_exc).__name__}: {_exc}", flush=True)
                     _founder = _founder_step(obs, avail)
                     if _founder is not None:
                         return _founder

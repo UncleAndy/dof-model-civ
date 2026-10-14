@@ -44,7 +44,8 @@ def goto_name(dx: int, dy: int) -> str | None:
 
 
 def step_toward(pos: tuple[int, int], target: tuple[int, int],
-                offered: Iterable[str] | None = None) -> str | None:
+                offered: Iterable[str] | None = None,
+                blocked=None) -> str | None:
     """Шаг из `pos` в сторону `target`: направление, уменьшающее расстояние.
 
     Берётся знак по каждой оси (шаг «по диагонали», если нужно двигаться по двум осям).
@@ -53,14 +54,26 @@ def step_toward(pos: tuple[int, int], target: tuple[int, int],
     """
     px, py = int(pos[0]), int(pos[1])
     tx, ty = int(target[0]), int(target[1])
+
+    def _enterable(x: int, y: int) -> bool:
+        """Законна ли клетка-назначение. §13.350: СПИСОК ПРЕДЛОЖЕНИЙ МИРА — НЕ признак
+        законности (измерено: он содержал `produce_Offshore Platform`, которого город строить
+        не может). Шаг в воду предлагается, а мира не двигает: поселенец 66-72 раза подряд
+        получал `goto_4`/`goto_3` и не сдвигался ни на клетку (измерено §13.348)."""
+        return True if blocked is None else not bool(blocked(x, y))
+
     want = goto_name(tx - px, ty - py)
     offered_set = None if offered is None else {str(x) for x in offered}
     if want is not None and (offered_set is None or want in offered_set):
-        return want
+        dx, dy = GOTO_DIRECTIONS[want]
+        if _enterable(px + dx, py + dy):
+            return want
     here = max(abs(tx - px), abs(ty - py))
     best = None
     for name, (dx, dy) in GOTO_DIRECTIONS.items():
         if offered_set is not None and name not in offered_set:
+            continue
+        if not _enterable(px + dx, py + dy):
             continue
         dist = max(abs(tx - (px + dx)), abs(ty - (py + dy)))
         if dist < here and (best is None or dist < best[0]):
