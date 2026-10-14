@@ -608,6 +608,21 @@ def _founder_step(obs: dict, avail: dict):
     unit_actions = as_dict(as_dict(avail).get("unit")) or {}
     if not unit_actions:
         return None
+    # §13.351: ПРИБОР — принудительный шаг поселенца каждый ход (`DOF_FORCE_STEP=goto_4`).
+    # Отделяет «наш ВЫБОР шага неверен» от «шаг не исполняется миром вовсе»: приказ один и
+    # тот же, и по дампу видно, движется ли юнит. Не норматив, только измерение.
+    _forced = os.environ.get("DOF_FORCE_STEP")
+    if _forced:
+        for _uid, _acts in unit_actions.items():
+            _off = as_dict(_acts) or {}
+            if not [n for n, p_ in _off.items()
+                    if str(n).startswith(("build_city", "found_city")) and truthy(p_)]:
+                continue
+            if str(_forced) in {str(n) for n in _off}:
+                if os.environ.get("DOF_TRACE_FILTERS") == "1":
+                    print(f"  [шаг-прибор] unit/{_uid}: {_forced}", flush=True)
+                return ("unit", _uid, str(_forced))
+        return None
     map_obs = as_dict(as_dict(obs).get("map")) or {}
     # §13.350: клетка-назначение шага обязана быть проходимой. Мир ПРЕДЛАГАЕТ шаг в воду,
     # а сам его не выполняет: поселенец 66-72 раза подряд получал один и тот же `goto_N`
@@ -643,11 +658,16 @@ def _founder_step(obs: dict, avail: dict):
         can_found_here = bool(founding)
         pos = _unit_pos(obs, uid)
         if pos is None:
+            if os.environ.get("DOF_FOUND_DEBUG") == "1":
+                print(f"  [пропуск] unit/{uid}: позиции в наблюдении нет", flush=True)
             continue
         try:
             site = evaluate_site(map_obs, pos[0], pos[1],
                                  vals={"FOOD_COST": food_cost_of(obs)})
-        except Exception:  # noqa: BLE001
+        except Exception as _exc:  # noqa: BLE001
+            if os.environ.get("DOF_FOUND_DEBUG") == "1":
+                print(f"  [пропуск] unit/{uid}: оценка площадки упала "
+                      f"({type(_exc).__name__})", flush=True)
             continue
         # ── §13.322: что выбрало бы ЕГО правило — основать здесь или идти к лучшей
         # достижимой площадке (`daisettler.c:1113-1140`). ТОЛЬКО ЗАМЕР: решений не меняет,
@@ -663,6 +683,9 @@ def _founder_step(obs: dict, avail: dict):
                 _here = next((c for c in _all
                               if (int(c[0]), int(c[1])) == tuple(pos)), None)
                 _best = _all[0] if _all else None
+                if _best is None:
+                    print(f"  [основание] unit/{uid} на {tuple(pos)}: ДОСТИЖИМЫХ ПЛОЩАДОК НЕТ "
+                          f"(здесь основывать {'можно' if can_found_here else 'НЕЛЬЗЯ'})", flush=True)
                 if _best is not None:
                     _same = (int(_best[0]), int(_best[1])) == tuple(pos)
                     _h = ("—" if _here is None
@@ -683,6 +706,9 @@ def _founder_step(obs: dict, avail: dict):
         except Exception:  # noqa: BLE001
             ranked_all = []
         if not ranked_all:
+            if os.environ.get("DOF_FOUND_DEBUG") == "1":
+                print(f"  [пропуск] unit/{uid} на {tuple(pos)}: достижимых площадок нет",
+                      flush=True)
             continue                      # некуда идти — не мешаем основанию
         here = next((c for c in ranked_all
                      if (int(c[0]), int(c[1])) == tuple(pos)), None)
@@ -691,10 +717,17 @@ def _founder_step(obs: dict, avail: dict):
         starved = bool(getattr(site, "starved_food", False)
                        or getattr(site, "starved_shield", False))
         if on_best and can_found_here:
+            if os.environ.get("DOF_FOUND_DEBUG") == "1":
+                print(f"  [пропуск] unit/{uid} на {tuple(pos)}: на лучшей площадке, "
+                      f"основывает общий путь", flush=True)
             _FOUND_TARGET.pop(str(uid), None)   # стоим на лучшей: основывает общий путь
             continue                      # лучшая и есть текущая — его правило основывает здесь
         if can_found_here and not starved and here is not None \
                 and float(best[3]) <= float(here[2]):
+            if os.environ.get("DOF_FOUND_DEBUG") == "1":
+                print(f"  [пропуск] unit/{uid} на {tuple(pos)}: лучшая {tuple(best[:2])} "
+                      f"не окупает дорогу ({float(best[3]):.1f} <= {float(here[2]):.1f})",
+                      flush=True)
             continue                      # лучше, но не настолько: дорога съедает выигрыш
         ranked = [c for c in ranked_all if (int(c[0]), int(c[1])) != tuple(pos)]
         gotos = [str(n) for n, params in offered.items()
@@ -3861,10 +3894,23 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                                         except (TypeError, ValueError):
                                             continue
                             _live = _mine_tiles
-                            print(f"  [карта] мой id={_mid!r}, слой владельцев: тип "
-                                  f"{type(_grid).__name__}, наши клетки {len(_mine_tiles)}", flush=True)
-                            print(f"  [позиции] ход {info.get('turn')}: наблюдение {_obs_pos} | "
-                                  f"контроллер {_live}", flush=True)
+                            if not getattr(_founder_step, "_probe_done", False) and env_getter is not None:
+                                _founder_step._probe_done = True
+                                _ws = (as_dict((as_dict((obs or {}).get("map")) or {})
+                                               .get("unit_owner")) or {})
+                                _keys = list(_ws)[:3]
+                                print(f"  [слой] unit_owner: тип {type(_ws).__name__}, "
+                                      f"ключей {len(_ws)}, первые {_keys!r}", flush=True)
+                                for _k in _keys[:1]:
+                                    _v = _ws[_k]
+                                    print(f"     [{_k!r}] тип {type(_v).__name__} "
+                                          f"значение {str(_v)[:80]!r}", flush=True)
+                                _c = _controller_of(env_getter())
+                                _us = getattr(getattr(_c, "unit_ctrl", None), "units", None)
+                                if isinstance(_us, dict) and _us:
+                                    _k0, _u0 = next(iter(_us.items()))
+                                    print(f"  [контроллер] units[{_k0!r}]: тип {type(_u0).__name__}, "
+                                          f"значение {str(_u0)[:100]!r}", flush=True)
                         except Exception as _exc:  # noqa: BLE001
                             print(f"  [позиции] ошибка: {type(_exc).__name__}: {_exc}", flush=True)
                     _founder = _founder_step(obs, avail)
