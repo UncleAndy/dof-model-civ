@@ -840,11 +840,76 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
         if best_raw <= 0.0:
             return 0.0, "нет площадки с положительной ценностью"
         city_pos = (int(_num(city_rec.get("x"), 0)), int(_num(city_rec.get("y"), 0)))
-        dist = int(max(abs(best_tile[0] - city_pos[0]), abs(best_tile[1] - city_pos[1]))) if best_tile else 0
-        perf = 3  # PERFECTION
-        want = best_raw / (1.0 + float(dist) / perf)
-        reason = f"площадка {best_tile}, сырая ценность {best_raw:.1f}, расстояние {dist}"
-        return want, reason
+        # ── ЗДЕСЬ СТОИТ ЕГО ФОРМУЛА ЦЕЛИКОМ (daisettler.c:815-825) ──
+        #     turns = move_cost / move_rate;  result = amortize(total, PERFECTION*turns);
+        #     result -= unit_build_shield_cost_base(punit) + boat_cost/3
+        # `total` — ЕГО `result->total` для площадки, он уже посчитан в картине мира
+        # (`site_eval.py:305` через перенесённую `site_total`). Прежняя наша формула
+        # `best_raw / (1 + dist/3)` была ВЫДУМАННОЙ и жила на нашей же ценности площадки.
+        from brain.ai_default.values import settler_want as _settler_want
+
+        move_rate = 1.0
+        try:
+            _rec = live_by_type.get("Settlers") or {}
+            move_rate = float(_num(_rec.get("type_move_rate"), 1.0) or 1.0)
+        except Exception:  # noqa: BLE001
+            move_rate = 1.0
+        if move_rate <= 0.0:
+            move_rate = 1.0
+        settler_cost = 0.0
+        try:
+            from env.rules_costs import build_cost_of as _build_cost
+            settler_cost = float(_build_cost("Settlers") or 0.0)
+        except Exception:  # noqa: BLE001
+            settler_cost = 0.0
+        # Клетки, занятые городами, площадками быть не могут — у него это отсев
+        # `tile_city` плюс запрет «кражи земли» (`continue` перед подсчётом стоимости,
+        # daisettler.c:800-806). Без этого лучшей площадкой оказывалась клетка
+        # САМОГО города (расстояние 0) — измерено, и это была наша ошибка.
+        occupied: set[tuple[int, int]] = set(state.cities.values())
+        for _c in _as_dict(obs.get("city")).values():
+            if isinstance(_c, dict) and _c.get("x") is not None and _c.get("y") is not None:
+                try:
+                    occupied.add((int(_c["x"]), int(_c["y"])))
+                except (TypeError, ValueError):
+                    continue
+        best: tuple[float, tuple[int, int], float, int] | None = None
+        skipped_starved = 0
+        skipped_occupied = 0
+        for tile in list(state.revealed)[:200]:
+            if tile in occupied:
+                skipped_occupied += 1
+                continue
+            try:
+                _site = site_of(tile)
+            except Exception:  # noqa: BLE001
+                continue
+            # Его отсев: площадка, которая морит голодом, не годится (`food_starvation`
+            # / `shield_starvation` из `cityresult_fill`).
+            if getattr(_site, "starved_food", False) or getattr(_site, "starved_shield", False):
+                skipped_starved += 1
+                continue
+            total = float(getattr(_site, "ai_want", 0.0) or 0.0)
+            if total <= 0.0:
+                continue
+            dist = int(max(abs(tile[0] - city_pos[0]), abs(tile[1] - city_pos[1])))
+            # ПРИБЛИЖЕНИЕ: у него `move_cost` из поиска пути (`pf_map` — серверная
+            # внутренность, прямому переносу недоступна). Берём кратчайший путь
+            # «по клеткам» и делим на скорость хода — для ровной суши совпадает.
+            turns = int(math.ceil(float(dist) / move_rate)) if dist else 0
+            want = _settler_want(total, travel_turns=turns, settler_shield_cost=settler_cost)
+            if best is None or want > best[0]:
+                best = (want, tile, total, turns)
+        if best is None or best[0] <= 0.0:
+            return 0.0, ("нет площадки, которая после срока и стоимости поселенца "
+                         f"остаётся выгодной (отсеяно голодных {skipped_starved}, "
+                         f"занятых городами {skipped_occupied})")
+        _want, _tile, _total, _turns = best
+        reason = (f"его площадка {_tile}: total {_total:.1f}, ходов {_turns}, "
+                  f"минус стоимость поселенца {settler_cost:.0f} → {_want:.2f} "
+                  f"(отсеяно голодных {skipped_starved}, занятых городами "
+                  f"{skipped_occupied})")
+        return _want, reason
 
     def productions(city_id: str) -> list[tuple[str, float, int]]:
         """Что город может построить: [(тип, опции, ходов)] — по числам мира.
