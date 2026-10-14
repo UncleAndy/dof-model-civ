@@ -827,6 +827,25 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
         _game_info = _as_dict(obs.get("game_info")) if isinstance(obs, dict) else {}
         if _game_info.get("prevent_new_cities"):
             return 0.0, "основание запрещено сценарием"
+        # ── ЕГО ЗАЩИТА ОТ РАЗБОРА ГОРОДА (daiсity.c:788-793) ──
+        #     if (unit_type_get(virtualunit)->pop_cost >= city_size_get(pcity)) {
+        #       /* We don't like disbanding the city as a side effect */
+        #       return;
+        #     }
+        # Поселенец съедает горожанина: в городе размера 1 это значит РАЗОБРАТЬ город.
+        # Измерено на 45 ходах (13.302): без этой защиты город строил поселенцев 25 раз
+        # и к концу оставался ОДИН город размера 1 — то есть защита была не «мелочью».
+        _pop_cost = 1.0
+        try:
+            _srec = live_by_type.get("Settlers") or {}
+            _pop_cost = float(_num(_srec.get("type_pop_cost"), 1.0) or 0.0)
+        except Exception:  # noqa: BLE001
+            _pop_cost = 1.0
+        _size = float(_num(city_rec.get("size"), 1.0) or 1.0)
+        if _pop_cost > 0.0 and _size <= _pop_cost:
+            return 0.0, (f"город размера {_size:.0f} не выдержит поселенца "
+                         f"(поглощает {_pop_cost:.0f}) — у него это отказ от разбора "
+                         f"города (daicity.c:788)")
         best_raw = 0.0
         best_tile = None
         for tile in list(state.revealed)[:200]:
