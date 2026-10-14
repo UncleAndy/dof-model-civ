@@ -78,6 +78,39 @@ def content_value(amount: int, unhappy: float, entertainers: float,
     return value
 
 
+#: Число НАШИХ городов в радиусе эффекта — его таблица (`daicity.c:1648-1668`), не догадка:
+#:   `cities[REQ_RANGE_CITY] = cities[REQ_RANGE_LOCAL] = 1`
+#:   `cities[REQ_RANGE_PLAYER] = cities[WORLD/ALLIANCE/TEAM] = city_list_size(pplayer->cities)`
+#:   `cities[REQ_RANGE_TILE/CADJACENT/ADJACENT] = 0`  («неверный радиус» для построек)
+#:   `cities[REQ_RANGE_CONTINENT]` — города НА ТОМ континенте: у нас такого счёта нет.
+#:
+#: В `dai_effect_value` этот счёт приходит параметром `c` («given the number of cities in range
+#: (c)», его же строка 136). Наш порт передавал `c=1` ВСЕГДА — верно для города, но эффекты
+#: радиуса «Player»/«World» (85 строк из 270 в нашей таблице) от этого занижались в число
+#: городов раз.
+CITY_RANGE_ONE = ("", "local", "city", "traderoute")
+CITY_RANGE_MINE = ("player", "world", "team", "alliance")
+CITY_RANGE_NONE = ("tile", "cadjacent", "adjacent")
+
+
+def cities_in_range(range_name, cities: int) -> int:
+    """Сколько НАШИХ городов попадает под эффект этого радиуса.
+
+    Неизвестный радиус (в том числе `continent`, для которого у нас нет счёта по континентам)
+    даёт 1 и попадает в `NOTES` — незнание нельзя выдавать за ноль, но и выдумывать число
+    городов тоже нельзя.
+    """
+    name = str(range_name or "").strip().lower()
+    if name in CITY_RANGE_ONE:
+        return 1
+    if name in CITY_RANGE_MINE:
+        return max(1, int(cities or 1))
+    if name in CITY_RANGE_NONE:
+        return 0
+    NOTES.append(f"радиус эффекта «{range_name}» нам неизвестен: считаю как один город")
+    return 1
+
+
 def effect_value(effect: str, amount: int, *, c: int = 1, unhappy: float = 0.0,
                  entertainers: float = 0.0, units_supported: int = 0, affected: int = 0,
                  num_cities: int = 1, cities: int = 0,
@@ -404,7 +437,11 @@ def improvement_value(effects: list[tuple], target: str, *, prod: dict[str, floa
         # без них постройка `Barracks` (ветеранство и восстановление войск) выходила нулём,
         # хотя у города уже стоят военные, ровно на которых она и работает.
         unit_reqs = row[8] if len(row) > 8 else ()
-        content += effect_value(str(row[0]), int(row[1]), c=1, unhappy=unhappy,
+        # §13.313: `c` — ЧИСЛО НАШИХ ГОРОДОВ В РАДИУСЕ по его таблице, а не всегда единица.
+        # Радиус строки лежит у нас в `row[4]` (тот же, что читает `output_delta`).
+        content += effect_value(str(row[0]), int(row[1]),
+                               c=cities_in_range(row[4] if len(row) > 4 else "", cities),
+                               unhappy=unhappy,
                                entertainers=entertainers, units_supported=units_supported,
                                affected=affected_units(unit_reqs, units) if unit_reqs else 0,
                                num_cities=max(1, num_cities), cities=cities,
