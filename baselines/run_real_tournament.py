@@ -594,7 +594,7 @@ def _city_tile_diag(why: str) -> None:
         print(f"  [клетка-правила] молчит: {why}", flush=True)
 
 
-def _founder_step(obs: dict, avail: dict):
+def _founder_step(obs: dict, avail: dict, mindist: int | None = None):
     """Поселенец идёт к лучшей площадке по ЕГО числам, а не основывает где стоит (§13.306).
 
     Возвращает `("unit", id, имя_шага)` или None. Вмешивается ТОЛЬКО тогда, когда поселенец
@@ -646,6 +646,26 @@ def _founder_step(obs: dict, avail: dict):
         from env.site_eval import evaluate_site
     except Exception:  # noqa: BLE001
         return None
+    # ── §13.353: МИНИМАЛЬНОЕ РАССТОЯНИЕ МЕЖДУ ГОРОДАМИ — из мира (считает вызывающий,
+    # у него есть доступ к контроллеру). Мир отказывает в основании, если ближе `citymindist`
+    # (`common/city.c:1445`), а наша оценка площадки этого не знала: поселенцы сгруживались,
+    # каждый считал свою клетку лучшей, и город не появлялся.
+    _mindist = int(mindist or 0)
+    _mindist_src = "живое" if _mindist > 0 else "запасное"
+    if _mindist <= 0:
+        try:
+            from env.rules_costs import CITYMINDIST_FALLBACK
+            _mindist = int(CITYMINDIST_FALLBACK)
+        except Exception:  # noqa: BLE001
+            _mindist = 0
+            _mindist_src = "неизвестно"
+    _known_cities = city_positions(obs)
+    if os.environ.get("DOF_FOUND_DEBUG") == "1":
+        _seen_cm = globals().setdefault("_CM_SEEN", set())
+        if _mindist_src not in _seen_cm:
+            _seen_cm.add(_mindist_src)
+            print(f"  [citymindist] {_mindist} (источник: {_mindist_src}), "
+                  f"городов известно {len(_known_cities)}", flush=True)
     for uid, actions in unit_actions.items():
         offered = as_dict(actions) or {}
         founding = [str(n) for n, params in offered.items()
@@ -677,7 +697,8 @@ def _founder_step(obs: dict, avail: dict):
             if (uid, tuple(pos)) not in _seen:
                 _seen.add((uid, tuple(pos)))
                 try:
-                    _all = rank_sites(obs, exclude=city_positions(obs), reference=tuple(pos))
+                    _all = rank_sites(obs, exclude=city_positions(obs), reference=tuple(pos),
+                                      cities=_known_cities, mindist=_mindist)
                 except Exception:  # noqa: BLE001
                     _all = []
                 _here = next((c for c in _all
@@ -702,7 +723,8 @@ def _founder_step(obs: dict, avail: dict):
         # а мы основывали на месте и получали землю с 8 щитами на 21 клетку.
         try:
             ranked_all = rank_sites(obs, exclude=city_positions(obs),
-                                    reference=tuple(pos), settler_shield_cost=0.0)
+                                    reference=tuple(pos), settler_shield_cost=0.0,
+                                    cities=_known_cities, mindist=_mindist)
         except Exception:  # noqa: BLE001
             ranked_all = []
         if not ranked_all:
@@ -1967,6 +1989,21 @@ def _state_dump_path() -> str:
     """Куда писать срезы: рядом с --output, иначе в /tmp."""
     out = getattr(ARGS, "output", None)
     return f"{out}.state.jsonl" if out else "/tmp/dof_state_dump.jsonl"
+
+
+def _world_citymindist(env) -> int:
+    """`citymindist` из САМОГО МИРА (`rule_ctrl.game_info`), иначе 0.
+
+    Это характеристика мира (указание владельца: цену достаточно узнать один раз у мира),
+    поэтому спрашиваем сервер, а не задаём число сами.
+    """
+    try:
+        gi = getattr(getattr(_controller_of(env), "rule_ctrl", None), "game_info", None)
+        if isinstance(gi, dict) and gi.get("citymindist") is not None:
+            return int(gi["citymindist"])
+    except Exception:  # noqa: BLE001
+        return 0
+    return 0
 
 
 def _controller_of(env):
@@ -3913,7 +3950,8 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                                           f"значение {str(_u0)[:100]!r}", flush=True)
                         except Exception as _exc:  # noqa: BLE001
                             print(f"  [позиции] ошибка: {type(_exc).__name__}: {_exc}", flush=True)
-                    _founder = _founder_step(obs, avail)
+                    _founder = _founder_step(obs, avail,
+                                             mindist=_world_citymindist(env_getter()))
                     if _founder is not None:
                         return _founder
                     _tile_pick = _city_tile_candidate(obs, avail)

@@ -10,6 +10,12 @@
 from __future__ import annotations
 
 #: имя типа → цена постройки и характеристики (как их называет мир)
+#: Минимальное расстояние между городами (`citymindist`). Правила мира его не переопределяют
+#: (в `classic/game.ruleset` строки нет), поэтому действует умолчание самого freeciv —
+#: `GAME_DEFAULT_CITYMINDIST`, `common/game.h:482`. Живое значение читается из мира
+#: (`rule_ctrl.game_info['citymindist']`); это число — только запасное, если мир его не отдал.
+CITYMINDIST_FALLBACK = 2
+
 UNIT_STATS: dict[str, dict[str, object]] = {
     'AEGIS Cruiser': {'name': 'AEGIS Cruiser', 'build_cost': 100, 'pop_cost': 0, 'attack': 8, 'defense': 8, 'hitpoints': 30, 'firepower': 2, 'move_rate': 5, 'class': 'Sea', 'flags': ('BadCityDefender',)},
     'AWACS': {'name': 'AWACS', 'build_cost': 140, 'pop_cost': 0, 'attack': 0, 'defense': 1, 'hitpoints': 20, 'firepower': 1, 'move_rate': 16, 'class': 'Air', 'flags': ('HasNoZOC',)},

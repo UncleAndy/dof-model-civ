@@ -81,11 +81,31 @@ def step_toward(pos: tuple[int, int], target: tuple[int, int],
     return None if best is None else best[1]
 
 
+def citymindist_blocks(x: int, y: int,
+                       cities: Iterable[tuple[int, int]],
+                       mindist: int) -> bool:
+    """ЕГО ``citymindist_prevents_city_on_tile`` (``common/city.c:1445``).
+
+    Основание запрещено, если ЛЮБОЙ город попадает в квадрат со стороной ``2*(mindist-1)+1``
+    вокруг клетки — то есть ``square_iterate(ptile, citymindist - 1)``. Мир отказывает в
+    основании именно по этому условию, а наша оценка площадки его не знала: поселенцы
+    сгруживались в углу, каждый считал свою клетку лучшей, и города не появлялись.
+    """
+    r = int(mindist) - 1
+    if r < 0:
+        return False
+    for cx, cy in cities:
+        if abs(int(cx) - int(x)) <= r and abs(int(cy) - int(y)) <= r:
+            return True
+    return False
+
+
 def rank_sites(obs: dict, *, size: int = 1, exclude: Iterable[tuple[int, int]] = (),
                reference: tuple[int, int] | None = None, move_rate: float = 1.0,
                settler_shield_cost: float = 0.0, limit: int = 200,
                revealed: Iterable[tuple[int, int]] | None = None,
-               top: int = 20) -> list[tuple[int, int, float, float]]:
+               top: int = 20, cities: Iterable[tuple[int, int]] = (),
+               mindist: int = 0) -> list[tuple[int, int, float, float]]:
     """Площадки по ЕГО числам, лучшие первыми: `[(x, y, ai_want, want), …]`.
 
     Список нужен, а не одна лучшая: у него поселенец идёт по достижимой площадке, и если
@@ -108,6 +128,15 @@ def rank_sites(obs: dict, *, size: int = 1, exclude: Iterable[tuple[int, int]] =
         from brain.forecast.live import revealed_tiles
         revealed = revealed_tiles(map_obs)
     skip = {(int(x), int(y)) for x, y in exclude}
+    # ── §13.353: кольцо запрета вокруг КАЖДОГО известного города (его `citymindist`).
+    # Клетки в этом кольце мир площадками не считает, и город там основать нельзя.
+    _cities = [(int(cx), int(cy)) for cx, cy in cities]
+    _r = int(mindist or 0) - 1
+    if _cities and _r >= 0:
+        for _cx, _cy in _cities:
+            for _dx in range(-_r, _r + 1):
+                for _dy in range(-_r, _r + 1):
+                    skip.add((_cx + _dx, _cy + _dy))
     found: list[tuple[int, int, float, float]] = []
     for tile in list(revealed)[:limit]:
         x, y = int(tile[0]), int(tile[1])
