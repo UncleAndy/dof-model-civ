@@ -751,6 +751,44 @@ def _founder_step(obs: dict, avail: dict, mindist: int | None = None, env_getter
     # §13.357: два канала — наблюдение И контроллер. Слой наблюдения бывает пуст в начале хода.
     _known_cities = set(city_positions(obs)) | _our_cities_from_controller(env_getter, obs)
     if os.environ.get("DOF_FOUND_DEBUG") == "1":
+        _seen_turn = globals().setdefault("_MAP_LAYERS_SEEN", set())
+        _tk = int((as_dict(obs).get("turn") or 0)) if isinstance(as_dict(obs).get("turn"), (int, float)) else -1
+        if _tk not in _seen_turn:
+            _seen_turn.add(_tk)
+            _mobs = as_dict((as_dict(obs) or {}).get("map")) or {}
+            _info = {k: (type(v).__name__, getattr(v, "shape", len(v) if hasattr(v, "__len__") else "-"))
+                     for k, v in list(_mobs.items())}
+            from brain.forecast.live import revealed_tiles as _rv
+            print(f"  [слои-карты] {sorted(_mobs.keys())}", flush=True)
+            print(f"  [слои-карты] формы: {_info}", flush=True)
+            _stat = _mobs.get("status")
+            _st = _stat.tolist() if hasattr(_stat, "tolist") else _stat
+            _known = (sum(1 for _col in _st for _v in _col if float(_v) >= 1.0)
+                      if isinstance(_st, (list, tuple)) and _st else 0)
+            _cs = sorted(_known_cities)[:1]
+            _cx, _cy = (_cs[0] if _cs else (-1, -1))
+            _sw = ""
+            if _cs:
+                try:
+                    _sw = (f"status[x][y]={_st[_cx][_cy]}, status[y][x]={_st[_cy][_cx]}")
+                except Exception as _e:  # noqa: BLE001
+                    _sw = f"сверка упала: {type(_e).__name__}"
+            _ter = _mobs.get("terrain")
+            _tl = _ter.tolist() if hasattr(_ter, "tolist") else _ter
+            _tvals = {}
+            if isinstance(_tl, (list, tuple)) and _tl:
+                for _col in _tl:
+                    if not isinstance(_col, (list, tuple)):
+                        continue
+                    for _v in _col:
+                        _tvals[_v] = _tvals.get(_v, 0) + 1
+            _top = sorted(_tvals.items(), key=lambda kv: -kv[1])[:6]
+            print(f"  [слои-карты] террейн: разные значения {len(_tvals)}, частые {_top}", flush=True)
+            from env.world_memory import CALLS as _mcall, known as _mknown
+            print(f"  [слои-карты] видимых сейчас {_mcall.get('live')}, "
+                  f"в ПАМЯТИ {len(_mknown())} (по status живого {_known}), "
+                  f"раскрытых по выходу {len(_rv(_mobs))}", flush=True)
+    if os.environ.get("DOF_FOUND_DEBUG") == "1":
         _cities_raw = as_dict((as_dict(obs) or {}).get("city")) or {}
         _who = {}
         for _cid, _crec in _cities_raw.items():
@@ -5393,6 +5431,12 @@ def main():
     for agent in agents:
         print(f"  {agent:<20}", end="", flush=True)
         for ep in range(args.episodes):
+            # §13.359: новая партия — новая память о карте (иная карта, иное виденное).
+            try:
+                from env.world_memory import reset as _memory_reset
+                _memory_reset()
+            except Exception:  # noqa: BLE001
+                pass
             seed = None if args.seed_base is None else args.seed_base + ep
             metrics = None
             port = None

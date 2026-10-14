@@ -73,7 +73,26 @@ def terrain_names() -> tuple[list[str], list[str]]:
 
 
 def tile_terrain_extras(map_obs: dict[str, Any], x: int, y: int) -> tuple[str, tuple[str, ...]]:
-    """Террейн и экстры клетки — именами (для ключа измеренной таблицы)."""
+    """Террейн и экстры клетки — именами; НЕВИДИМУЮ сейчас клетку берём из ПАМЯТИ (§13.359).
+
+    Мир отдаёт только видимое СЕЙЧАС (террейн 255 на 4035 из 4056 клеток), а планировать надо по
+    известному — у него это `tile_get_known`. Память ведёт `env/world_memory.py`.
+    """
+    name, extras = _live_terrain_extras(map_obs, x, y)
+    if name and name != "?" and not str(name).startswith("?"):
+        return name, extras
+    try:
+        from env.world_memory import tile as _mem_tile
+        got = _mem_tile(int(x), int(y))
+        if got is not None:
+            return str(got[0]), tuple(got[1])
+    except Exception:  # noqa: BLE001
+        pass
+    return name, extras
+
+
+def _live_terrain_extras(map_obs: dict[str, Any], x: int, y: int) -> tuple[str, tuple[str, ...]]:
+    """Террейн и экстры клетки по ТЕКУЩЕМУ наблюдению (без памяти) — как было до §13.359."""
     terrain_names_, extra_names = terrain_names()
     terrain_layer = (map_obs or {}).get("terrain")
     extras_layer = (map_obs or {}).get("extras")

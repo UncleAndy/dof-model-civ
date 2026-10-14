@@ -569,13 +569,52 @@ def _record_by_id(pool: Any, wanted: Any) -> dict:
 
 
 def revealed_tiles(map_obs: dict) -> set[tuple[int, int]]:
-    """Раскрытые клетки: выход не `(0,0,0)`. Террейн для этого не годится."""
+    """ИЗВЕСТНЫЕ клетки — ЕГО `tile_get_known`, а не «видимые сейчас».
+
+    §13.359. Прежде раскрытыми считались клетки с ненулевым выходом — то есть только те, что
+    видны ПРЯМО СЕЙЧАС (замер: 9 клеток). У него площадки перебираются по `whole_map_iterate`
+    с проверкой `tile_get_known`, то есть по ВСЕМ когда-либо увиденным клеткам. Разница
+    решающая: из 9 видимых клеток после первого города законных площадок не остаётся вовсе,
+    а из известных — остаются.
+
+    Источник — слой `status` (`obs["map"]["status"]`): 0 — вне обзора, 1 и 2 — известна
+    (это же чтение уже принято в проекте, `env/spec_options.py:425`). Если слоя нет —
+    старый способ по выходу, чтобы «не знаем» не превращалось в «пусто».
+    """
     try:
+        # §13.359: сначала ПАМЯТЬ о виденном — наш `tile_get_known`. Мир отдаёт только видимое
+        # сейчас, а у него площадки перебираются по всем когда-либо увиденным клеткам.
+        try:
+            from env.world_memory import known as _mem_known, update as _mem_update
+            if isinstance(map_obs, dict) and map_obs:
+                _mem_update(map_obs)
+            _remembered = _mem_known()
+            if _remembered:
+                return _remembered
+        except Exception:  # noqa: BLE001
+            pass
+        status = map_obs.get("status")
+        tolist = getattr(status, "tolist", None)
+        if tolist is not None:
+            status = tolist()
+        if isinstance(status, (list, tuple)) and status:
+            out: set[tuple[int, int]] = set()
+            for x, column in enumerate(status):
+                if not isinstance(column, (list, tuple)):
+                    continue
+                for y, value in enumerate(column):
+                    try:
+                        if float(value) >= 1.0:
+                            out.add((int(x), int(y)))
+                    except (TypeError, ValueError):
+                        continue
+            if out:
+                return out
         layer = map_obs.get("output")
         shape = getattr(layer, "shape", None)
         if shape is None:
             return set()
-        out = set()
+        out2 = set()
         for x in range(shape[0]):
             for y in range(shape[1]):
                 cell = layer[x][y]
@@ -584,8 +623,8 @@ def revealed_tiles(map_obs: dict) -> set[tuple[int, int]]:
                 except TypeError:
                     vals = [_num(cell), 0.0, 0.0]
                 if any(v != 0.0 for v in vals):
-                    out.add((x, y))
-        return out
+                    out2.add((x, y))
+        return out2
     except Exception:  # noqa: BLE001
         return set()
 

@@ -213,7 +213,10 @@ def rank_sites(obs: dict, *, size: int = 1, exclude: Iterable[tuple[int, int]] =
     _iter.sort(key=lambda r: r[0])
     _best_want: float | None = None
     _best_dist: float | None = None
+    _seen = 0
+    _taken_n = 0
     for _dist, x, y in _iter:
+        _seen += 1
         if (x, y) in skip:
             continue
         # ── ЕГО `city_desirability` (`daisettler.c:715-719`): площадка отбрасывается, если
@@ -233,6 +236,7 @@ def rank_sites(obs: dict, *, size: int = 1, exclude: Iterable[tuple[int, int]] =
                 if _taken:
                     break
             if _taken:
+                _taken_n += 1
                 if os.environ.get("DOF_FOUND_DEBUG") == "1":
                     print(f"  [резерв-отказ] площадка {(x, y)}: занято в пределах "
                           f"citymindist-1 (его city_desirability)", flush=True)
@@ -264,6 +268,15 @@ def rank_sites(obs: dict, *, size: int = 1, exclude: Iterable[tuple[int, int]] =
                 and _dist > float(move_rate or 1.0)
                 and _best_dist is not None and _best_dist < _dist):
             break
+    if os.environ.get("DOF_FOUND_DEBUG") == "1":
+        _mem = 0
+        try:
+            from env.world_memory import CALLS as _mc
+            _mem = int(_mc.get("tiles") or 0)
+        except Exception:  # noqa: BLE001
+            pass
+        print(f"  [поиск] рассмотрено {_seen}, отброшено местом {_taken_n}, годных {len(found)}, "
+              f"память {_mem}", flush=True)
     found.sort(key=lambda r: -r[3])
     return found[:max(1, int(top))]
 
