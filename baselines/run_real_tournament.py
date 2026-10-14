@@ -753,6 +753,11 @@ def _founder_step(obs: dict, avail: dict, mindist: int | None = None):
         on_best = (int(best[0]), int(best[1])) == tuple(pos)
         starved = bool(getattr(site, "starved_food", False)
                        or getattr(site, "starved_shield", False))
+        if os.environ.get("DOF_FOUND_DEBUG") == "1":
+            _h_now = _FOUND_TARGET.get(str(uid))
+            print(f"  [поселенец-ход] unit/{uid} на {tuple(pos)} "
+                  f"{'цель ' + str(_h_now) if _h_now else 'цели нет'}; "
+                  f"основать_здесь={can_found_here}, голоден={starved}", flush=True)
         if on_best and can_found_here:
             if os.environ.get("DOF_FOUND_DEBUG") == "1":
                 print(f"  [пропуск] unit/{uid} на {tuple(pos)}: на лучшей площадке, "
