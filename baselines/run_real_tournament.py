@@ -637,7 +637,49 @@ def _land_work_want(obs: dict, map_obs: dict, offered: dict, pos) -> float:
     return best_improvement_want(entries)
 
 
-def _founder_step(obs: dict, avail: dict, mindist: int | None = None):
+def _our_cities_from_controller(env_getter, obs: dict) -> set[tuple[int, int]]:
+    """СВОИ ГОРОДА ИЗ КОНТРОЛЛЕРА (`city_ctrl.cities`) — второй канал, как у позиций юнитов §13.348.
+
+    Зачем. Слой городов наблюдения бывает пуст в начале хода, и тогда проверки по городам
+    (`citymindist`, отмена негодной цели, резерв мест) немы: измерено — 0 городов на всех замерах
+    короткого прогона при живой столице. Контроллер — тот же мир, но его собственный канал.
+
+    Индекс клетки переводится в координаты по форме карты: `index = x + y * xsize` (X — цилиндр),
+    ровно как в `brain/forecast/live.py:117`. Свой `x`/`y` в записи, если он там есть, важнее индекса.
+    """
+    if env_getter is None:
+        return set()
+    try:
+        env = env_getter()
+        ctl = getattr(getattr(env, "unwrapped", None), "civ_controller", None)
+        cities = getattr(getattr(ctl, "city_ctrl", None), "cities", None)
+        if not isinstance(cities, dict) or not cities:
+            return set()
+        map_obs = as_dict((as_dict(obs) or {}).get("map")) or {}
+        shape = getattr(map_obs.get("output"), "shape", None)
+        w = int(shape[0]) if shape is not None and len(shape) >= 1 else 0
+        out: set[tuple[int, int]] = set()
+        for _cid, rec in cities.items():
+            if not isinstance(rec, dict):
+                continue
+            try:
+                if int(rec.get("owner", -1)) != 0:
+                    continue            # чужие города — из наблюдения (мы видим их отдельно)
+            except (TypeError, ValueError):
+                continue
+            x, y = rec.get("x"), rec.get("y")
+            if x is None or y is None:
+                idx = rec.get("tile")
+                if idx is None or w <= 0:
+                    continue
+                x, y = int(idx) % w, int(idx) // w
+            out.add((int(x), int(y)))
+        return out
+    except Exception:  # noqa: BLE001
+        return set()
+
+
+def _founder_step(obs: dict, avail: dict, mindist: int | None = None, env_getter=None):
     """Поселенец идёт к лучшей площадке по ЕГО числам, а не основывает где стоит (§13.306).
 
     Возвращает `("unit", id, имя_шага)` или None. Вмешивается ТОЛЬКО тогда, когда поселенец
@@ -702,7 +744,8 @@ def _founder_step(obs: dict, avail: dict, mindist: int | None = None):
         except Exception:  # noqa: BLE001
             _mindist = 0
             _mindist_src = "неизвестно"
-    _known_cities = city_positions(obs)
+    # §13.357: два канала — наблюдение И контроллер. Слой наблюдения бывает пуст в начале хода.
+    _known_cities = set(city_positions(obs)) | _our_cities_from_controller(env_getter, obs)
     if os.environ.get("DOF_FOUND_DEBUG") == "1":
         _cities_raw = as_dict((as_dict(obs) or {}).get("city")) or {}
         _who = {}
@@ -710,8 +753,11 @@ def _founder_step(obs: dict, avail: dict, mindist: int | None = None):
             _r = as_dict(_crec) or {}
             _own = _r.get("owner")
             _who[_own] = _who.get(_own, 0) + 1
+        _ctl_cities = _our_cities_from_controller(env_getter, obs)
+        _obs_cities = set(city_positions(obs))
         print(f"  [слой-город] в наблюдении {len(_cities_raw)} городов, по владельцам {_who}; "
-              f"известных клеток {len(_known_cities)}", flush=True)
+              f"наблюдение даёт {sorted(_obs_cities)[:3]}, контроллер {sorted(_ctl_cities)[:3]}, "
+              f"всего известных {len(_known_cities)}", flush=True)
     # ── §13.355: ЕГО КАРТА ЗАНЯТОСТИ МЕСТ (`common/aicore/citymap.c`) и уход с задачи
     # основания освобождает место (`daitools.c:665-671`): если поселенца больше нет среди
     # способных действовать (основал город, погиб), его резерв снимается.
@@ -4086,6 +4132,15 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                                     print(f"     [{_k!r}] тип {type(_v).__name__} "
                                           f"значение {str(_v)[:80]!r}", flush=True)
                                 _c = _controller_of(env_getter())
+                                # §13.357: пробник ГОРОДОВ контроллера — тем же способом, каким
+                                # §13.348 нашли позиции юнитов. Слой городов наблюдения бывает
+                                # пуст, а свои города нужны для citymindist и резерва мест.
+                                _cs = getattr(getattr(_c, "city_ctrl", None), "cities", None)
+                                if isinstance(_cs, dict) and _cs:
+                                    _ck, _cv = next(iter(_cs.items()))
+                                    print(f"  [контроллер] cities[{_ck!r}]: тип {type(_cv).__name__}, "
+                                          f"значение {str(_cv)[:110]!r}", flush=True)
+                                    print(f"  [контроллер] cities: всего {len(_cs)}", flush=True)
                                 _us = getattr(getattr(_c, "unit_ctrl", None), "units", None)
                                 if isinstance(_us, dict) and _us:
                                     _k0, _u0 = next(iter(_us.items()))
@@ -4094,7 +4149,8 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                         except Exception as _exc:  # noqa: BLE001
                             print(f"  [позиции] ошибка: {type(_exc).__name__}: {_exc}", flush=True)
                     _founder = _founder_step(obs, avail,
-                                             mindist=_world_citymindist(env_getter()))
+                                             mindist=_world_citymindist(env_getter()),
+                                             env_getter=env_getter)
                     if _founder is not None:
                         return _founder
                     _tile_pick = _city_tile_candidate(obs, avail)
