@@ -1284,12 +1284,31 @@ def _production_candidate(obs: dict, info: dict, dof_state, extractor,
                         continue
                     if isinstance(acts, dict):
                         offered.update(str(a) for a in acts.keys())
-        # Предохранитель 2: клины уважаем — имя, которое однажды повесило матч, не повторяем.
+        # Предохранитель 2: клины уважаем — но ТОЛЬКО там, где отказ подтверждён.
+        # §13.346: голый `is_wedged` считает отказы и НЕ смотрит успехи. Измерено:
+        # `city/produce_Settlers` имел 6 отказов (партии, кончившиеся по таймауту) и
+        # 9 успехов — и всё равно резался. Цена: поселенец не оценивался вовсе
+        # (строки `[желание]` за партию НОЛЬ), очередь 100 ходов клепала воинов
+        # серверным умолчанием, а к 134-му ходу мы потеряли город.
+        # Правило из скилла: семейный запрет — только если НИ РАЗУ не вышло
+        # (`is_wedged_family`), плюс запрет ИМЕННО В ЭТОЙ КЛЕТКЕ (`is_wedged_here`).
         try:
-            from env.wedged import is_wedged as _is_wedged
+            from env.wedged import is_wedged_family as _is_wedged_family
+            from env.wedged import is_wedged_here as _is_wedged_here
         except Exception:  # noqa: BLE001
-            def _is_wedged(_ctrl, _name):  # type: ignore[misc]
+            def _is_wedged_family(_ctrl, _name):  # type: ignore[misc]
                 return False
+
+            def _is_wedged_here(_ctrl, _name, _pos):  # type: ignore[misc]
+                return False
+
+        def _is_wedged(ctrl_type: str, action_name: str, pos=None) -> bool:
+            """Резать имя только по подтверждённому отказу: семейно (0 успехов) или здесь."""
+            if _is_wedged_family(ctrl_type, action_name):
+                return True
+            if pos is None:
+                return False
+            return _is_wedged_here(ctrl_type, action_name, pos)
         # «Стенд сказал» и «сведений нет» — разные вещи. Если список предложений вообще не
         # опубликован (оффлайн, тест, пустое наблюдение), это НЕ запрет: незнание ≠ запрет.
         offer_known = isinstance(avail, dict) and bool(avail)
@@ -1313,7 +1332,16 @@ def _production_candidate(obs: dict, info: dict, dof_state, extractor,
             # же и клинил (`wedged on city/produce_Offshore Platform at turn 1`). Признак
             # законности — маска МИРА (§13.215), по которой стенд сам проверяет приказ; она и
             # задаёт `allowed` выше.
-            if _is_wedged("city", action_name):
+            _city_pos = None
+            try:
+                if rec.get("x") is not None and rec.get("y") is not None:
+                    _city_pos = (int(rec.get("x")), int(rec.get("y")))
+            except (TypeError, ValueError):
+                _city_pos = None
+            if _is_wedged("city", action_name, _city_pos):
+                if _filters_trace():
+                    print(f"  [постановка] {name}: режется реестром клинов "
+                          f"(подтверждённый отказ, успехов нет) — пропуск", flush=True)
                 continue          # это имя уже клинило матч (реестр `env/wedged.py`)
             if _is_wonder_name(name) and str(cid) != str(wonder_city):
                 # «Only wonder city should build wonders!» Его правило, не наше.
