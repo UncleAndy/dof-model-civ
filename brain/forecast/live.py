@@ -1825,7 +1825,7 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
     }
 
     def type_price(name: str, city_rec: dict | None = None,
-                   units=()) -> tuple[float, float] | None:
+                   units=(), obs: dict | None = None) -> tuple[float, float] | None:
         """(опции типа, стоимость) или None, если цены нет — тогда тип не предлагаем.
 
         Живой юнит типа даёт оба числа сразу (`type_*` + `unit_options`) — и, что
@@ -1860,6 +1860,27 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
             return float(_want), float(_cost)
         rec = live_by_type.get(name)
         if rec is not None:
+            # §13.343: БОЕВОЙ род спрашиваем только при нужде — его правило
+            # (`daimilitary.c:1826`: защитники нужны лишь при `danger != 0 || martial_value > 0`;
+            # без нужды советник возвращает ПУСТОЙ выбор, и город не строит войск вовсе).
+            # Живёт ЗДЕСЬ, а не у вызывающего: цена — одна дверь для всех путей, иначе
+            # общий путь снова пойдёт мимо правила. Опасность — из видимых чужих юнитов
+            # (`brain/ai_default/danger.py`), а не из догадки.
+            if city_rec is not None and obs is not None:
+                try:
+                    from brain.ai_default import danger as _danger
+                    if _danger.is_military(str(name)):
+                        _need, _why, _dng = _danger.military_need(
+                            city_rec, obs, my_id,
+                            shields=_num(city_rec.get("prod_shield"), None))
+                        if os.environ.get("DOF_TRACE_FILTERS") == "1":
+                            print(f"  [нужда в войске] {name}: "
+                                  f"{'нужно' if _need else 'не нужно'} — {_why}", flush=True)
+                        if not _need:
+                            _price_note(name, f"боевой род, нужды нет: {_why}")
+                            return None
+                except Exception as _exc:  # noqa: BLE001
+                    _price_note(name, f"оценка нужды упала: {type(_exc).__name__}")
             cost = _num(rec.get("type_build_cost"), 0.0)
             options = 0.0
             try:

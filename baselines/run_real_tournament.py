@@ -1229,7 +1229,13 @@ def _production_candidate(obs: dict, info: dict, dof_state, extractor,
         # Нужен, чтобы отделить «канал не принимает» от «наш выбор не тот»: приказ идёт ровно один
         # и тот же, и по сырой очереди видно, применился ли он. Не нормативный, только измерение.
         _force = os.environ.get("DOF_FORCE_PROD")
-        if _force and any(str(_force) == str(a) for a in allowed):
+        # `DOF_FORCE_EVERY=<N>` — посылать принудительный приказ только каждый N-й ход:
+        # постоянный приказ и одиночный дали РАЗНЫЙ исход по улучшениям (0 из 22 против
+        # 2 из 3), и это надо различить, а не выбирать удобное.
+        _every = int(os.environ.get("DOF_FORCE_EVERY") or 0)
+        _turn_now = int(info.get("turn") or 0)
+        _send_now = (not _every) or (_turn_now % _every == 0)
+        if _force and _send_now and any(str(_force) == str(a) for a in allowed):
             if _filters_trace():
                 print(f"  [приказ-прибор] ход {info.get('turn')}: город {cid}: "
                       f"produce_{_force} (в очереди было {_filters_name(current)})", flush=True)
@@ -1318,7 +1324,7 @@ def _production_candidate(obs: dict, info: dict, dof_state, extractor,
             got = None
             if getattr(ctx, "type_price_of", None) is not None:
                 try:
-                    got = ctx.type_price_of(str(name), rec, units)
+                    got = ctx.type_price_of(str(name), rec, units, obs)
                 except Exception as _exc:  # noqa: BLE001
                     got = None
                     if _filters_trace():
