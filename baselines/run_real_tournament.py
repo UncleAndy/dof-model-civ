@@ -566,6 +566,12 @@ def _my_units_classes(env_getter, my_id):
 #: §13.336: «что город строит и с каким запасом щитов» — по городам. Пока запас растёт,
 #: предмет держим и приказа не шлём (его правило), заново решаем только после завершения.
 _LAST_PROD: dict = {}
+#: §13.348: ЦЕЛЬ поселенца — как его миссия `AIUNIT_BUILD_CITY` (`daisettler.c:1029-1054`):
+#: он ставит поселенцу задачу с клеткой-целью и ведёт его туда, пока цель годна, и только по
+#: прибытии основывает город. У нас цель пересчитывалась КАЖДЫЙ ход, а внутри цены площадки
+#: сидит дорога (`amortize(total, PERFECTION*turns)`), поэтому «лучшая» переезжала на соседнюю
+#: клетку и обратно: поселенец качался между двумя и не основывал вовсе (измерено §13.347).
+_FOUND_TARGET: dict = {}
 
 #: §13.339: проба «действует ли путь `ctrl_type=city` в этом стенде». Помним, какой ход по
 #: клетке заказан и какими были выходы города; на следующем появлении города сравниваем.
@@ -667,12 +673,28 @@ def _founder_step(obs: dict, avail: dict):
         starved = bool(getattr(site, "starved_food", False)
                        or getattr(site, "starved_shield", False))
         if on_best:
+            _FOUND_TARGET.pop(str(uid), None)   # стоим на лучшей: основывает общий путь
             continue                      # лучшая и есть текущая — его правило основывает здесь
         if not starved and here is not None and float(best[3]) <= float(here[2]):
             continue                      # лучше, но не настолько: дорога съедает выигрыш
         ranked = [c for c in ranked_all if (int(c[0]), int(c[1])) != tuple(pos)]
         gotos = [str(n) for n, params in offered.items()
                  if str(n).startswith("goto_") and truthy(params)]
+        # ── §13.348: ДЕРЖИМ цель, как его миссия (`daisettler.c:1029-1054`): пока цель годна,
+        # ведём поселенца к НЕЙ, а не к пересчитанной заново. По прибытии — не мешаем общему
+        # пути основать (`build_city`), цель снимаем. Цель стала недостижимой — пересчитываем.
+        _held = _FOUND_TARGET.get(str(uid))
+        if _held is not None:
+            if (int(pos[0]), int(pos[1])) == _held:
+                _FOUND_TARGET.pop(str(uid), None)
+                continue
+            _step_held = step_toward(tuple(pos), _held, offered=gotos or None)
+            if _step_held is not None:
+                if os.environ.get("DOF_TRACE_FILTERS") == "1":
+                    print(f"  [поселенец] unit/{uid}: держу цель {_held} (его миссия) "
+                          f"→ шаг {_step_held}", flush=True)
+                return ("unit", uid, _step_held)
+            _FOUND_TARGET.pop(str(uid), None)
         # Берётся ПЕРВАЯ площадка, к которой мир предлагает законный шаг. Измерено: без
         # этого поселенец 11 раз подряд выбирал шаг к воде, не сдвигался и не основывал
         # город вовсе — цена площадки без достижимости вредна.
@@ -685,6 +707,7 @@ def _founder_step(obs: dict, avail: dict):
                 break
         if step is None or target is None:
             continue
+        _FOUND_TARGET[str(uid)] = (int(target[0]), int(target[1]))   # §13.348: держим до прибытия
         if os.environ.get("DOF_TRACE_FILTERS") == "1":
             print(f"  [поселенец] unit/{uid}: площадка {pos} голодная "
                   f"({getattr(site, 'reason', '')}) → иду к {target[:2]} (его total "
