@@ -579,6 +579,66 @@ def _city_tile_diag(why: str) -> None:
         print(f"  [клетка-правила] молчит: {why}", flush=True)
 
 
+def _founder_step(obs: dict, avail: dict):
+    """Поселенец идёт к лучшей площадке по ЕГО числам, а не основывает где стоит (§13.306).
+
+    Возвращает `("unit", id, имя_шага)` или None. Вмешивается ТОЛЬКО тогда, когда поселенец
+    стоит на площадке, которую его же правило считает голодной (`food_starvation`), и есть
+    куда идти: город, основанный на такой площадке, умирает от голода на 2-м ходу, а сторона
+    выбывает (измерено §13.305: «Famine destroys … entirely», `разбит=True`).
+
+    Если идти некуда или мир не предлагает ни одного приближающего шага — НЕ мешаем: лучше
+    город на плохой площадке, чем поселенец, который никогда не основывает.
+    """
+    unit_actions = as_dict(as_dict(avail).get("unit")) or {}
+    if not unit_actions:
+        return None
+    map_obs = as_dict(as_dict(obs).get("map")) or {}
+    try:
+        from brain.ai_default.founder_destination import (
+            best_site, city_positions, step_toward,
+        )
+        from env.food_gate import food_cost_of
+        from env.site_eval import evaluate_site
+    except Exception:  # noqa: BLE001
+        return None
+    for uid, actions in unit_actions.items():
+        offered = as_dict(actions) or {}
+        founding = [str(n) for n, params in offered.items()
+                    if str(n).startswith(("build_city", "found_city")) and truthy(params)]
+        if not founding:
+            continue
+        pos = _unit_pos(obs, uid)
+        if pos is None:
+            continue
+        try:
+            site = evaluate_site(map_obs, pos[0], pos[1],
+                                 vals={"FOOD_COST": food_cost_of(obs)})
+        except Exception:  # noqa: BLE001
+            continue
+        if not (getattr(site, "starved_food", False)
+                or getattr(site, "starved_shield", False)):
+            continue                      # площадка годна — пусть основывает
+        try:
+            target = best_site(obs, exclude=city_positions(obs) | {tuple(pos)},
+                               reference=tuple(pos), settler_shield_cost=0.0)
+        except Exception:  # noqa: BLE001
+            target = None
+        if target is None:
+            continue                      # некуда идти — не мешаем основанию
+        gotos = [str(n) for n, params in offered.items()
+                 if str(n).startswith("goto_") and truthy(params)]
+        step = step_toward(tuple(pos), (target[0], target[1]), offered=gotos or None)
+        if step is None:
+            continue
+        if os.environ.get("DOF_TRACE_FILTERS") == "1":
+            print(f"  [поселенец] unit/{uid}: площадка {pos} голодная "
+                  f"({getattr(site, 'reason', '')}) → иду к {target[:2]} (его total "
+                  f"{target[2]:.1f}), шаг {step}", flush=True)
+        return ("unit", uid, step)
+    return None
+
+
 def _city_tile_rescue(obs: dict, avail: dict):
     """Спасение ГОЛОДАЮЩЕГО города: у него годность идёт ПЕРЕД выгодой (§13.305).
 
@@ -3309,6 +3369,12 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                     # §13.294: ход по клетке города — ПЕРВЫМ. Измерено (13.293): короткий
                     # список генератора не берёт `city_work_*` (нулевой прирост DoF), поэтому
                     # освобождённого горожанина поставить нечем и город стоит на размере 1.
+                    # §13.306: поселенец сперва идёт к годной площадке. Его ИИ не
+                    # основывает город там, где юнит оказался (`daisettler.c`), а ведёт
+                    # его к лучшей площадке — без этого город гибнет от голода.
+                    _founder = _founder_step(obs, avail)
+                    if _founder is not None:
+                        return _founder
                     _tile_pick = _city_tile_candidate(obs, avail)
                     if _tile_pick is not None:
                         return _tile_pick
