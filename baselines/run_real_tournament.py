@@ -1248,6 +1248,7 @@ def _production_candidate(obs: dict, info: dict, dof_state, extractor,
             continue          # повода менять нет: запущенное идёт до конца (§13.196)
         return {"ctrl_type": "city", "actor_id": cid,
                 "action_name": f"produce_{best[1]}",
+                "current_name": str(current) if current else None,
                 "projected_dof_delta": {}, "is_reversible": True}
     return None
 
@@ -3649,8 +3650,9 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                         _gold_of(obs, extractor), avail, env_getter)
                     if _prod is not None:
                         if os.environ.get("DOF_TRACE_FILTERS") == "1":
-                            print(f"  [постановка] отправляю {_prod['action_name']} "
-                                  f"городу {_prod['actor_id']}", flush=True)
+                            print(f"  [постановка] ход {info.get('turn')}: отправляю "
+                                  f"{_prod['action_name']} городу {_prod['actor_id']} "
+                                  f"(в очереди было {_prod.get('current_name')!r})", flush=True)
                         return _to_action(_prod)
                     # Жителя переставляет ЕГО управляющий (`server/cityturn.c:313`):
                     # строгое улучшение взвешенной суммы. Замер: до этого у клеток в режиме
@@ -4634,10 +4636,15 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
                 # можно мерить на той же карте и в той же партии, а не ссылаться на
                 # давний чужой замер 152.50 (§13.317).
                 try:
+                    _obs = locals().get("obs")
                     _names: dict[int, str] = {}
-                    for _p, _r in (as_dict(obs.get("player")) or {}).items():
+                    for _p, _r in (as_dict((_obs or {}).get("player")) or {}).items():
                         if isinstance(_r, dict):
-                            _names[int(_r.get("player_id", _p) if str(_r.get("player_id", _p)).lstrip("-").isdigit() else _p)] = str(_r.get("name") or _p)
+                            try:
+                                _key = int(_r.get("player_id"))
+                            except (TypeError, ValueError):
+                                _key = int(_p)
+                            _names[_key] = str(_r.get("name") or _p)
                     for _tag, _per in (cats or {}).items():
                         if str(_tag) != "score" or not isinstance(_per, dict):
                             continue
