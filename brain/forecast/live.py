@@ -90,6 +90,24 @@ def _note_pop_skip(city_id: str, type_name: str) -> None:
               f"(населения не больше, чем забирает) — не ставим", flush=True)
 
 
+_PRICE_NOTES: set[tuple[str, str]] = set()
+
+
+def _price_note(name: str, why: str) -> None:
+    """§13.326: почему у предмета нет цены — молчание обязано быть отличимо от данных.
+
+    Печатается один раз на пару (имя, причина): иначе за 150 ходов след тонет в повторах.
+    """
+    import os as _os
+    if _os.environ.get("DOF_PRICE_DEBUG") != "1":
+        return
+    key = (str(name), str(why))
+    if key in _PRICE_NOTES:
+        return
+    _PRICE_NOTES.add(key)
+    print(f"  [цена] {name}: {why}", flush=True)
+
+
 def direction_target(pos: tuple[int, int], dir8: int,
                      shape: tuple[int, int] | None) -> tuple[int, int] | None:
     """Клетка, на которую встанет юнит, выполнив `goto_<dir8>`, или None.
@@ -1823,6 +1841,7 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
             if os.environ.get("DOF_TRACE_FILTERS") == "1":
                 print(f"  [желание] {name}: {_want:.3f} — {_reason}", flush=True)
             if _want <= 0.0:
+                _price_note(name, f"желание {_want:.3f} <= 0 — не предлагаем")
                 return None
             _cost = world.cost(name) or spec_costs.get(name)
             if _cost is None:
@@ -1832,6 +1851,7 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
                 except Exception:  # noqa: BLE001
                     _cost = None
             if _cost is None:
+                _price_note(name, "желание есть, но цена не найдена (склад/спец/правила)")
                 return None
             return float(_want), float(_cost)
         rec = live_by_type.get(name)
@@ -1862,10 +1882,12 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
             except Exception:  # noqa: BLE001
                 cost = None
         if cost is None:
+            _price_note(name, "цены нет ни в складе, ни в спец, ни в правилах мира")
             return None
         options = world.options(name)
         if options:
             return float(options), float(cost)
+        _price_note(name, f"цена {cost:g} есть, опций в складе нет — ищем дальше")
         for kind in ("unit", "improvement"):
             options = _num(catalogue[kind].get(name), 0.0)
             if options > 0.0:
@@ -1875,7 +1897,11 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
         # иначе наружу (в общий путь без прогноза) улучшения приходили без цены вовсе —
         # измерено: из 120 типов оценивались только 8 юнитов.
         if city_rec is not None:
-            return _effects_price(name, city_rec, city_records, units)
+            _got = _effects_price(name, city_rec, city_records, units)
+            if _got is None:
+                _price_note(name, "его оценка эффектов пуста — предмет не оценён")
+            return _got
+        _price_note(name, "нет ни опций, ни записи города — оценить нечем")
         return None
 
     # Цена раскрытия: разрыв Дженсена по ИЗМЕРЕННОМУ разбросу ценностей площадок.
