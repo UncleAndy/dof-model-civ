@@ -114,7 +114,8 @@ def _parse_cli(argv: list[str]) -> argparse.Namespace:
                              "(управляющий сервера перекрывает его, §13.234), но именно он даёт "
                              "прирост еды (§13.235: без приказов городов 0–1 вместо 2–3)")
     parser.add_argument("--city-manager", dest="city_manager", action="store_true",
-                        default=False,
+                        default=True,  # §13.329: его ИИ ставит эти числа ВСЕГДА (cityturn.c:313),
+                                       # поэтому перенос обязан быть включён, а не ждать флага
                         help="сказать городскому управляющему СЕРВЕРА наши требования "
                              "(PACKET_WEB_CMA_SET 257): раскладку жителей выбирает он, и без "
                              "наших требований берёт умолчание (§13.237)")
@@ -1900,6 +1901,12 @@ def _dump_state(env, obs, info, extractor, turn: int, port=None) -> None:
                # Выходы клеток города: если мир их публикует (civrealm читает
                # `pcity['output_food'][idx]`), то арифметику еды можно взять
                # напрямую, а не выводить из дельт между ходами.
+               # §13.328: срез обязан нести ВСЕ числа, которые публикует мир, а не
+               # выбранные нами: иначе «щиты/ход None» — наша пустота, а не его ноль.
+               "прочие_поля": {k: _plain(rec[k]) for k in rec
+                               if k not in ("x", "y", "owner", "size", "food_stock",
+                                            "surplus_food", "prod_food", "ppl_unhappy",
+                                            "turns_to_prod_complete", "production_value")},
                "ключи_записи": sorted(rec.keys()),
                "окно_клеток": _city_window(obs, rec.get("x"), rec.get("y")),
                "рабочие_клетки": _city_workable_tiles(obs, rec),
@@ -3562,6 +3569,15 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
             def act(self, obs, info):
                 # Имена построек — один раз, как только доступны правила клиента:
                 # без них предел роста города остаётся базовым и водопровод немой.
+                # §13.329: требования управляющему отправляются ЗДЕСЬ — в начале хода, а не
+                # после ветки `--no-dof`. Измерено: ветка `no_dof` возвращает ход изнутри
+                # себя, поэтому вызов ниже неё был мёртв на ВСЕХ приёмочных прогонах:
+                # `act` вызван 24 раза за 8 ходов, а вызов не сработал ни разу.
+                if getattr(ARGS, "city_manager", False):
+                    _sent_cm = _send_city_manager(env_getter, obs, extractor)
+                    if os.environ.get("DOF_CM_DEBUG") == "1":
+                        print(f"        [управляющий-вызов] отправок {_sent_cm}", flush=True)
+
                 if not getattr(self, "_impr_published", False) and env_getter is not None:
                     try:
                         if _publish_improvement_names(extractor, env_getter()):
