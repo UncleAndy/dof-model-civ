@@ -1181,6 +1181,20 @@ def _production_candidate(obs: dict, info: dict, dof_state, extractor,
                       f"(было {float(_prev[1]):.0f}) — накопление идёт, приказа не шлём", flush=True)
             _LAST_PROD[str(cid)] = (str(current), stock)
             continue
+        # §13.335/13.336: СЫРЫЕ числа очереди — то, что уходит в пакет `packet_city_change`
+        # (`city_actions.py:383`). Печатаем ДО решения: иначе выключатель приказов (`DOF_NO_PROD`,
+        # для измерения «а что если мы молчим») скрывает как раз то, что надо видеть.
+        if _filters_trace():
+            _raw = {k: rec.get(k) for k in ("production_kind", "production_value",
+                                            "shield_stock", "did_buy")}
+            print(f"  [очередь-сырое] ход {info.get('turn')}: город {cid}: {_raw}", flush=True)
+        if os.environ.get("DOF_NO_PROD") == "1":
+            # Измерение «а что если мы молчим»: нужен, чтобы отличить «приказ не применяется»
+            # от «стенд сам меняет предмет». Нормативным этот выключатель не является.
+            if _filters_trace():
+                print(f"  [постановка] город {cid}: DOF_NO_PROD=1 — приказ не шлём (измерение)",
+                      flush=True)
+            continue
         if current and _prev and str(_prev[0]) == str(current) and stock < float(_prev[1]):
             if _filters_trace():
                 print(f"  [постановка] город {cid}: щиты упали {float(_prev[1]):.0f}→{stock:.0f} — "
@@ -1268,9 +1282,6 @@ def _production_candidate(obs: dict, info: dict, dof_state, extractor,
             # §13.335: сырые числа очереди — чтобы отличить «приказ не применён» от
             # «имя предмета прочитано неверно». `production_kind/value` — то, что
             # уходит в пакет `packet_city_change` (`city_actions.py:383`).
-            _raw = {k: rec.get(k) for k in ("production_kind", "production_value",
-                                            "shield_stock", "did_buy")}
-            print(f"  [очередь-сырое] город {cid}: {_raw}", flush=True)
             _top = sorted(scored, key=lambda r: r[0], reverse=True)[:5]
             print(f"  [постановка] город {cid}: маски {len(allowed)} типов; оценено "
                   f"{len(scored)}; лучший {best[1]} (ценность {best[0]:.3f} за {best[2]} ход.); "
@@ -3686,6 +3697,12 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                         if env_getter is not None else None,
                         _gold_of(obs, extractor), avail, env_getter)
                     if _prod is not None:
+                        # §13.336: отправка заказа — это и есть наше решение. Помним его,
+                        # иначе правило «держать начатое» не срабатывает НИ РАЗУ (измерено:
+                        # 8 приказов подряд, 0 удержаний — память никто не заполнял).
+                        _com = _prod.get("_committed")
+                        if _com:
+                            _LAST_PROD[str(_prod.get("actor_id"))] = _com
                         if os.environ.get("DOF_TRACE_FILTERS") == "1":
                             print(f"  [постановка] ход {info.get('turn')}: отправляю "
                                   f"{_prod['action_name']} городу {_prod['actor_id']} "

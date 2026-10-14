@@ -318,7 +318,11 @@ def _effects_price(name: str, city_rec: dict, city_records: dict,
         _world_effects, name, prod=prod,
         worked_tiles=int(_num(rec.get("size"), 0.0)),
         unhappy=unhappy, num_cities=max(1, cities), cities=cities,
-        trade_split=trade_split, held=held, units=units)
+        trade_split=trade_split, held=held, units=units,
+        # §13.337: его ветви `Shrink_Food` / `Popcost_Free` читают ИЗЛИШЕК ЕДЫ города и размер
+        # житницы — без них `Granary` и раньше выходила нулём. Числа берём из наблюдения мира.
+        surplus_food=_num(rec.get("surplus_food"), 0.0),
+        granary_size=_num(rec.get("granary_size"), 0.0))
     if options <= 0.0:
         return None
     return float(options), float(cost)

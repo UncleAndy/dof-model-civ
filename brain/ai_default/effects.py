@@ -115,7 +115,8 @@ def effect_value(effect: str, amount: int, *, c: int = 1, unhappy: float = 0.0,
                  entertainers: float = 0.0, units_supported: int = 0, affected: int = 0,
                  num_cities: int = 1, cities: int = 0,
                  empire_size_base: float = 0.0, empire_size_step: float = 0.0,
-                 unhappy_free: bool = False) -> float:
+                 unhappy_free: bool = False, surplus_food: float = 0.0,
+                 granary_size: float = 0.0) -> float:
     """`dai_effect_value` (стр. 138) для видов эффектов, которые мир действительно использует.
 
     `c` — число городов в радиусе (`num_cities` у него же); `unhappy_free` — результат
@@ -174,6 +175,19 @@ def effect_value(effect: str, amount: int, *, c: int = 1, unhappy: float = 0.0,
         return 2.0 * c + affected
     if effect == "Veteran_Build":
         return float(amount) * (3.0 * c + affected)
+    # §13.337: ветви, которых у нас не было вовсе, а мир их использует. Его код, буквально
+    # (`daieffects.c:301`, `:305`):
+    #   case EFT_SHRINK_FOOD:
+    #     v += c * 4 + (amount / 15) * MAX(-pcity->surplus[O_FOOD], 1);
+    #   case EFT_POPCOST_FREE:
+    #     v += amount * city_granary_size(pcity->size) / 10;
+    # Целочисленное деление — как в C: сначала произведение, потом деление.
+    # Именно здесь живёт ценность `Granary` (её эффект — `Shrink_Food`), а житница — рычаг
+    # роста, который по составу §13.333 отстаёт у нас в 48 раз.
+    if effect == "Shrink_Food":
+        return float(c * 4 + (int(amount) // 15) * max(-float(surplus_food), 1.0))
+    if effect == "Popcost_Free":
+        return float(int(amount) * int(granary_size) // 10)
     # Прочие виды эффектов его код обрабатывает, но классические правила их не используют;
     # неизвестный вид даёт ноль, а не выдуманное число (и это видно в отчёте: см. `UNKNOWN`).
     return 0.0
@@ -399,7 +413,8 @@ def improvement_value(effects: list[tuple], target: str, *, prod: dict[str, floa
                       wants_science: bool = True,
                       trade_split: tuple[float, float, float] | None = None,
                       held: frozenset[str] = frozenset(),
-                      units=()) -> float:
+                      units=(), surplus_food: float = 0.0,
+                      granary_size: float = 0.0) -> float:
     """Ценность улучшения: прирост хотения города плюс ценность эффектов счастья.
 
     Ровно так его `base_want` (`daicity.c:1495`) и устроен: «добавить постройку и сравнить
@@ -446,5 +461,6 @@ def improvement_value(effects: list[tuple], target: str, *, prod: dict[str, floa
                                affected=affected_units(unit_reqs, units) if unit_reqs else 0,
                                num_cities=max(1, num_cities), cities=cities,
                                empire_size_base=empire_size_base,
-                               empire_size_step=empire_size_step, unhappy_free=unhappy_free)
+                               empire_size_step=empire_size_step, unhappy_free=unhappy_free,
+                               surplus_food=surplus_food, granary_size=granary_size)
     return base + content
