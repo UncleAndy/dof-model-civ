@@ -3854,6 +3854,13 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                         self._impr_published = True
                 dof = extractor.extract(obs, info, info.get("turn", 0))
                 avail = info.get("available_actions", {})
+                if os.environ.get("DOF_CHOICE_DEBUG") == "1":
+                    _u = as_dict(as_dict(avail).get("unit"))
+                    _c = as_dict(as_dict(avail).get("city"))
+                    _nu = sum(1 for a in _u.values() for n, p_ in as_dict(a).items() if truthy(p_))
+                    _nc = sum(1 for a in _c.values() for n, p_ in as_dict(a).items() if truthy(p_))
+                    print(f"  [ход-вход] ход {info.get('turn')}: юнитных актёров {len(_u)} "
+                          f"(действий {_nu}), городовых {len(_c)} (действий {_nc})", flush=True)
 
                 # ПРОГНОЗ: перебор вариантов с перевыводом возможностей в будущем
                 # состоянии (brain/forecast). Он решает ход; прежний путь ниже
@@ -4051,6 +4058,32 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                                 print(f"  [без DoF] житель: {_wire[2] if isinstance(_wire, tuple) and len(_wire) > 2 else _wire} "
                                       f"прирост веса управляющего {_best_tile[0]:+.1f}", flush=True)
                             return _wire
+                    if os.environ.get("DOF_CHOICE_DEBUG") == "1":
+                        # §13.354: вопрос «основание проиграло или его не было в списке».
+                        # Без этого следа оба случая неразличимы, а лечатся они по-разному.
+                        _bc = [c for c in descore
+                               if str(c.get("action_name") or "").startswith(
+                                   ("build_city", "found_city"))]
+                        _scored = sorted(descore, key=gen._preference_score, reverse=True)[:4]
+                        # Меню САМОГО МИРА (до генератора): без него «нет основания в списке»
+                        # неотличимо от «мир его не предлагал».
+                        _menu = 0
+                        for _a, _acts in as_dict(as_dict(avail).get("unit")).items():
+                            for _n, _pp in as_dict(_acts).items():
+                                if str(_n).startswith(("build_city", "found_city")) and truthy(_pp):
+                                    _menu += 1
+                        _raw_bc = sum(
+                            1 for c in _raw_cands
+                            if str(c.get("action_name") or "").startswith(
+                                ("build_city", "found_city")))
+                        print(f"  [выбор-ход] ход {info.get('turn')}: мир предлагает оснований "
+                              f"{_menu}, у генератора {_raw_bc}, кандидатов {len(descore)}, "
+                              f"после наших правил {len(_bc)}; верх: "
+                              + ", ".join(
+                                  f"{c.get('ctrl_type')}/{c.get('action_name')}"
+                                  f"={gen._preference_score(c):.1f}"
+                                  for c in _scored)
+                              or "  [выбор-ход] кандидатов нет", flush=True)
                     if descore:
                         _pick = max(descore,
                                     key=lambda c: (gen._preference_score(c),
@@ -4074,7 +4107,7 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                                     _name = f"{_wire[0]}/{_wire[2]} (актёр {_wire[1]})"
                                 else:
                                     _name = getattr(_wire, "action_name", _wire)
-                                print(f"  [без DoF] отправляю {_name} (кандидатов "
+                                print(f"  [без DoF] ход {info.get('turn')}: отправляю {_name} (кандидатов "
                                       f"{len(descore)}, предпочтение "
                                       f"{gen._preference_score(_pick):.3f})", flush=True)
                             if not getattr(self, "_nodof_said", False):
@@ -4767,6 +4800,14 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
                                         f"{actor}: {len(names)} годных, "
                                         f"шагов {len(goto)} → {names[:8]}")
                             print(f"      [меню юнита] {unit_valid or 'НЕТ ГОДНЫХ'}", flush=True)
+                    # §13.354: СКОЛЬКО РЕШЕНИЙ МЫ ПРИНЯЛИ ЗА ХОД. Без этого числа «наша
+                    # сторона ничего не делает» и «стенд не даёт действовать» неразличимы,
+                    # а следы печатают только часть путей (ранний возврат правила поселенца
+                    # мимо печати отправки).
+                    if os.environ.get("DOF_CHOICE_DEBUG") == "1":
+                        print(f"  [решений-за-ход] ход {turns_played + 1}: "
+                              f"{decisions_this_turn} (актёров задействовано "
+                              f"{len(used_actors)})", flush=True)
                     action = None  # stepping None is what ends the turn
                     decisions_this_turn = 0
                     used_actors = set()
