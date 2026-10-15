@@ -1804,7 +1804,27 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
             _pv = rec.get("production_value")
             built = str(_names.get(int(_pv)) if isinstance(_pv, (int, float)) else _pv or "")
             st["tried"] += 1
-            if _ctx is not None:
+            if _ctx is not None and getattr(_ctx, 'production_of', None):
+                try:
+                    _po = _ctx.production_of
+                    _keys = [f'city_{cid}', f"city_{rec.get('id')}", str(cid)]  # только строки: у него ключ города — текст
+                    _opt = None
+                    for _k in _keys:
+                        _one = _po(_k) if callable(_po) else (_po.get(_k) if hasattr(_po, 'get') else None)
+                        if _one:
+                            _opt = _one
+                            break
+                    if _opt:
+                        _first = _opt[0]
+                        _nm = str(_first[0] if isinstance(_first, (list, tuple)) else _first)
+                        print(f"  [заказ] его выбор города {cid}: {_nm!r} (первые 3: {str(_opt[:3])[:120]})", flush=True)
+                        if _nm and _nm != built:
+                            return ('city', cid, f'produce_{_nm}')
+                        return None
+                except Exception as _exc:  # noqa: BLE001
+                    print(f"  [заказ] его выбор не прочёлся: {type(_exc).__name__}: {_exc}", flush=True)
+                
+            if False:
                 try:
                     _acts2 = ((info.get('available_actions') or {}).get('city') or {})
                     _acts2 = _acts2.get(str(cid)) or _acts2.get(cid) or {}
