@@ -894,6 +894,19 @@ def _maybe_learn_map_from_save(turn, every=10):
         return None
 
 
+def _mem_tiles(obs) -> int:
+    """§13.407: сколько клеток карты мы знаем (память мира: сейв + наблюдение).
+
+    Нужно, чтобы отличить «карта пуста» от «видно только ближний круг»: у ЕГО ИИ зрение полное
+    (`omniscience = !has_handicap(H_MAP)`), у нас обзор идёт из наблюдения.
+    """
+    try:
+        from env.world_memory import known as _known
+        return len(_known())
+    except Exception:  # noqa: BLE001
+        return -1
+
+
 def _founder_step(obs: dict, avail: dict, mindist: int | None = None, env_getter=None):
     """Поселенец идёт к лучшей площадке по ЕГО числам, а не основывает где стоит (§13.306).
 
@@ -1170,7 +1183,8 @@ def _founder_step(obs: dict, avail: dict, mindist: int | None = None, env_getter
                     _vis = -1
                 print(f"  [пропуск] unit/{uid} на {tuple(pos)}: достижимых площадок нет "
                       f"(видимых клеток {_vis}, наших городов {len(_known_cities or [])}, "
-                      f"citymindist {_mindist}, резерв занят {len(getattr(_cmap, '_spots', {}) or {})})",
+                      f"citymindist {_mindist}, резерв занят {len(getattr(_cmap, '_spots', {}) or {})}, "
+                      f"в памяти карты {_mem_tiles(obs)})",
                       flush=True)
             continue                      # некуда идти — не мешаем основанию
         here = next((c for c in ranked_all
