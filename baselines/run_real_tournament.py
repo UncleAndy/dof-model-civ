@@ -1775,6 +1775,10 @@ def _order_city_production(env_getter, username):
         except Exception:  # noqa: BLE001
             _save_build = {}
         for cid, rec in sorted(ours.items(), key=lambda kv: str(kv[0])):
+            print("  [город-запись] " + str({k: (str(v)[:70]) for k, v in sorted(rec.items())
+                  if k in ("owner", "size", "shield_stock", "prod_shield", "surplus_shield",
+                            "production_value", "production_kind", "can_build_unit",
+                            "can_build_improvement", "turn_last_built", "capital")}), flush=True)
             _names = _production_names(env_getter()) or {}
             _pv = rec.get("production_value")
             built = str(_names.get(int(_pv)) if isinstance(_pv, (int, float)) else _pv or "")
@@ -1791,7 +1795,40 @@ def _order_city_production(env_getter, username):
                 print(f"  [заказ] законные действия города: {str(_legal)[:200]}", flush=True)
             except Exception as _exc:  # noqa: BLE001
                 print(f"  [заказ] действия города не прочесть: {_exc}", flush=True)
-            print(f"  [заказ] → produce_Settlers (город {cid})", flush=True)
+            # §13.386: его же порядок — сначала защита города, потом поселенец. Без защитника город
+            # забирают соседи: в серии §13.377-13.385 города росли до 6-7 и падали до 1-2.
+            units = getattr(getattr(ctl, 'unit_ctrl', None), 'units', None) or {}
+            _guard = 0
+            for _urec in (units.values() if isinstance(units, dict) else []):
+                if not isinstance(_urec, dict):
+                    continue
+                if int(_urec.get('homecity', -1) or -1) == int(cid) if str(cid).isdigit() else False:
+                    _guard += 1
+            if _guard < 1:
+                # §13.387: войско выбираем ЕГО правилом — по силам юнита из правил мира
+                # (`defense_desirability`, `daimilitary.c`), среди законных постановок города.
+                try:
+                    from brain.ai_default.military_want import defense_desirability as _dd
+                    from brain.ai_default.unit_stats import load_units as _lu
+                    _units = _lu()
+                    _acts = ((info.get('available_actions') or {}).get('city') or {})
+                    _acts = _acts.get(str(cid)) or _acts.get(cid) or {}
+                    _names = [str(k)[len('produce_'):] for k, v in dict(_acts).items()
+                            if v and str(k).startswith('produce_')]
+                    _mil = [n for n in _names if n in _units and (float(_units[n].get('attack') or 0)
+                            + float(_units[n].get('defense') or 0)) > 0]
+                    if not _mil:
+                        _mil = [n for n in ('Phalanx', 'Archers', 'Warriors') if n in _units]
+                    if _mil:
+                        _best = max(_mil, key=lambda n: _dd(_units[n]))
+                        print(f"  [заказ] город {cid}: войска нет, по силам лучший {_best!r} "
+                            f"(желание {_dd(_units[_best]):.3f}, из {sorted(_mil)})", flush=True)
+                        return ('city', cid, f'produce_{_best}')
+                except Exception as _exc:  # noqa: BLE001
+                    print(f"  [заказ] выбор войска не вышел: {type(_exc).__name__}: {_exc}", flush=True)
+                print(f"  [заказ] у города {cid} нет своего войска → produce_Warriors", flush=True)
+                return ('city', cid, 'produce_Warriors')
+            print(f"  [заказ] город {cid} защищён → produce_Settlers", flush=True)
             return ("city", cid, "produce_Settlers")
         return None
     except Exception as exc:  # noqa: BLE001
