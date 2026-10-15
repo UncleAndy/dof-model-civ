@@ -760,6 +760,41 @@ def _our_cities_from_controller(env_getter, obs: dict) -> set[tuple[int, int]]:
         return set()
 
 
+def _save_and_dump_cities(env_getter, username):
+    """§13.370: попросить у сервера сейв и напечатать раздел города КАК ЕСТЬ."""
+    try:
+        from env import city_from_save as _cfs
+        from env.map_from_save import fetch_newest_save as _fetch
+        _st = globals().setdefault("_CITY_SAVE_PROBE", {"done": False, "tries": 0})
+        if _st["done"] or _st["tries"] > 6:
+            if _st["tries"] == 6 and not _st["done"]:
+                print("  [города-сейв] сейва с городами так и не появилось", flush=True)
+            return
+        _st["tries"] += 1
+        if env_getter:
+            try:
+                env = env_getter()
+                ctl = getattr(getattr(env, "unwrapped", None), "civ_controller", None)
+                _do = getattr(ctl, "save_game", None)
+                if callable(_do):
+                    _do()
+            except Exception:  # noqa: BLE001
+                pass
+        text = _fetch(str(username))
+        if not text:
+            print("  [города-сейв] сейва пока нет", flush=True)
+            return
+        block = _cfs.dump_city_block(text)
+        if block:
+            _st["done"] = True
+            print("  [города-сейв] раздел города из сейва:", flush=True)
+            print(block, flush=True)
+        else:
+            print("  [города-сейв] разделов городов в сейве нет", flush=True)
+    except Exception as _exc:  # noqa: BLE001
+        print(f"  [города-сейв] проба упала: {type(_exc).__name__}: {_exc}", flush=True)
+
+
 def _city_channels_probe(obs, avail, env_getter, extractor=None):
     """Прибор §13.369: что видно по городам в КАЖДОМ канале (наблюдение / контроллер / маски)."""
     try:
@@ -4471,6 +4506,8 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                                           f"значение {str(_u0)[:100]!r}", flush=True)
                         except Exception as _exc:  # noqa: BLE001
                             print(f"  [позиции] ошибка: {type(_exc).__name__}: {_exc}", flush=True)
+                    if os.environ.get("DOF_CITY_FROM_SAVE") == "1":
+                        _save_and_dump_cities(env_getter, fc_args.get("username"))
                     if os.environ.get("DOF_CITY_DEBUG") == "1":
                         _city_channels_probe(obs, avail, env_getter, extractor)
                     if os.environ.get("DOF_MAP_FROM_SAVE") == "1":
