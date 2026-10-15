@@ -493,6 +493,27 @@ def _spec_at(table, idx):
         return None
 
 
+def _all_production_names(env_getter) -> set:
+    """ВСЕ имена производства по правилам мира — юниты и постройки. Без запроса у мира."""
+    out: set = set()
+    try:
+        rules = env_getter()
+    except Exception:  # noqa: BLE001
+        return out
+    for _tbl in (getattr(rules, "unit_types", None), getattr(rules, "improvements", None)):
+        if isinstance(_tbl, dict):
+            _items = _tbl.values()
+        elif isinstance(_tbl, (list, tuple)):
+            _items = _tbl
+        else:
+            continue
+        for _spec in _items:
+            _nm = _spec.get("name") if isinstance(_spec, dict) else None
+            if _nm:
+                out.add(str(_nm))
+    return out
+
+
 def _world_production_names(env_getter, cid):
     """Маска постановки ИЗ МИРА: сырая запись города стенда и его же правила.
 
@@ -1813,7 +1834,21 @@ def _production_candidate(obs: dict, info: dict, dof_state, extractor,
             print(f"  [постановка] город {cid}: наших юнитов для его военных эффектов "
                   f"{len(units)}", flush=True)
         if _filters_trace():
-            names_sorted = sorted(offered)
+            # §13.368 (указание владельца): имена производства придумываем САМИ. Мир не обязан их
+            # перечислять: берём то, что город может строить по его же записи и правилам, а если и
+            # этого нет — весь каталог правил (юниты + постройки). Отсев — только при решении.
+            _names = set(offered) if offered else set()
+            if not _names:
+                try:
+                    _names = {str(x) for x in (_world_production_names(env_getter, cid) or set())}
+                except Exception:  # noqa: BLE001
+                    _names = set()
+            if not _names:
+                _names = _all_production_names(env_getter)
+            if _filters_trace():
+                print(f"  [сбор] город {cid}: имён к рассмотрению {len(_names)}"
+                    f" (мир назвал {len(offered)})", flush=True)
+            names_sorted = sorted(_names)
             print(f"  [постановка] город {cid}: стенд предлагает {len(names_sorted)} "
                   f"предметов: {names_sorted[:14]}", flush=True)
         best: tuple[float, str, int] | None = None
