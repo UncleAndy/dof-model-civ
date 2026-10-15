@@ -184,14 +184,22 @@ def tile_output(map_obs: dict[str, Any], x: int, y: int) -> tuple[float, float, 
     except TypeError:
         vals = [float(cell), 0.0, 0.0]
     food, shields, trade = (vals + [0.0, 0.0, 0.0])[:3]
-    if (food, shields, trade) == (0.0, 0.0, 0.0):
+    if (food, shields, trade) == (0.0, 0.0, 0.0) and _site_from_save_enabled():
         # §13.409: клетка вне обзора — считаем выход ПО ПРАВИЛАМ МИРА из террейна, узнанного из
         # сейва (память мира). Так делает его ИИ с полной картой (`omniscience`); без этого наш
         # поиск площадок шёл по туманному кругу в 6-21 клетку (замер §13.408).
+        # Включается только вместе с обучением карты из сейва (`DOF_MAP_FROM_SAVE=1`): иначе
+        # оценка площадки зависела бы от ЧУЖОЙ партии, оставшейся в памяти мира.
         _saved = _output_from_saved_terrain(x % xa, y)
         if _saved is not None:
             return _saved[0], _saved[1], _saved[2], True
     return food, shields, trade, (food, shields, trade) != (0.0, 0.0, 0.0)
+
+
+def _site_from_save_enabled() -> bool:
+    """§13.409: считать выход клетки из террейна сейва — только когда так велел прогон."""
+    import os as _os
+    return _os.environ.get("DOF_SITE_FROM_SAVE") == "1"
 
 
 def _output_from_saved_terrain(x: int, y: int) -> tuple[float, float, float] | None:

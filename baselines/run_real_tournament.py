@@ -4997,6 +4997,10 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                     if os.environ.get("DOF_CITY_DEBUG") == "1":
                         _city_channels_probe(obs, avail, env_getter, extractor)
                     if os.environ.get("DOF_MAP_FROM_SAVE") == "1":
+                        # §13.409: вместе с обучением карты из сейва разрешаем оценку клетки по
+                        # террейну сейва (в библиотеке она выключена, чтобы не тянуть память
+                        # чужой партии в тестах и в прогонах без карты из сейва).
+                        os.environ.setdefault("DOF_SITE_FROM_SAVE", "1")
                         _maybe_learn_map_from_save(
                             info.get("turn") if isinstance(info, dict) else None)
                     _founder = _founder_step(obs, avail,
