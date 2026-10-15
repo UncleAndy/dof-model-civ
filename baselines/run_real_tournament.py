@@ -752,9 +752,9 @@ def _founder_step(obs: dict, avail: dict, mindist: int | None = None, env_getter
     _known_cities = set(city_positions(obs)) | _our_cities_from_controller(env_getter, obs)
     if os.environ.get("DOF_FOUND_DEBUG") == "1":
         _seen_turn = globals().setdefault("_MAP_LAYERS_SEEN", set())
-        _tk = int((as_dict(obs).get("turn") or 0)) if isinstance(as_dict(obs).get("turn"), (int, float)) else -1
-        if _tk not in _seen_turn:
-            _seen_turn.add(_tk)
+        _seen_cnt = globals().setdefault("_MAP_LAYERS_CALLS", [0])
+        _seen_cnt[0] += 1
+        if _seen_cnt[0] <= 6:
             _mobs = as_dict((as_dict(obs) or {}).get("map")) or {}
             _info = {k: (type(v).__name__, getattr(v, "shape", len(v) if hasattr(v, "__len__") else "-"))
                      for k, v in list(_mobs.items())}
@@ -785,6 +785,51 @@ def _founder_step(obs: dict, avail: dict, mindist: int | None = None, env_getter
             _top = sorted(_tvals.items(), key=lambda kv: -kv[1])[:6]
             print(f"  [слои-карты] террейн: разные значения {len(_tvals)}, частые {_top}", flush=True)
             from env.world_memory import CALLS as _mcall, known as _mknown
+            # §13.362: распределение состояния клеток (0 вне обзора, 1 известно-невидимо, 2 видно) —
+            # показывает, отдаёт ли СЕРВЕР всю карту и что именно теряет клиент.
+            try:
+                _cnt = {0: 0, 1: 0, 2: 0, -1: 0}
+                _ter_ok = {1: 0, 2: 0}
+                for _x in range(len(_st) if isinstance(_st, (list, tuple)) else 0):
+                    for _y in range(len(_st[_x])):
+                        try:
+                            _k = int(float(_st[_x][_y]))
+                        except (TypeError, ValueError):
+                            _k = -1
+                        _cnt[_k] = _cnt.get(_k, 0) + 1
+                        if _k in (1, 2):
+                            try:
+                                if float(_tl[_x][_y]) != 255:
+                                    _ter_ok[_k] += 1
+                            except (TypeError, ValueError, IndexError):
+                                pass
+                print(f"  [состояние клеток] вне обзора {_cnt.get(0, 0)}, известно-невидимо "
+                            f"{_cnt.get(1, 0)} (с террейном {_ter_ok[1]}), видно {_cnt.get(2, 0)} "
+                            f"(с террейном {_ter_ok[2]}), иных {_cnt.get(-1, 0)}", flush=True)
+            except Exception as _exc:  # noqa: BLE001
+                print(f"  [состояние клеток] проба упала: {type(_exc).__name__}: {_exc}", flush=True)
+            # §13.362: ШТАТНЫЙ путь «игрок видит всю карту»: редактор сервера умеет снять туман
+            # конкретному игроку (`server/edithand.c:1312`, посылки 190 «режим редактора» и 199
+            # «снять туман игроку» — обе `cs` по `packets.def:2204/2214`). Пробуем каждый ход:
+            # первая посылка может не пройти, пока игра не встала.
+            if os.environ.get("DOF_REVEAL_MAP") == "1":
+                try:
+                    _pid_me = env_getter().get_playerid()
+                    _ws = getattr(getattr(getattr(env_getter(), "unwrapped", None), "civ_controller", None),
+                                 "ws_client", None)
+                    if _ws is None:
+                        print("  [карта-открыта] канала нет", flush=True)
+                    else:
+                        for _pkt in ({"pid": 190, "state": True},
+                                      {"pid": 199, "player": int(_pid_me)}):
+                            try:
+                                _ws.send_request(_pkt)
+                                print(f"  [карта-открыта] послал {_pkt}", flush=True)
+                            except Exception as _exc2:  # noqa: BLE001
+                                print(f"  [карта-открыта] {_pkt} упало: {type(_exc2).__name__}: {_exc2}",
+                                      flush=True)
+                except Exception as _exc:  # noqa: BLE001
+                    print(f"  [карта-открыта] проба упала: {type(_exc).__name__}: {_exc}", flush=True)
             print(f"  [слои-карты] видимых сейчас {_mcall.get('live')}, "
                   f"в ПАМЯТИ {len(_mknown())} (по status живого {_known}), "
                   f"раскрытых по выходу {len(_rv(_mobs))}", flush=True)
@@ -4936,24 +4981,6 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
         fc_args["client_port"] = port
         env = gymnasium.make("civrealm/FreecivBase-v0")
         obs, info = env.reset(client_port=port, seed=seed)
-        # §13.361: ПРОВЕРКА ОТКРЫТИЯ ВСЕЙ КАРТЫ. `fogofwar` — настройка ПРАВИЛ (SSET_RULES):
-        # сервер меняет её, только пока карта пуста или игра не начата (`settings.c:3417-3425`).
-        # Клиент стенда сам шлёт `/set` (`civ_controller.py:760-763`), значит доступ у игрока есть.
-        if os.environ.get("DOF_REVEAL_MAP") == "1":
-            _ws = getattr(getattr(getattr(env, "unwrapped", None), "civ_controller", None),
-                         "ws_client", None)
-            if _ws is None:
-                print("  [карта-открыта] клиента нет — команду не отправить", flush=True)
-            else:
-                # §13.361: значение проверяем ИЗ СЕЙВА сервера (`/save`), а не догадкой: в файле
-                # есть таблица настроек, и в ней видно `fogofwar,TRUE/FALSE`.
-                for _cmd in ("/save",):
-                    try:
-                        _ws.send_message(_cmd)
-                        print(f"  [карта-открыта] отправил {_cmd!r}", flush=True)
-                    except Exception as _exc:  # noqa: BLE001
-                        print(f"  [карта-открыта] {_cmd!r} упало: {type(_exc).__name__}: {_exc}",
-                              flush=True)
         # Which civilisation the env is playing is decided when the game is
         # created, NOT by the agent — hardcoding player 0 silently made every
         # own-civilisation test fail (garrison counts, the founding estimate, and
