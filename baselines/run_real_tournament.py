@@ -1740,7 +1740,8 @@ def _my_index(env_getter) -> int:
     except Exception:  # noqa: BLE001
         return 0
 
-def _order_city_production(env_getter, username):
+def _order_city_production(env_getter, username, obs=None, info=None, dof_state=None,
+                          extractor=None):
     """§13.385: заказ производства ГОРОДУ КЛИЕНТА (его же номером), а не номером из сейва.
 
     Номер города в сейве серверный (121 и т.п.); `env.step` ждёт номер города КЛИЕНТА
@@ -1774,6 +1775,26 @@ def _order_city_production(env_getter, username):
                     _save_build[str(_r.get("id"))] = str(_r.get("currently_building_name") or "")
         except Exception:  # noqa: BLE001
             _save_build = {}
+        # §13.389: ЕГО выбор производства — максимум хотелок советников (§13.364). Считаем
+        # хотелку для каждого законного имени постановки и берём наибольшую.
+        _ctx = None
+        # §13.389: слой городов в наблюдении бывает пуст — подкладываем города КЛИЕНТА,
+        # иначе контекст его выбора собрать нечем.
+        try:
+            if isinstance(obs, dict) and ours and not (obs.get("city") or {}):
+                obs = dict(obs)
+                obs["city"] = {str(k): dict(v) for k, v in ours.items()}
+        except Exception:  # noqa: BLE001
+            pass
+        if obs is not None and info is not None and dof_state is not None:
+            try:
+                from brain.forecast import live as _live
+                _ctx = _live.build_context(obs, info, dof_state, extractor,
+                    type_names=_production_names(env_getter()) or None,
+                        military_names=_military_type_names(env_getter()) or None,
+                        gold=_gold_of(obs, extractor))
+            except Exception as _exc:  # noqa: BLE001
+                print(f"  [заказ] контекст не собран: {type(_exc).__name__}: {_exc}", flush=True)
         for cid, rec in sorted(ours.items(), key=lambda kv: str(kv[0])):
             print("  [город-запись] " + str({k: (str(v)[:70]) for k, v in sorted(rec.items())
                   if k in ("owner", "size", "shield_stock", "prod_shield", "surplus_shield",
@@ -1783,6 +1804,29 @@ def _order_city_production(env_getter, username):
             _pv = rec.get("production_value")
             built = str(_names.get(int(_pv)) if isinstance(_pv, (int, float)) else _pv or "")
             st["tried"] += 1
+            if _ctx is not None:
+                try:
+                    _acts2 = ((info.get('available_actions') or {}).get('city') or {})
+                    _acts2 = _acts2.get(str(cid)) or _acts2.get(cid) or {}
+                    _legal2 = [str(k)[len('produce_'):] for k, v in dict(_acts2).items()
+                            if v and str(k).startswith('produce_')]
+                    _dgr = _his_danger(obs, extractor)
+                    _w = {}
+                    for _n in _legal2:
+                        _val = _his_production_want(_n, rec, _ctx, _dgr)
+                        if _val is not None:
+                            _w[_n] = float(_val)
+                    if _w:
+                        _best2 = max(_w, key=_w.get)
+                        print(f"  [заказ] его хотелки города {cid}: " +
+                            ', '.join(f'{k}={v:.3f}' for k, v in sorted(_w.items(), key=lambda kv: -kv[1])[:5]), flush=True)
+                        if _best2 != built:
+                            print(f"  [заказ] → produce_{_best2} (в очереди было {built!r})", flush=True)
+                            return ('city', cid, f'produce_{_best2}')
+                        print(f"  [заказ] город {cid}: его выбор совпал с очередью ({built!r}) — не трогаю", flush=True)
+                        return None
+                except Exception as _exc:  # noqa: BLE001
+                    print(f"  [заказ] его хотелки не посчитались: {type(_exc).__name__}: {_exc}", flush=True)
             built = _save_build.get(str(cid), built)
             print(f"  [заказ] город клиента {cid}: по сейву строит {built!r} (номер {rec.get('production_value')}), щитов/ход {rec.get('prod_shield')}, щитов {rec.get('shield_stock')}",
                   flush=True)
@@ -4736,7 +4780,7 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                     if os.environ.get("DOF_WHOAMI") == "1" and int(str(info.get("turn", 0) or 0)) % 5 == 1:
                         _whoami_probe(env_getter)
                     if os.environ.get("DOF_ORDER_SETTLERS") == "1":
-                        _order = _order_city_production(env_getter, fc_args.get("username"))
+                        _order = _order_city_production(env_getter, fc_args.get("username"), obs, info, dof.state, extractor)
                         if _order is not None:
                             return _order
                     if os.environ.get("DOF_CITY_FROM_SAVE") == "1":
