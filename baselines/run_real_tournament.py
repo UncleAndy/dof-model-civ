@@ -2146,7 +2146,8 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
                 # ходу ВСЕ размера 1 (у сторон-ИИ 2.17-2.33) — город, строящий поселенца при
                 # размере 1, не растёт НИКОГДА, и такой заказ надо не «дожимать», а снимать.
                 _sz1 = _city_size_of(rec, _save_fields, cid)
-                if _sz1 is not None and _sz1 <= 1.0:
+                if (_sz1 is not None and _sz1 <= 1.0
+                        and os.environ.get("DOF_NO_SIZE_RULE") != "1"):
                     _alt2 = _first_legal_build(info, cid, avoid=("Settlers",))
                     if _alt2:
                         _ord_mem[str(cid)] = _alt2
@@ -2219,7 +2220,8 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
                 _ord_mem[str(cid)] = "Warriors"
                 return ('city', cid, 'produce_Warriors')
             _sz2 = _city_size_of(rec, _save_fields, cid)
-            if _sz2 is not None and _sz2 <= 1.0:
+            if (_sz2 is not None and _sz2 <= 1.0
+                    and os.environ.get("DOF_NO_SIZE_RULE") != "1"):
                 # §13.419: то же правило и для НАШЕЙ постановки — городу размера 1 поселенца не
                 # заказываем (он не может отдать население: `daicity.c:788`).
                 _alt3 = _first_legal_build(info, cid, avoid=("Settlers",))
