@@ -1976,7 +1976,11 @@ def _first_legal_build(info: dict, cid, avoid: tuple[str, ...] = ()) -> str | No
     names = [n for n in names if n not in avoid]
     if not names:
         return None
-    for pref in ("Coinage", "Barracks"):
+    # §13.427: порядок предпочтения — КАК У НЕГО в середине партии. Замер сейва 60-го хода: его
+    # города размера 1-3 строят City Walls (8 из 8 у игрока 1), Granary и Great Wall, и только
+    # постройки. Прежде мы брали `Coinage` первым и не давали городу ни роста, ни защиты.
+    for pref in ("City Walls", "Granary", "Temple", "Marketplace", "Library",
+                 "Barracks", "Coinage"):
         if pref in names:
             return pref
     return names[0]
@@ -2047,7 +2051,7 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
                     _m_t = re.search(r"^turn=(\d+)", _tt, re.M)
                     if _m_t:
                         _turn_t = int(_m_t.group(1))
-                if _tt and _turn_t % 5 == 0:
+                if _tt:
                     _parts = []
                     for _pl in range(6):
                         try:
@@ -2060,7 +2064,7 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
                         for _c_t in _cs_t.values():
                             _n_t = str(_c_t.get("currently_building_name") or "?")
                             _b.setdefault(_n_t, []).append(float(_c_t.get("size") or 0))
-                        _parts.append(f"игрок {_pl}: " + ", ".join(
+                        _parts.append(f"игрок {_pl}: городов {len(_cs_t)}, " + ", ".join(
                             f"{k}×{len(v)} (размеры {sorted(set(v))})"
                             for k, v in sorted(_b.items())))
                     if _parts:
@@ -2252,12 +2256,13 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
                 # размере 1, не растёт НИКОГДА, и такой заказ надо не «дожимать», а снимать.
                 _sz1 = _city_size_of(rec, _save_fields, cid)
                 if (_sz1 is not None and _sz1 <= 1.0
-                        and os.environ.get("DOF_SIZE_RULE") == "1"):
-                    # §13.422: правило §13.419 ВЫКЛЮЧЕНО по умолчанию — оно противоречит
-                    # наблюдённому поведению его ИИ (`DOF_AI_CITY_TRACE`: его города размера 1
-                    # СТРОЯТ поселенцев, §13.420) и, как показал замер s1075, запирало нас в
-                    # двух городах: города размера 1 получали `Coinage` и не расширялись вовсе.
-                    # Включается только явным ключом `DOF_SIZE_RULE=1` — для честного A/B.
+                        and os.environ.get("DOF_NO_SIZE_RULE") != "1"):
+                    # §13.427: правило СНОВА ВКЛЮЧЕНО. Замер середины партии (сейв 60-го хода)
+                    # снял противоречие §13.420: у его сторон города размера 1 строят City Walls
+                    # (8 городов из 8 у игрока 1!), Granary и Great Wall, и НИ ОДИН его город
+                    # поселенцев не строит — поселенцы у него были только в самой первой
+                    # очереди. Наши же два города размера 1 к 60-му ходу всё ещё строят
+                    # поселенцев и потому не растут (у него размеры 2-3, у нас 1).
                     _alt2 = _first_legal_build(info, cid, avoid=("Settlers",))
                     if _alt2:
                         _ord_mem[str(cid)] = _alt2
@@ -2348,8 +2353,9 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
                 return ('city', cid, 'produce_Warriors')
             _sz2 = _city_size_of(rec, _save_fields, cid)
             if (_sz2 is not None and _sz2 <= 1.0
-                    and os.environ.get("DOF_SIZE_RULE") == "1"):
-                # §13.422: см. пояснение выше — правило выключено по умолчанию.
+                    and os.environ.get("DOF_NO_SIZE_RULE") != "1"):
+                # §13.427: см. пояснение выше — правило снова включено по умолчанию
+                # (`DOF_NO_SIZE_RULE=1` выключает для честного A/B).
                 # §13.419: то же правило и для НАШЕЙ постановки — городу размера 1 поселенца не
                 # заказываем (он не может отдать население: `daicity.c:788`).
                 _alt3 = _first_legal_build(info, cid, avoid=("Settlers",))
