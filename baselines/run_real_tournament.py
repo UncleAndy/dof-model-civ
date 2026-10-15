@@ -1973,6 +1973,43 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
             pass
         _save_build = {}
         try:
+            # §13.420: КОГДА ЕГО ГОРОДА СТРОЯТ ПОСЕЛЕНЦЕВ — из сейва, по всем сторонам, каждые
+            # 5 ходов. Без этого «подгонять порог роста» пришлось бы своим числом, а нужно ЕГО
+            # отношением: при каком размере города у него уходит поселенец.
+            if os.environ.get("DOF_AI_CITY_TRACE") == "1":
+                from env.city_vector import parse_player_section as _pps_t
+                from env.map_from_save import fetch_newest_save as _fs_t
+                _tt = _fs_t(str(username or "")) if username else None
+                _turn_t = int((info or {}).get("turn") or 0) if isinstance(info, dict) else 0
+                if _tt:
+                    _m_t = re.search(r"^turn=(\d+)", _tt, re.M)
+                    if _m_t:
+                        _turn_t = int(_m_t.group(1))
+                if _tt and _turn_t % 5 == 0:
+                    _parts = []
+                    for _pl in range(6):
+                        try:
+                            _cs_t = _pps_t(_tt, _pl)
+                        except Exception:  # noqa: BLE001
+                            continue
+                        if not _cs_t:
+                            continue
+                        _b = {}
+                        for _c_t in _cs_t.values():
+                            _n_t = str(_c_t.get("currently_building_name") or "?")
+                            _b.setdefault(_n_t, []).append(float(_c_t.get("size") or 0))
+                        _parts.append(f"игрок {_pl}: " + ", ".join(
+                            f"{k}×{len(v)} (размеры {sorted(set(v))})"
+                            for k, v in sorted(_b.items())))
+                    if _parts:
+                        _body_t = " | ".join(_parts)
+                        _seen_t = globals().setdefault("_AI_CITY_TRACE_SEEN", set())
+                        # §13.420: ключ — само содержимое (какие постановки при каких размерах),
+                        # без номера хода: номер из сейва берётся из кэша и повторяется, из-за
+                        # чего вся история, кроме первого показа, пропадала.
+                        if _body_t not in _seen_t:
+                            _seen_t.add(_body_t)
+                            print(f"  [его-города] ход {_turn_t}: {_body_t}", flush=True)
             from env.city_vector import parse_player_section as _pps
             from env.map_from_save import fetch_newest_save as _fs
             _txt = _fs(str(username or "")) if username else None
