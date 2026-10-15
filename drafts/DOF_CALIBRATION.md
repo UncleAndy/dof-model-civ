@@ -18659,3 +18659,28 @@ military_units=19`. Девятнадцать военных юнитов при 
    (работник → основатель → войско → постройка), с делением на 100 при `max_num_cities` и
    множителем `TRAIT_EXPANSIONIST` (умолчание 1.0 = черта не задана) — то есть ровно его порядок.
 3. Проверять на серии: города и счёт против встроенного ИИ (`normal`), пороги — до данных.
+
+## 13.365. Хотелка войска перенесена буквально (оборона и опасность)
+
+**Перенесено** (`brain/ai_default/military_want.py`, сторожей 5 — `tests/unit/test_military_want.py`):
+1. `defense_desirability` = его `dai_unit_defense_desirability` (`ai/default/daimilitary.c:975-1004`):
+   `desire = hp * fp * defense`; `+= move_rate / SINGLE_MOVE`; `+= attack`; надбавка
+   `max_defense_mp_bonus_pct` (при >100 — `(x+100)/2`); `UTYF_GAMELOSS` → `/10`; морские/вертолётные
+   ветки `low_firepower` (по флагам типа).
+2. `attacker_want` = его `Greg's algorithm` (`:101-127`), буквально:
+   `loss = defense * hp * fpdef / (attack * fpatt)`, `want = (loss + MAX(0, loss - attacker.hp)) / cost`.
+   Силы нападающего и защитника берёт вызывающий: они зависят от места и нападающего.
+3. `defender_want` = `dai_process_defender_want` (`:1047-1110`) до ветки `can_city_build_unit_now`:
+   только роли `L_DEFEND_GOOD`/`L_DEFEND_OK`; не-`GOOD` → `/2`; `UTYF_FIELDUNIT` (в мире `-50`,
+   иначе `/2`); затем `/POWER_DIVIDER/2` (=`/10`) и возведение в квадрат. `POWER_DIVIDER = 20`.
+4. `city_military_want` = `total_want` его кода: `danger + extra_want` плюс желание юнита.
+
+**Чего ещё нет (честно).** Последняя часть того же `dai_process_defender_want` (`:1105-1170`) —
+ветка `can_city_build_unit_now` с `build_cost`, `limit_cost = pcity->shield_stock + 40` и
+срочностью (`CITY_LOG` «build_cost» / вторая ступень желания) — не перенесена; до неё `defender_want`
+возвращает ровно то, что его код имеет непосредственно перед этой веткой.
+
+**Следующий шаг.** Подставить эти хотелки в выбор производства вместо нашего `type_price`
+(порядок его `domestic_advisor_choose_build`: работник → основатель → войско → постройка,
+максимум) и судить серией против встроенного ИИ. Тогда сравнение станет ЕГО сравнением:
+`founder_want` города против хотелки войска, а не 3.8125 против 4.5625 в нашей мере (§13.360).
