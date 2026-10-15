@@ -1908,6 +1908,43 @@ def _my_index(env_getter) -> int:
     except Exception:  # noqa: BLE001
         return 0
 
+def _founder_want_of(obs, rec, cities_xy, mindist: int = 2) -> float:
+    """ЕГО `founder_want` для города (`ai/default/daisettler.c:1316`, `daicity.c`).
+
+    Это ЛУЧШИЙ результат основания рядом с городом: он считает его как виртуальный поселенец в
+    центре города и берёт максимум по площадкам. Условия отбора — его же: клетка должна
+    допускать город (`city_can_be_built_here` → наша `terrain_allows_city`), не быть ближе
+    `citymindist` к уже имеющимся городам и давать неотрицательный избыток еды (`food_surplus`).
+    Ноль значит «этому городу идти некуда» — тогда поселенца он не заказывает.
+    """
+    try:
+        cx, cy = int(rec.get("x")), int(rec.get("y"))
+    except Exception:  # noqa: BLE001
+        return 0.0
+    best = 0.0
+    for dx in range(-2, 3):
+        for dy in range(-2, 3):
+            x, y = cx + dx, cy + dy
+            try:
+                from brain.ai_default.founder_destination import terrain_allows_city as _tac
+                if not _tac(x, y):
+                    continue
+            except Exception:  # noqa: BLE001
+                continue
+            if any(max(abs(x - int(a)), abs(y - int(b))) < int(mindist)
+                   for a, b in (cities_xy or ())):
+                continue
+            try:
+                from env.site_eval import evaluate_site as _ev_site
+                ev = _ev_site(obs, x, y, size=1)
+            except Exception:  # noqa: BLE001
+                continue
+            if float(getattr(ev, "food_surplus", 0.0) or 0.0) <= 0.0:
+                continue
+            best = max(best, float(ev.food) + float(ev.shields) + float(ev.trade))
+    return best
+
+
 def _city_size_of(rec: dict, save_fields: dict | None, cid) -> float | None:
     """Размер города: сперва из наблюдения, потом из сейва (§13.419)."""
     for _src in (rec, (save_fields or {}).get(str(cid)),
@@ -2051,7 +2088,28 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
         # вдвое-втрое (замер r895: 2 города против 5). Поэтому источников столько же, сколько
         # не хватает до цели: меньше четырёх городов — двух, до шести — один, дальше ни одного.
         _n_cities = len(ours)
-        _settlers_wanted = 2 if _n_cities < 4 else (1 if _n_cities < 6 else 0)
+        if os.environ.get("DOF_FOUNDER_PER_CITY") != "1":
+            # §13.425 ВЫКЛЮЧЕНО по умолчанию: замер s1135/s1140 — городов стало 2 вместо 3-6
+            # (поселенцы из городов размера 2 снимают население, и город снова 1), счёт упал до
+            # ×3.0/×2.4 при прежних ×2.2-×2.6. Причина в СКОРОСТИ выпуска поселенцев (у нас
+            # 1.25 щита на город против 3.7-4.4), а не в том, сколько городов их заказывают:
+            # пока город не выпускает поселенца быстро, второй источник только съедает рост.
+            _settlers_wanted = 2 if _n_cities < 4 else (1 if _n_cities < 6 else 0)
+        else:
+            # §13.425: ЕГО правило вместо нашего счёта. У него поселенца заказывает КАЖДЫЙ
+            # город, у которого `founder_want > 0` (есть куда идти) — замер `DOF_AI_CITY_TRACE`:
+            # на 10-м ходу поселенцев строят ОБА его города. Наш счёт «два источника до четырёх
+            # городов» (§13.411) был нашим изобретением и оставлял нас с 3-6 городами против
+            # его 9-13. Здесь считаем число городов, у которых площадка рядом есть.
+            _cities_xy = [(int(_r.get("x")), int(_r.get("y")))
+                          for _r in ours.values() if _r.get("x") is not None]
+            _mind5 = int(_world_citymindist(env_getter()) or 0) or 2
+            _settlers_wanted = sum(
+                1 for _r in ours.values()
+                if _founder_want_of(obs, _r, _cities_xy, _mind5) > 0.0)
+            if os.environ.get("DOF_FOUND_DEBUG") == "1":
+                print(f"  [поселенцы] городов {_n_cities}, из них с площадкой рядом "
+                      f"{_settlers_wanted} (его founder_want)", flush=True)
         _settlers_now = sum(1 for _v in (_save_build or {}).values()
                             if str(_v).endswith("Settlers"))
         _any_settlers_now = _settlers_now >= _settlers_wanted
@@ -2164,6 +2222,28 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
                 continue   # §13.397: этому городу заказ уже отдан в этом ходу
             print(f"  [заказ] город клиента {cid}: по сейву строит {built!r} (номер {rec.get('production_value')}), щитов/ход {rec.get('prod_shield')}, щитов {rec.get('shield_stock')}",
                   flush=True)
+            # §13.426: ЕГО экономика смены постановки — теряется ПОЛОВИНА вложенных щитов
+            # (`common/city.c:1917`: «Penalize 50% of the production»). Мы же меняли заказ при
+            # каждом удобном случае, и щиты городов уходили в никуда. Замер s1140: к 60-му ходу
+            # 2 города — при том что на город мы выходим ВЫШЕ его городов (щиты 2.50 против
+            # 1.00-2.67, клеток 3.5 против 3.2, потолок площадки 9.0 против 8.8-9.3). Меняем
+            # постановку, только если вложено не больше двух ходов — либо если очередь военная,
+            # а опасных сторон нет вовсе (§13.423: тогда снятие того стоит).
+            _stock6 = float(rec.get("shield_stock") or 0.0)
+            _per6 = float(rec.get("prod_shield") or 0.0) or 1.0
+            _cur_mil6 = str(built) in {str(_x) for _x in (_military_type_names(env_getter()) or ())}
+            _danger6 = None
+            try:
+                from env.diplomacy_from_save import dangerous_now as _dn6
+                _danger6 = _dn6(int(mine))
+            except Exception:  # noqa: BLE001
+                _danger6 = None
+            _mil_no_danger6 = _cur_mil6 and _danger6 is not None and not _danger6
+            if _stock6 > 2.0 * _per6 and not _mil_no_danger6:
+                if os.environ.get("DOF_FOUND_DEBUG") == "1":
+                    print(f"  [заказ] город {cid}: вложено {_stock6:g} щитов при {_per6:g} в ход — "
+                          f"постановку {built!r} НЕ меняем (смена теряет половину)", flush=True)
+                continue
             if built.endswith("Settlers") or built == "Settlers":
                 # §13.419: ЕГО запрет — поселенца не заказывают там, где город не может отдать
                 # население: `pop_cost >= city_size_get(pcity)` (`daicity.c:788`, «We don't like
