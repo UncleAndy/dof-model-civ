@@ -428,6 +428,51 @@ def _hold_military_candidates(cands: list, obs: dict, my_id, military: set,
     return keep
 
 
+def _his_danger(obs: dict, extractor) -> float:
+    """Опасность города в его смысле: чужой юнит, видимый нами. Нет чужого — 0."""
+    try:
+        _units = getattr(extractor, "units", None) or {}
+        _mine = getattr(extractor, "my_player_id", None)
+        for _u in _units.values():
+            _owner = _u.get("owner") if isinstance(_u, dict) else None
+            if _owner is not None and _mine is not None and str(_owner) != str(_mine):
+                return 1.0
+    except Exception:  # noqa: BLE001
+        pass
+    return 0.0
+
+
+def _his_production_want(name: str, rec: dict, ctx, danger: float):
+    """Хотелка его советников для этого имени производства (§13.366)."""
+    try:
+        from brain.ai_default import military_want as _mw
+        _military = getattr(ctx, "military_names", None)
+        if _military and str(name) in set(_military):
+            _spec = getattr(ctx, "unit_spec", None)
+            _stats = {}
+            try:
+                _stats = _spec(str(name)) or {} if callable(_spec) else {}
+            except Exception:  # noqa: BLE001
+                _stats = {}
+            # Защитные роли берём из мира, если он их отдаёт; без роли желание 0 — как у него
+            # для юнита без `L_DEFEND_GOOD`/`L_DEFEND_OK` (`daimilitary.c:1078-1081`).
+            return _mw.city_military_want(dict(_stats), danger, defend_good=False)
+        _mw_name = str(name)
+        if _mw_name in ("Settlers", "Founder", "Found city"):
+            _fw = getattr(ctx, "founder_want", None)
+            if callable(_fw):
+                _w, _ = _fw(rec)
+                return float(_w)
+        if _mw_name in ("Workers", "Engineers"):
+            _ww = getattr(ctx, "worker_want", None)
+            if callable(_ww):
+                _w, _ = _ww(rec)
+                return float(_w)
+    except Exception:  # noqa: BLE001
+        return None
+    return None
+
+
 def _filters_trace() -> bool:
     """Включён ли след общих правил (§13.209)."""
     return os.environ.get("DOF_TRACE_FILTERS") == "1"
@@ -1797,6 +1842,17 @@ def _production_candidate(obs: dict, info: dict, dof_state, extractor,
             own_stock = stock if (current is None or str(current) == str(name)) else 0.0
             turns = max(1, int(math.ceil(max(0.0, cost - own_stock) / shields)))
             value = options * (_gamma ** turns)
+            # §13.366: ЕГО выбор производства, а не наша мера. Его `domestic_advisor_choose_build`
+            # (`ai/default/daidomestic.c:489-620`) сравнивает ХОТЕЛКИ своих советников и берёт
+            # максимум (`adv_better_choice`), а наша мера (`type_price`) сравнивала ценность за щит —
+            # из-за этого воин (4.5625, 10 щитов) перебивал поселенца (3.8125, 40 щитов) (§13.360).
+            if os.environ.get("DOF_HIS_PRODUCTION") == "1":
+                _his = _his_production_want(str(name), rec, ctx, _his_danger(obs, extractor))
+                if _his is not None:
+                    if _filters_trace():
+                        print(f"  [его-выбор] {name}: его хотелка {_his:.4f}"
+                            f" (наша мера была {value:.4f} за {turns} ход.)", flush=True)
+                    value = float(_his)
             scored.append((value, str(name), turns))
             if best is None or value > best[0]:
                 best = (value, str(name), turns)
