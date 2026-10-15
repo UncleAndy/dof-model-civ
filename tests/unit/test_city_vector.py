@@ -8,13 +8,16 @@ name="Me"
 ncities=2
 c={"y","x","id","name","size","food_stock","shield_stock","currently_building_kind","currently_building_name"}
 45,47,123,"Ciudad del Este",1,12,4,"UnitType","Warriors"
+}
 46,45,122,"Montevideo",1,12,5,"UnitType","Settlers"
 u={"id","x","y","homecity"}
 109,50,25,0
+}
 [player1]
 username="Unassigned"
 c={"y","x","id","name"}
 10,10,7,"EnemyTown"
+}
 """
 
 
