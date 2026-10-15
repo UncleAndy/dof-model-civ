@@ -1791,6 +1791,19 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
     (`city_ctrl.cities`). Поэтому берём города прямо у клиента и фильтруем по владельцу.
     """
     st = globals().setdefault("_CITY_ORDER", {"tried": 0})
+    # §13.397: помним, каким городам заказ уже отдан В ЭТОМ ХОДУ. Сейв обновляется раз в ход,
+    # поэтому без этой памяти один и тот же город получал заказ в каждой попытке, а прочие
+    # города в это время отдавались прогнозу — он ставил им Barracks/Coinage/Phalanx, и
+    # расширение вставало (замер r715: за 80 ходов основано 4 города против 9-10 у него).
+    _ord_mem = globals().setdefault("_ORDERED_THIS_TURN", {})
+    _turn_now = 0
+    try:
+        _turn_now = int((info or {}).get("turn") or 0) if isinstance(info, dict) else 0
+    except (TypeError, ValueError):
+        _turn_now = 0
+    if _ord_mem.get("turn") != _turn_now:
+        _ord_mem.clear()
+        _ord_mem["turn"] = _turn_now
     if st["tried"] >= 80:  # §13.388: заказов много — городов и ходов больше
         return None
     try:
@@ -1923,6 +1936,8 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
                 except Exception as _exc:  # noqa: BLE001
                     print(f"  [заказ] его хотелки не посчитались: {type(_exc).__name__}: {_exc}", flush=True)
             built = _save_build.get(str(cid), built)
+            if _ord_mem.get(str(cid)):
+                continue   # §13.397: этому городу заказ уже отдан в этом ходу
             print(f"  [заказ] город клиента {cid}: по сейву строит {built!r} (номер {rec.get('production_value')}), щитов/ход {rec.get('prod_shield')}, щитов {rec.get('shield_stock')}",
                   flush=True)
             if built.endswith("Settlers") or built == "Settlers":
@@ -1961,7 +1976,7 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
                 _danger_now = float(_d_info.get("danger") or 0.0)
             except Exception:  # noqa: BLE001
                 _danger_now = _his_danger(obs, extractor) if obs is not None else 0.0
-            if _danger_now > 0 and _guard < 1:
+            if len(ours) >= 6 and _danger_now > 0 and _guard < 1:
                 # §13.387: войско выбираем ЕГО правилом — по силам юнита из правил мира
                 # (`defense_desirability`, `daimilitary.c`), среди законных постановок города.
                 try:
@@ -1984,8 +1999,10 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
                 except Exception as _exc:  # noqa: BLE001
                     print(f"  [заказ] выбор войска не вышел: {type(_exc).__name__}: {_exc}", flush=True)
                 print(f"  [заказ] у города {cid} нет своего войска → produce_Warriors", flush=True)
+                _ord_mem[str(cid)] = "Warriors"
                 return ('city', cid, 'produce_Warriors')
             print(f"  [заказ] город {cid} защищён → produce_Settlers", flush=True)
+            _ord_mem[str(cid)] = "Settlers"
             return ("city", cid, "produce_Settlers")
         return None
     except Exception as exc:  # noqa: BLE001
