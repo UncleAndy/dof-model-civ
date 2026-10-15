@@ -1829,7 +1829,7 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
             _pv = rec.get("production_value")
             built = str(_names.get(int(_pv)) if isinstance(_pv, (int, float)) else _pv or "")
             st["tried"] += 1
-            if _ctx is not None and getattr(_ctx, 'production_of', None):
+            if _ctx is not None and getattr(_ctx, 'production_of', None) and len(ours) >= 6:
                 try:
                     _po = _ctx.production_of
                     _keys = [f'city_{cid}', f"city_{rec.get('id')}", str(cid)]  # только строки: у него ключ города — текст
@@ -1900,7 +1900,22 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
                     continue
                 if int(_urec.get('homecity', -1) or -1) == int(cid) if str(cid).isdigit() else False:
                     _guard += 1
-            if _guard < 1:
+            _danger_now = 0.0
+            # §13.393: опасность — ЕГО числом (`brain/ai_default/danger.py:assess_danger`:
+            # чужой юнит, способный дойти и напасть), а не моим «виден чужой юнит». Замер
+            # r670: при бинарном признаке мы кончаем партию с 11.5 военных против его 0.5.
+            try:
+                from brain.ai_default.danger import assess_danger as _assess
+                _rec_d = dict(rec)
+                _sv_d = _save_fields.get(str(rec.get("id"))) or {}
+                for _d_dst, _d_src in (("x", "x"), ("y", "y")):
+                    if _rec_d.get(_d_dst) is None and _sv_d.get(_d_src) is not None:
+                        _rec_d[_d_dst] = _sv_d.get(_d_src)
+                _d_info = _assess(_rec_d, obs, _my_index(env_getter)) or {}
+                _danger_now = float(_d_info.get("danger") or 0.0)
+            except Exception:  # noqa: BLE001
+                _danger_now = _his_danger(obs, extractor) if obs is not None else 0.0
+            if _danger_now > 0 and _guard < 1:
                 # §13.387: войско выбираем ЕГО правилом — по силам юнита из правил мира
                 # (`defense_desirability`, `daimilitary.c`), среди законных постановок города.
                 try:
