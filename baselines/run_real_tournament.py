@@ -1118,6 +1118,16 @@ def _founder_step(obs: dict, avail: dict, mindist: int | None = None, env_getter
         # ── §13.322: что выбрало бы ЕГО правило — основать здесь или идти к лучшей
         # достижимой площадке (`daisettler.c:1113-1140`). ТОЛЬКО ЗАМЕР: решений не меняет,
         # поэтому идёт до проверки голода и включается отдельным ключом.
+        # §13.410: площадки ищем по ВСЕЙ известной карте (память мира: сейв + наблюдение), а не
+        # по туманному обзору. У его ИИ зрение полное (`omniscience`); наш прежний перебор шёл
+        # по 6-21 клетке вокруг юнита (замер §13.408).
+        _rev = None
+        try:
+            from brain.forecast.live import revealed_tiles as _rev_tiles
+            from env.world_memory import known as _wm_known
+            _rev = set(_rev_tiles((obs or {}).get("map"))) | set(_wm_known())
+        except Exception:  # noqa: BLE001
+            _rev = None
         if os.environ.get("DOF_FOUND_DEBUG") == "1":
             _seen = globals().setdefault("_FOUND_DEBUG_SEEN", set())
             if (uid, tuple(pos)) not in _seen:
@@ -1125,7 +1135,7 @@ def _founder_step(obs: dict, avail: dict, mindist: int | None = None, env_getter
                 try:
                     _all = rank_sites(obs, exclude=city_positions(obs), reference=tuple(pos),
                                       cities=_known_cities, mindist=_mindist,
-                                      reserved=_cmap)
+                                      reserved=_cmap, revealed=_rev)
                 except Exception:  # noqa: BLE001
                     _all = []
                 _here = next((c for c in _all
@@ -1152,7 +1162,7 @@ def _founder_step(obs: dict, avail: dict, mindist: int | None = None, env_getter
             ranked_all = rank_sites(obs, exclude=city_positions(obs),
                                     reference=tuple(pos), settler_shield_cost=0.0,
                                     cities=_known_cities, mindist=_mindist,
-                                    reserved=_cmap)
+                                    reserved=_cmap, revealed=_rev)
         except Exception:  # noqa: BLE001
             ranked_all = []
         _black = _FOUND_BLACK.get(str(uid)) or set()
