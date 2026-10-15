@@ -1314,6 +1314,22 @@ def _founder_step(obs: dict, avail: dict, mindist: int | None = None, env_getter
                 # лес, холмы), ни одной из `NoCities`. Прежде мы с первого отказа писали клетку
                 # в чёрный список и больше туда не шли. Теперь пишем только после ВТОРОГО отказа
                 # на той же клетке: первый — «попробуй ещё раз следующим ходом».
+                _avail = offered.get("build_city")
+                if not _avail:
+                    # §13.424: мир не ПРЕДЛАГАЕТ основание вовсе — это не отказ клетки, а
+                    # «сейчас нельзя» (у поселенца кончились очки движения: замер r970 — все 24
+                    # «отказные» клетки были на хорошей земле). Прежде и такой ход увеличивал
+                    # счётчик отказов, и площадка уходила в чёрный список на втором же ходу —
+                    # отсюда «все площадки отказные» 85 раз за партию и стоящие поселенцы.
+                    _cnt = globals().setdefault("_FOUND_REFUSALS", {})
+                    _per = _cnt.setdefault(str(uid), {})
+                    _per[_key] = 0
+                    if os.environ.get("DOF_FOUND_DEBUG") == "1":
+                        print(f"  [отказ-основания] unit/{uid} на {tuple(pos)}: мир не предлагает "
+                              f"основание сейчас (build_city={_avail}) — жду, счётчик отказов не "
+                              f"трогаю (движение)", flush=True)
+                    _FOUND_TARGET.pop(str(uid), None)
+                    continue
                 _cnt = globals().setdefault("_FOUND_REFUSALS", {})
                 _per = _cnt.setdefault(str(uid), {})
                 _per[_key] = int(_per.get(_key, 0)) + 1
