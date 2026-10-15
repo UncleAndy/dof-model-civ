@@ -1920,8 +1920,20 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
         # §13.417: прежде при шести и более городах стоял `return None` — и БОЛЬШЕ НИКАКИХ заказов.
         # Без заказа мир достраивает то, что стоит по умолчанию, а по умолчанию первым идёт военный
         # юнит: замер r980 — у нас 10 `Warriors` при 4 городах и размере 1.5, у сторон-ИИ военных 0.
-        # Теперь заказы идут и дальше (`_settlers_wanted` ниже даёт 0 — поселенцев не заказываем),
+        # `_settlers_wanted` ниже даёт 0 — поселенцев не заказываем),
         # чтобы ни один город не оставался без решения.
+        # §13.418: отношения из свежего сейва — их требует ЕГО проверка опасности
+        # (`adv_is_player_dangerous`, `server/advisors/advdata.c:1103`) перед перебором чужих
+        # юнитов. Провайдер задаём на каждом ходу: сейв обновляется раз в ход.
+        try:
+            from env.diplomacy_from_save import set_provider as _set_dip
+            from env.map_from_save import fetch_newest_save as _fns_d
+            if username:
+                def _dip_text(_u=str(username)):
+                    return _fns_d(_u)
+                _set_dip(_dip_text)
+        except Exception:  # noqa: BLE001
+            pass
         _save_build = {}
         try:
             from env.city_vector import parse_player_section as _pps

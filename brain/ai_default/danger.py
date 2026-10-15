@@ -107,8 +107,25 @@ def assess_danger(city_rec: Mapping[str, Any], obs: Mapping[str, Any],
     out["units"] = len(foreign)
     out["mean_attack"] = mean_attack
     out["mean_move"] = mean_move
+    # §13.418: ЕГО ПЕРВАЯ проверка перед перебором юнитов — `adv_is_player_dangerous`
+    # (`server/advisors/advdata.c:1103`): опасен только тот, с кем война (`DS_WAR`) или перемирие
+    # (`DS_CEASEFIRE`), либо у кого есть повод расторгнуть договор (`has_reason_to_cancel > 0`).
+    # Замер r980: у всех сторон «Never met», а мы считали их опасными и держали 10 `Warriors`
+    # против НУЛЯ военных у каждой стороны-ИИ. Отношения берём из сейва; нет сведений (`None`) —
+    # оставляем как было: «незнание ≠ отсутствие возможностей».
+    try:
+        from env.diplomacy_from_save import dangerous_now as _dangerous_now
+        _allowed = _dangerous_now(int(my_player_id))
+    except Exception:  # noqa: BLE001
+        _allowed = None
+    if _allowed is not None:
+        foreign = [f for f in foreign if int(f[0]) in _allowed]
+        out["units"] = len(foreign)
+        out["dangerous_players"] = sorted(_allowed)
     if not foreign:
-        out["note"] = "чужих юнитов на карте не видно — опасность 0 (его же умолчание)"
+        out["note"] = ("опасных чужих юнитов не видно — опасность 0 (его же умолчание)"
+                       if _allowed is not None else
+                       "чужих юнитов на карте не видно — опасность 0 (его же умолчание)")
         return out
     if mean_attack is None:
         # Известных боевых типов нет вовсе — «нечего усреднять», а не «безобиден».
