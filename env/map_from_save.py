@@ -132,3 +132,23 @@ def summary() -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001
         out["error"] = f"{type(exc).__name__}: {exc}"
     return out
+
+def fetch_named_save(name: str, container: str = "freeciv-web") -> str | None:
+    """Сейв, который мы сами попросили у сервера командой `/save <имя>` — по имени, а не по времени.
+    Ищем файл по всему контейнеру: сервер пишет его в свой рабочий каталог, а не в каталог
+    стенда."""
+    try:
+        find = subprocess.run(
+            ["docker", "exec", container, "sh", "-c",
+              f"find / -name '{name}*' -newermt '-10 minutes' 2>/dev/null | head -3"],
+            capture_output=True, text=True, timeout=90)
+        path = (find.stdout or "").strip().splitlines()
+        if not path:
+            return None
+        got = subprocess.run(
+            ["docker", "exec", container, "sh", "-c",
+              f"xzcat '{path[0]}' 2>/dev/null || cat '{path[0]}'"],
+            capture_output=True, text=True, timeout=150)
+        return got.stdout or None
+    except Exception:  # noqa: BLE001
+        return None
