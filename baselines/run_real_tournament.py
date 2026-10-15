@@ -760,6 +760,29 @@ def _our_cities_from_controller(env_getter, obs: dict) -> set[tuple[int, int]]:
         return set()
 
 
+def _client_send_command(env_getter, command: str) -> bool:
+    """Послать команду серверу каналом КЛИЕНТА (`ws_client.send_message`) — §13.372."""
+    try:
+        env = env_getter() if env_getter else None
+        if env is None:
+            return False
+        objs = [env, getattr(env, "unwrapped", None)]
+        for obj in list(objs):
+            if obj is None:
+                continue
+            ctl = getattr(obj, "civ_controller", None)
+            ws = getattr(obj, "ws_client", None) or getattr(ctl, "ws_client", None)
+            send = getattr(ws, "send_message", None)
+            if callable(send):
+                send(command)
+                print(f"  [команда-клиенту] {command!r} отправлена", flush=True)
+                return True
+    except Exception as _exc:  # noqa: BLE001
+        print(f"  [команда-клиенту] не вышло: {type(_exc).__name__}: {_exc}", flush=True)
+    print(f"  [команда-клиенту] клиент не найден для {command!r}", flush=True)
+    return False
+
+
 def _save_and_dump_cities(env_getter, username):
     """§13.370: попросить у сервера сейв и напечатать раздел города КАК ЕСТЬ."""
     try:
@@ -780,6 +803,7 @@ def _save_and_dump_cities(env_getter, username):
                     _do()
             except Exception:  # noqa: BLE001
                 pass
+        _client_send_command(env_getter, "/save ")
         text = _fetch(str(username))
         if not text:
             print("  [города-сейв] сейва пока нет", flush=True)
