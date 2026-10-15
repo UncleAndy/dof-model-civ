@@ -1349,7 +1349,6 @@ def _founder_step(obs: dict, avail: dict, mindist: int | None = None, env_getter
     return None
 
 
-
 def _city_tile_rescue(obs: dict, avail: dict):
     """Спасение ГОЛОДАЮЩЕГО города: у него годность идёт ПЕРЕД выгодой (§13.305).
 
