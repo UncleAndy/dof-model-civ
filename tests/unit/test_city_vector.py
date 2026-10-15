@@ -47,3 +47,23 @@ def test_missing_fields_are_not_invented():
 def test_units_vector_is_not_read_as_cities():
     from env.city_vector import parse_city_vectors
     assert "109" not in parse_city_vectors(SAVE, username="me")
+
+
+SAVE_OWNER_AFTER_VECTOR = """[player0]
+c={"y","x","id","name"}
+1,2,9,"Ours"
+}
+username="me"
+[player1]
+c={"y","x","id","name"}
+3,4,10,"Theirs"
+}
+username="other"
+"""
+
+
+def test_owner_is_read_even_when_vector_comes_first():
+    from env.city_vector import parse_city_vectors
+    mine = parse_city_vectors(SAVE_OWNER_AFTER_VECTOR, username="me")
+    assert set(mine) == {"9"}
+    assert mine["9"]["name"] == "Ours"

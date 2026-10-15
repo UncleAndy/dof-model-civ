@@ -1713,6 +1713,135 @@ def _wonder_city_id(obs) -> object:
     return best_id
 
 
+def _whoami_probe(env_getter):
+    """§13.381: кто мы для клиента и что у него в хранилище городов."""
+    try:
+        env = env_getter()
+        ctl = getattr(getattr(env, "unwrapped", env), "civ_controller", None)
+        pc = getattr(ctl, "player_ctrl", None)
+        cc = getattr(ctl, "city_ctrl", None)
+        mine = getattr(pc, "my_player_id", None)
+        pl = getattr(getattr(pc, "players", None), "get", None)
+        me = None
+        try:
+            me = pl(mine) if callable(pl) else None
+        except Exception:  # noqa: BLE001
+            me = None
+        cities = getattr(cc, "cities", None)
+        print(f"  [кто-мы] my_player_id={mine!r}, наш игрок={str(me)[:80]!r}, город_ctrl городов={len(cities) if isinstance(cities, dict) else cities!r}", flush=True)
+    except Exception as exc:  # noqa: BLE001
+        print(f"  [кто-мы] не вышло: {type(exc).__name__}: {exc}", flush=True)
+def _my_index(env_getter) -> int:
+    """Номер нашего игрока на сервере (`my_player_id` клиента); §13.383."""
+    try:
+        env = env_getter()
+        ctl = getattr(getattr(env, "unwrapped", env), "civ_controller", None)
+        return int(getattr(getattr(ctl, "player_ctrl", None), "my_player_id", 0) or 0)
+    except Exception:  # noqa: BLE001
+        return 0
+
+def _order_city_production(env_getter, username):
+    """§13.385: заказ производства ГОРОДУ КЛИЕНТА (его же номером), а не номером из сейва.
+
+    Номер города в сейве серверный (121 и т.п.); `env.step` ждёт номер города КЛИЕНТА
+    (`city_ctrl.cities`). Поэтому берём города прямо у клиента и фильтруем по владельцу.
+    """
+    st = globals().setdefault("_CITY_ORDER", {"tried": 0})
+    if st["tried"] >= 6:
+        return None
+    try:
+        env = env_getter()
+        ctl = getattr(getattr(env, "unwrapped", env), "civ_controller", None)
+        mine = int(getattr(getattr(ctl, "player_ctrl", None), "my_player_id", 0) or 0)
+        cities = getattr(getattr(ctl, "city_ctrl", None), "cities", None)
+        if not isinstance(cities, dict) or not cities:
+            return None
+        ours = {cid: rec for cid, rec in cities.items()
+                if isinstance(rec, dict) and int(rec.get("owner", mine)) == mine}
+        if not ours:
+            return None
+        if len(ours) >= 3:
+            st["tried"] = 6
+            print(f"  [заказ] городов у клиента уже {len(ours)} — поселенец не нужен", flush=True)
+            return None
+        _save_build = {}
+        try:
+            from env.city_vector import parse_player_section as _pps
+            from env.map_from_save import fetch_newest_save as _fs
+            _txt = _fs(str(username or "")) if username else None
+            if _txt:
+                for _r in _pps(_txt, mine).values():
+                    _save_build[str(_r.get("id"))] = str(_r.get("currently_building_name") or "")
+        except Exception:  # noqa: BLE001
+            _save_build = {}
+        for cid, rec in sorted(ours.items(), key=lambda kv: str(kv[0])):
+            _names = _production_names(env_getter()) or {}
+            _pv = rec.get("production_value")
+            built = str(_names.get(int(_pv)) if isinstance(_pv, (int, float)) else _pv or "")
+            st["tried"] += 1
+            built = _save_build.get(str(cid), built)
+            print(f"  [заказ] город клиента {cid}: по сейву строит {built!r} (номер {rec.get('production_value')}), щитов/ход {rec.get('prod_shield')}, щитов {rec.get('shield_stock')}",
+                  flush=True)
+            if built.endswith("Settlers") or built == "Settlers":
+                return None
+            try:
+                _av = (info.get("available_actions") or {}).get("city") or {}
+                _acts = _av.get(str(cid)) or _av.get(cid)
+                _legal = [k for k, v in (_acts or {}).items() if v] if isinstance(_acts, dict) else _acts
+                print(f"  [заказ] законные действия города: {str(_legal)[:200]}", flush=True)
+            except Exception as _exc:  # noqa: BLE001
+                print(f"  [заказ] действия города не прочесть: {_exc}", flush=True)
+            print(f"  [заказ] → produce_Settlers (город {cid})", flush=True)
+            return ("city", cid, "produce_Settlers")
+        return None
+    except Exception as exc:  # noqa: BLE001
+        print(f"  [заказ] не вышло: {type(exc).__name__}: {exc}", flush=True)
+        return None
+
+
+def _order_settlers_from_save(env_getter, username):
+    """§13.378: заказ производства городу по записям ходового сейва.
+
+    Города до клиента не доходят (§13.369), а стенд действий постановки не предлагает,
+    поэтому действие синтезируем сами: ("city", <id>, "produce_Settlers"). Города берём
+    из вектора `c={}` сейва (§13.376). Пробуем малое число раз: если сервер откажет,
+    повторять вредно (заказ города может подвесить партию).
+    """
+    st = globals().setdefault("_SETTLER_ORDER", {"tried": 0, "sent": 0})
+    if st["tried"] >= 3:
+        return None
+    try:
+        from env.city_vector import parse_player_section as _parse_player_section
+        from env.map_from_save import fetch_newest_save as _fetch_save
+        _uname = str(username or "")
+        text = _fetch_save(_uname) if _uname else None
+        print(f"  [заказ] сейв прочитан: {len(text) if text else 0} знаков", flush=True)
+        if not text:
+            return None
+        _idx = _my_index(env_getter)
+        _un = None
+        for _ln in text.splitlines()[:4000]:
+            if _ln.startswith("username="):
+                _un = _ln.split("=", 1)[1].strip().strip(chr(34))
+        print(f"  [заказ] наш номер игрока {_idx}, в сейве раздел 0 = {_un!r}", flush=True)
+        cities = _parse_player_section(text, _idx)
+        if len(cities) >= 3:
+
+            print(f"  [заказ] городов уже {len(cities)} — заказ поселенца не нужен", flush=True)
+            st["tried"] = 3
+            return None
+        for cid, rec in sorted(cities.items()):
+            built = str(rec.get("currently_building_name") or "")
+            if built == "Settlers":
+                print(f"  [заказ] город {cid} {rec.get("name")!r} уже строит Settlers", flush=True)
+                return None
+            st["tried"] += 1
+            print(f"  [заказ] город {cid} {rec.get("name")!r}: щиты {rec.get("shield_stock")}, щитов/ход {rec.get("last_turns_shield_surplus")}, строит {built!r} → заказываю produce_Settlers", flush=True)
+            return ("city", str(cid), "produce_Settlers")
+        return None
+    except Exception as exc:  # noqa: BLE001
+        print(f"  [заказ] не вышло: {type(exc).__name__}: {exc}", flush=True)
+        return None
 def _production_candidate(obs: dict, info: dict, dof_state, extractor,
                           type_names, military_names, gold, avail=None,
                           env_getter=None) -> dict | None:
@@ -1784,17 +1913,47 @@ def _production_candidate(obs: dict, info: dict, dof_state, extractor,
             print(f"  [выбор-производства] проба упала: {type(_exc).__name__}: {_exc}", flush=True)
     cities = (obs or {}).get("city") or {}
     if not cities:
-        # §13.369: слой городов наблюдения бывает пуст (`действий у города всего []`). Тогда
-        # сборочный проход не начинается вовсе и заказов производству не появляется. Берём
-        # записи городов у КОНТРОЛЛЕРА — тот же мир, второй канал (§13.357).
+        # §13.377: оба канала по городам пусты (§13.369) — берём города из ХОДОВОГО СЕЙВА
+        # (§13.376: вектор `c={}` в разделе игрока) и переносим имена полей сейва в те,
+        # которых ждёт выбор производства.
+        try:
+            from env.city_vector import parse_city_vectors as _parse_cities
+            from env.map_from_save import fetch_newest_save as _fetch_save
+            _uname = str(fc_args.get("username") or "")
+            _txt = _fetch_save(_uname) if _uname else None
+            if _txt:
+                _saved = _parse_cities(_txt, username=_uname)
+                _inv = {}
+                try:
+                    for _val, _nm in (type_names or {}).items():
+                        _inv[str(_nm)] = _val
+                except Exception:  # noqa: BLE001
+                    _inv = {}
+                for _cid, _rec in _saved.items():
+                    _built = str(_rec.get("currently_building_name") or "") or None
+                    cities[str(_cid)] = {
+                        "id": _rec.get("id", _cid),
+                        "x": _rec.get("x"), "y": _rec.get("y"),
+                        "name": _rec.get("name"),
+                        "size": _rec.get("size"),
+                        "shield_stock": _rec.get("shield_stock"),
+                        "prod_shield": _rec.get("last_turns_shield_surplus"),
+                        "production_value": _inv.get(_built) if _built else None,
+                        "production_kind": _rec.get("currently_building_kind"),
+                        "surplus_food": _rec.get("surplus_food"),
+                        "_from_save": True,
+                    }
+                if cities and _filters_trace():
+                    print(f"  [города-сейв] городов из ходового сейва: {len(cities)}", flush=True)
+        except Exception as _exc:  # noqa: BLE001
+            if _filters_trace():
+                print(f"  [города-сейв] не вышло: {type(_exc).__name__}: {_exc}", flush=True)
+    # §13.369: слой городов наблюдения бывает пуст — пробуем живой контроллер
+    if not cities:
         try:
             cities = _controller_cities(env_getter) or cities
         except Exception:  # noqa: BLE001
             pass
-    # Его правило: чудеса строит ТОЛЬКО город чудес (`daicity.c:1972`). Без этой проверки
-    # наш город населением 3 ставил `Colossus` (измерено, игра 6001: `produce_Colossus` ×5) —
-    # вложение в 100 щитов, которое окупается позже конца партии, тогда как у него чудо
-    # получает ровно один город, и то по щитам.
     wonder_city = _wonder_city_id(obs)
     for cid, rec in cities.items():
         if not isinstance(rec, dict):
@@ -4537,6 +4696,12 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                                           f"значение {str(_u0)[:100]!r}", flush=True)
                         except Exception as _exc:  # noqa: BLE001
                             print(f"  [позиции] ошибка: {type(_exc).__name__}: {_exc}", flush=True)
+                    if os.environ.get("DOF_WHOAMI") == "1" and int(str(info.get("turn", 0) or 0)) % 5 == 1:
+                        _whoami_probe(env_getter)
+                    if os.environ.get("DOF_ORDER_SETTLERS") == "1":
+                        _order = _order_city_production(env_getter, fc_args.get("username"))
+                        if _order is not None:
+                            return _order
                     if os.environ.get("DOF_CITY_FROM_SAVE") == "1":
                         _save_and_dump_cities(env_getter, fc_args.get("username"))
                     if os.environ.get("DOF_CITY_DEBUG") == "1":

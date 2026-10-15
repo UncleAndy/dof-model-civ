@@ -89,7 +89,7 @@ def fetch_newest_save(username: str, container: str = "freeciv-web") -> str | No
     try:
         listing = subprocess.run(
             ["docker", "exec", container, "sh", "-c",
-             f"ls -t /var/lib/tomcat10/webapps/data/savegames/{username}/*.sav* 2>/dev/null | head -1"],
+             f"find /var/lib/tomcat10/webapps/data/savegames/{username} -name '*.sav*' -mmin -30 -printf '%T@ %p\\n' 2>/dev/null | sort -n | tail -1 | cut -d' ' -f2-"],
             capture_output=True, text=True, timeout=60)
         path = (listing.stdout or "").strip()
         if not path:
