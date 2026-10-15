@@ -4936,7 +4936,24 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
         fc_args["client_port"] = port
         env = gymnasium.make("civrealm/FreecivBase-v0")
         obs, info = env.reset(client_port=port, seed=seed)
-
+        # §13.361: ПРОВЕРКА ОТКРЫТИЯ ВСЕЙ КАРТЫ. `fogofwar` — настройка ПРАВИЛ (SSET_RULES):
+        # сервер меняет её, только пока карта пуста или игра не начата (`settings.c:3417-3425`).
+        # Клиент стенда сам шлёт `/set` (`civ_controller.py:760-763`), значит доступ у игрока есть.
+        if os.environ.get("DOF_REVEAL_MAP") == "1":
+            _ws = getattr(getattr(getattr(env, "unwrapped", None), "civ_controller", None),
+                         "ws_client", None)
+            if _ws is None:
+                print("  [карта-открыта] клиента нет — команду не отправить", flush=True)
+            else:
+                # §13.361: значение проверяем ИЗ СЕЙВА сервера (`/save`), а не догадкой: в файле
+                # есть таблица настроек, и в ней видно `fogofwar,TRUE/FALSE`.
+                for _cmd in ("/save",):
+                    try:
+                        _ws.send_message(_cmd)
+                        print(f"  [карта-открыта] отправил {_cmd!r}", flush=True)
+                    except Exception as _exc:  # noqa: BLE001
+                        print(f"  [карта-открыта] {_cmd!r} упало: {type(_exc).__name__}: {_exc}",
+                              flush=True)
         # Which civilisation the env is playing is decided when the game is
         # created, NOT by the agent — hardcoding player 0 silently made every
         # own-civilisation test fail (garrison counts, the founding estimate, and
