@@ -1853,6 +1853,11 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
                     _save_build[str(_r.get("id"))] = str(_r.get("currently_building_name") or "")
         except Exception:  # noqa: BLE001
             _save_build = {}
+        # §13.403: поселенцев должен строить РОВНО ОДИН город, остальные — по ЕГО выбору
+        # (`_production_candidate`). Прежде мы требовали поселенцев от КАЖДОГО города, пока
+        # городов меньше цели: города не росли вовсе (замер: население 8.5 против 37, размер
+        # 1-2, и у него же города строят City Walls/Great Wall, а не одних поселенцев).
+        _any_settlers_now = any(str(_v).endswith("Settlers") for _v in (_save_build or {}).values())
         # §13.389: ЕГО выбор производства — максимум хотелок советников (§13.364). Считаем
         # хотелку для каждого законного имени постановки и берём наибольшую.
         _ctx = None
@@ -1966,6 +1971,11 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
                 # §13.396: этот город УЖЕ строит нужное — заказ отдаём следующему. Прежде здесь
                 # стоял `return None`, и заказ всегда доставался первому по номеру городу, а
                 # остальные (замер r695: основаны на 23, 29, 37 ходах) дожимали `Warriors`.
+                continue
+            if _any_settlers_now:
+                # §13.403: поселенцев уже строит другой город — этот город отдаём ЕГО выбору
+                # (постановка прогноза ниже), иначе все города до цели роста строят только
+                # поселенцев и не растут (население 8.5 против 37 у него).
                 continue
             try:
                 _av = (info.get("available_actions") or {}).get("city") or {}
