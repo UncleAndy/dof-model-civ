@@ -977,7 +977,12 @@ def _founder_step(obs: dict, avail: dict, mindist: int | None = None, env_getter
             _mindist = 0
             _mindist_src = "неизвестно"
     # §13.357: два канала — наблюдение И контроллер. Слой наблюдения бывает пуст в начале хода.
-    _known_cities = set(city_positions(obs)) | _our_cities_from_controller(env_getter, obs)
+    # §13.412: к известным городам добавляем площадки, где МЫ САМИ основали город в этой партии.
+    # Замер r915: после основания на (9,11) другие поселенцы ещё 33 раза приходили в тот же
+    # район и получали отказ — наш список городов от клиента отстаёт от мира, и ранжирование
+    # предлагало клетки рядом с уже поставленным городом.
+    _known_cities = (set(city_positions(obs)) | _our_cities_from_controller(env_getter, obs)
+                     | set(globals().get("_FOUNDED_SITES") or set()))
     if os.environ.get("DOF_FOUND_DEBUG") == "1":
         _seen_turn = globals().setdefault("_MAP_LAYERS_SEEN", set())
         _seen_cnt = globals().setdefault("_MAP_LAYERS_CALLS", [0])
@@ -1159,7 +1164,13 @@ def _founder_step(obs: dict, avail: dict, mindist: int | None = None, env_getter
         # переживает стоимость пути (380.2 против 348.5; 541.8 против 469.7; 469.8 против 421.2),
         # а мы основывали на месте и получали землю с 8 щитами на 21 клетку.
         try:
-            ranked_all = rank_sites(obs, exclude=city_positions(obs),
+            # §13.413: отказные клетки ЭТОГО поселенца исключаем из поиска, а не только из
+            # «основать здесь». Замер r930: у unit/118 и unit/120 ВСЕ их площадки (3-4) попали в
+            # чёрный список, и наш перебор снова выбирал лучшую из отказных — поселенец ходил по
+            # кругу. Мир отказал в клетке — это факт о мире (его `cityresult_fill` её не берёт),
+            # значит и наше ранжирование её не предлагает.
+            _black = set((globals().get("_FOUND_BLACK") or {}).get(uid) or set())
+            ranked_all = rank_sites(obs, exclude=city_positions(obs) | _black,
                                     reference=tuple(pos), settler_shield_cost=0.0,
                                     cities=_known_cities, mindist=_mindist,
                                     reserved=_cmap, revealed=_rev)
@@ -1272,6 +1283,9 @@ def _founder_step(obs: dict, avail: dict, mindist: int | None = None, env_getter
                 _FOUND_TARGET.pop(str(uid), None)
                 _cmap.free_city_spot(_held[0], _held[1], uid)   # пришли: место отдаём городу
                 if can_found_here and founding:
+                    # §13.412: помним своё основание сразу — список городов от клиента отстаёт,
+                    # и без этой памяти другие поселенцы шли в тот же район и получали отказ.
+                    globals().setdefault("_FOUNDED_SITES", set()).add((int(pos[0]), int(pos[1])))
                     if os.environ.get("DOF_FOUND_DEBUG") == "1":
                         print(f"  [основание] unit/{uid} пришёл на {tuple(pos)}: приказ "
                               f"{founding[0]} (его dai_do_build_city)", flush=True)
@@ -6237,6 +6251,15 @@ def main():
                 _memory_reset()
             except Exception:  # noqa: BLE001
                 pass
+            # §13.412: своя память о площадках (основанные, отказные, удерживаемые цели) тоже
+            # относится к партии: иная карта — иные координаты. Именно `clear()`, а не удаление
+            # имени: эти имена объявлены на уровне модуля, и их удаление ломает партию
+            # (`NameError: name '_FOUND_TARGET' is not defined` в самом первом прогоне).
+            for _nm in ("_FOUNDED_SITES", "_FOUND_TARGET", "_FOUND_BLACK", "_FOUND_FAIL",
+                        "_ORDERED_THIS_TURN"):
+                _mem = globals().get(_nm)
+                if hasattr(_mem, "clear"):
+                    _mem.clear()
             seed = None if args.seed_base is None else args.seed_base + ep
             metrics = None
             port = None
