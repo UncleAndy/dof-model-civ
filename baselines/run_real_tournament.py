@@ -1883,6 +1883,43 @@ def _my_index(env_getter) -> int:
     except Exception:  # noqa: BLE001
         return 0
 
+def _city_size_of(rec: dict, save_fields: dict | None, cid) -> float | None:
+    """Размер города: сперва из наблюдения, потом из сейва (§13.419)."""
+    for _src in (rec, (save_fields or {}).get(str(cid)),
+                 (save_fields or {}).get(str((rec or {}).get("id")))):
+        if not isinstance(_src, dict):
+            continue
+        try:
+            if _src.get("size") is not None:
+                return float(_src["size"])
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _first_legal_build(info: dict, cid, avoid: tuple[str, ...] = ()) -> str | None:
+    """Первая законная постановка города, кроме запрещённых (§13.419).
+
+    Берём ИМЕННО то, что мир предлагает городу (`info['available_actions']['city']`), — ничего не
+    выдумываем. Предпочитаем `Coinage`: в маске стенда это единственная невоенная и не
+    расходующая население постановка, а поселенца строить городу нельзя (см. §13.419).
+    """
+    try:
+        acts = ((info or {}).get("available_actions") or {}).get("city") or {}
+        one = acts.get(str(cid)) or acts.get(cid) or {}
+        names = [str(k)[len("produce_"):] for k, v in dict(one).items()
+                 if v and str(k).startswith("produce_")]
+    except Exception:  # noqa: BLE001
+        return None
+    names = [n for n in names if n not in avoid]
+    if not names:
+        return None
+    for pref in ("Coinage", "Barracks"):
+        if pref in names:
+            return pref
+    return names[0]
+
+
 def _order_city_production(env_getter, username, obs=None, info=None, dof_state=None,
                           extractor=None):
     """§13.385: заказ производства ГОРОДУ КЛИЕНТА (его же номером), а не номером из сейва.
@@ -2066,6 +2103,19 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
             print(f"  [заказ] город клиента {cid}: по сейву строит {built!r} (номер {rec.get('production_value')}), щитов/ход {rec.get('prod_shield')}, щитов {rec.get('shield_stock')}",
                   flush=True)
             if built.endswith("Settlers") or built == "Settlers":
+                # §13.419: ЕГО запрет — поселенца не заказывают там, где город не может отдать
+                # население: `pop_cost >= city_size_get(pcity)` (`daicity.c:788`, «We don't like
+                # disbanding the city as a side effect»). Замер s1010: три наших города на 80-м
+                # ходу ВСЕ размера 1 (у сторон-ИИ 2.17-2.33) — город, строящий поселенца при
+                # размере 1, не растёт НИКОГДА, и такой заказ надо не «дожимать», а снимать.
+                _sz1 = _city_size_of(rec, _save_fields, cid)
+                if _sz1 is not None and _sz1 <= 1.0:
+                    _alt2 = _first_legal_build(info, cid, avoid=("Settlers",))
+                    if _alt2:
+                        _ord_mem[str(cid)] = _alt2
+                        print(f"  [заказ] город {cid} размера {_sz1:g} не может строить поселенца "
+                              f"→ { _alt2!r} (его daicity.c:788)", flush=True)
+                        return ("city", cid, f"produce_{_alt2}")
                 # §13.396: этот город УЖЕ строит нужное — заказ отдаём следующему. Прежде здесь
                 # стоял `return None`, и заказ всегда доставался первому по номеру городу, а
                 # остальные (замер r695: основаны на 23, 29, 37 ходах) дожимали `Warriors`.
@@ -2131,6 +2181,17 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
                 print(f"  [заказ] у города {cid} нет своего войска → produce_Warriors", flush=True)
                 _ord_mem[str(cid)] = "Warriors"
                 return ('city', cid, 'produce_Warriors')
+            _sz2 = _city_size_of(rec, _save_fields, cid)
+            if _sz2 is not None and _sz2 <= 1.0:
+                # §13.419: то же правило и для НАШЕЙ постановки — городу размера 1 поселенца не
+                # заказываем (он не может отдать население: `daicity.c:788`).
+                _alt3 = _first_legal_build(info, cid, avoid=("Settlers",))
+                if _alt3:
+                    _ord_mem[str(cid)] = _alt3
+                    print(f"  [заказ] город {cid} размера {_sz2:g} не может строить поселенца "
+                          f"→ {_alt3!r} (его daicity.c:788)", flush=True)
+                    return ("city", cid, f"produce_{_alt3}")
+                continue
             print(f"  [заказ] город {cid} защищён → produce_Settlers", flush=True)
             _ord_mem[str(cid)] = "Settlers"
             return ("city", cid, "produce_Settlers")
