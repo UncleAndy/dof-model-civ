@@ -784,48 +784,48 @@ def _client_send_command(env_getter, command: str) -> bool:
 
 
 def _save_and_dump_cities(env_getter, username):
-    """§13.370: попросить у сервера сейв и напечатать раздел города КАК ЕСТЬ."""
+    """§13.375: читать ХОДОВОЙ сейв всю партию и печатать запись города как есть."""
     try:
         from env import city_from_save as _cfs
         from env.map_from_save import fetch_newest_save as _fetch
-        _st = globals().setdefault("_CITY_SAVE_PROBE", {"done": False, "tries": 0})
-        if _st["done"] or _st["tries"] > 6:
-            if _st["tries"] == 6 and not _st["done"]:
-                print("  [города-сейв] сейва с городами так и не появилось", flush=True)
-            return
+        _st = globals().setdefault("_CITY_SAVE_PROBE", {"tries": 0, "printed": False})
         _st["tries"] += 1
-        if env_getter:
+        if _st["tries"] > 200:
+            return
+        if env_getter and _st["tries"] % 4 == 1:
             try:
-                env = env_getter()
-                ctl = getattr(getattr(env, "unwrapped", None), "civ_controller", None)
-                _do = getattr(ctl, "save_game", None)
-                if callable(_do):
-                    _do()
+                _client_send_command(env_getter, "/save dofsave1")
             except Exception:  # noqa: BLE001
                 pass
-        _client_send_command(env_getter, "/save ")
         text = _fetch(str(username))
         if not text:
-            print("  [города-сейв] сейва пока нет", flush=True)
+            if _st["tries"] % 8 == 1:
+                print(f"  [города-сейв] попытка {_st['tries']}: сейва ещё нет", flush=True)
             return
-        if not globals().setdefault("_CITY_SAVE_STRUCT", {"done": False})["done"]:
-            globals()["_CITY_SAVE_STRUCT"]["done"] = True
+        sections = _cfs.city_sections(text)
+        if _st["tries"] % 6 == 1 or (sections and not _st["printed"]):
+            print(f"  [города-сейв] попытка {_st['tries']}: разделов городов {len(sections)}",
+                  flush=True)
+        if True:  # §13.376: перезаписываем ВСЕГДА — нужен самый поздний ходовой сейв
+            try:
+                with open("/tmp/dof_last_save.txt", "w", encoding="utf-8") as _f:
+                    _f.write(text)
+                _st["saved_text"] = True
+                print(f"  [города-сейв] текст сейва сохранён: {len(text)} знаков", flush=True)
+            except Exception:  # noqa: BLE001
+                pass
+        if not _st.get("raw") and text:
+            _st["raw"] = True
             print("  [оглавление-сейва]", flush=True)
             print(_cfs.dump_structure(text), flush=True)
             print("  [раздел игрока]", flush=True)
-            print("  [кто-есть-кто]", flush=True)
-            print(_cfs.dump_players_summary(text), flush=True)
-        block = _cfs.dump_city_block(text)
-        if block:
-            _st["done"] = True
-            print("  [города-сейв] раздел города из сейва:", flush=True)
-            print(block, flush=True)
-        else:
-            print("  [города-сейв] разделов городов в сейве нет", flush=True)
+            print(_cfs.dump_player_section(text, 70), flush=True)
+        if sections and not _st["printed"]:
+            _st["printed"] = True
+            print("  [города-сейв] первая запись города:", flush=True)
+            print({k: v for k, v in list(sections[0].items())[:30]}, flush=True)
     except Exception as _exc:  # noqa: BLE001
         print(f"  [города-сейв] проба упала: {type(_exc).__name__}: {_exc}", flush=True)
-
-
 def _city_channels_probe(obs, avail, env_getter, extractor=None):
     """Прибор §13.369: что видно по городам в КАЖДОМ канале (наблюдение / контроллер / маски)."""
     try:
