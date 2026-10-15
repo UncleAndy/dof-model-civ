@@ -679,6 +679,29 @@ def _our_cities_from_controller(env_getter, obs: dict) -> set[tuple[int, int]]:
         return set()
 
 
+def _maybe_learn_map_from_save(turn, every=10):
+    """§13.363: наполнить память о карте сейвом сервера — то, что видит его `omniscience`."""
+    try:
+        from env import map_from_save as _mfs
+        _name = str(fc_args.get("username") or "")
+        if not _name:
+            return None
+        _state = globals().setdefault("_MAP_SAVE_STATE", {})
+        _last = _state.get("turn")
+        if _last is not None and turn is not None and int(turn) - int(_last) < int(every):
+            return None
+        _state["turn"] = turn
+        _n = _mfs.load_from_save(_name)
+        if _n:
+            print(f"  [карта-сейв] память наполнена сейвом: известных клеток {_n}", flush=True)
+        else:
+            print("  [карта-сейв] сейва нет или пуст — оставляю память как есть", flush=True)
+        return _n
+    except Exception as _exc:  # noqa: BLE001
+        print(f"  [карта-сейв] проба упала: {type(_exc).__name__}: {_exc}", flush=True)
+        return None
+
+
 def _founder_step(obs: dict, avail: dict, mindist: int | None = None, env_getter=None):
     """Поселенец идёт к лучшей площадке по ЕГО числам, а не основывает где стоит (§13.306).
 
@@ -4280,6 +4303,9 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                                           f"значение {str(_u0)[:100]!r}", flush=True)
                         except Exception as _exc:  # noqa: BLE001
                             print(f"  [позиции] ошибка: {type(_exc).__name__}: {_exc}", flush=True)
+                    if os.environ.get("DOF_MAP_FROM_SAVE") == "1":
+                        _maybe_learn_map_from_save(
+                            info.get("turn") if isinstance(info, dict) else None)
                     _founder = _founder_step(obs, avail,
                                              mindist=_world_citymindist(env_getter()),
                                              env_getter=env_getter)

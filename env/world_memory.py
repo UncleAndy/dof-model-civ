@@ -56,6 +56,23 @@ def update(map_obs: dict[str, Any]) -> int:
     return len(_KNOWN)
 
 
+def learn_full_map(terrain_by_xy: dict[tuple[int, int], str]) -> int:
+    """Запомнить ВСЮ карту (из сейва сервера) — то же, что видит его `omniscience`."""
+    if not isinstance(terrain_by_xy, dict):
+        return len(_KNOWN)
+    learned = 0
+    for (x, y), name in terrain_by_xy.items():
+        if not name:
+            continue
+        key = (int(x), int(y))
+        if _KNOWN.get(key, (None, ()))[0] != str(name):
+            learned += 1
+        _KNOWN[key] = (str(name), tuple(_KNOWN.get(key, ('', ()))[1]))
+    CALLS["full"] = CALLS.get("full", 0) + 1
+    CALLS["tiles"] = len(_KNOWN)
+    return len(_KNOWN)
+
+
 def known() -> set[tuple[int, int]]:
     """Клетки, которые мы видели хоть раз."""
     return set(_KNOWN)
