@@ -127,7 +127,7 @@ def dump_players_summary(text: str) -> str:
             continue
         if not cur:
             continue
-        for key in ("name=", "username=", "ai_type=", "is_alive="):
+        for key in ("name=", "username=", "ai_type=", "ai_controlled=", "ai_fuzzy=", "is_alive="):
             if line.startswith(key):
                 info[key.rstrip("=")] = line.split("=", 1)[1].strip()
         if line.startswith(("u=", "c=", "w=")) or "_size=" in line and "unit" in line.lower():
