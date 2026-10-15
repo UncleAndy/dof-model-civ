@@ -1762,6 +1762,22 @@ def _production_candidate(obs: dict, info: dict, dof_state, extractor,
                         continue
                     if isinstance(acts, dict):
                         offered.update(str(a) for a in acts.keys())
+        # §13.367 (указание владельца): СБОР не фильтруем. Если мир сейчас не перечислил имена
+        # для города, берём ВСЁ, что город может строить — из его же записи и правил
+        # (`_world_production_names`: `can_build_unit` + `can_build_improvement`). Отсев —
+        # только на этапе решения (клины, род, нужда, хотелки §13.365/13.366).
+        if not offered:
+            try:
+                _may = _world_production_names(env_getter, cid)
+                if _may:
+                    offered = {str(_x) for _x in _may}
+                    if _filters_trace():
+                        print(f"  [сбор] город {cid}: мир не перечислил имена — беру всё, что город "
+                            f"может строить: {len(offered)}", flush=True)
+            except Exception as _exc:  # noqa: BLE001
+                if _filters_trace():
+                    print(f"  [сбор] город {cid}: список возможного не получен: "
+                        f"{type(_exc).__name__}: {_exc}", flush=True)
         # Предохранитель 2: клины уважаем — но ТОЛЬКО там, где отказ подтверждён.
         # §13.346: голый `is_wedged` считает отказы и НЕ смотрит успехи. Измерено:
         # `city/produce_Settlers` имел 6 отказов (партии, кончившиеся по таймауту) и
