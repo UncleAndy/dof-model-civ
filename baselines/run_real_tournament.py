@@ -641,6 +641,10 @@ _FOUND_TARGET: dict = {}
 #: §13.395: сколько раз подряд шаг к удерживаемой цели не нашёлся. Цель бросаем не сразу:
 #: сброс цели из-за одного недоступного шага и давал качание поселенцев (§13.394).
 _FOUND_FAIL: dict = {}
+#: §13.402: площадки, где мир ОТКАЗАЛ в основании этому поселенцу (`основать_здесь=False`).
+#: Без этого поселенец приходил на отказную клетку, цель снималась, он выбирал её снова и
+#: стоял (замер r790: 14–16 повторов на паре клеток, оснований за 45 ходов — ни одного роста).
+_FOUND_BLACK: dict = {}
 
 #: §13.339: проба «действует ли путь `ctrl_type=city` в этом стенде». Помним, какой ход по
 #: клетке заказан и какими были выходы города; на следующем появлении города сравниваем.
@@ -1138,6 +1142,17 @@ def _founder_step(obs: dict, avail: dict, mindist: int | None = None, env_getter
                                     reserved=_cmap)
         except Exception:  # noqa: BLE001
             ranked_all = []
+        _black = _FOUND_BLACK.get(str(uid)) or set()
+        if _black and ranked_all:
+            # §13.402: отказные клетки этого поселенца площадками не считаем (его `daisettler.c`
+            # отменяет задачу, если основать на цели нельзя). Если чёрный список съел всё —
+            # оставляем как есть: пусть лучше попробует, чем стоит.
+            _kept = [c for c in ranked_all if (int(c[0]), int(c[1])) not in _black]
+            if _kept:
+                ranked_all = _kept
+            elif os.environ.get("DOF_FOUND_DEBUG") == "1":
+                print(f"  [чёрный-список] unit/{uid}: все площадки отказные ({len(_black)}) — "
+                      f"беру лучшую из них", flush=True)
         if not ranked_all:
             if os.environ.get("DOF_FOUND_DEBUG") == "1":
                 print(f"  [пропуск] unit/{uid} на {tuple(pos)}: достижимых площадок нет",
@@ -1222,6 +1237,12 @@ def _founder_step(obs: dict, avail: dict, mindist: int | None = None, env_getter
                         print(f"  [основание] unit/{uid} пришёл на {tuple(pos)}: приказ "
                               f"{founding[0]} (его dai_do_build_city)", flush=True)
                     return ("unit", uid, founding[0])
+                # §13.402: мир отказал в основании на этой клетке — запоминаем её за этим
+                # поселенцем, чтобы он не выбрал её снова (без этого стоял тут весь прогон).
+                _FOUND_BLACK.setdefault(str(uid), set()).add((int(pos[0]), int(pos[1])))
+                if os.environ.get("DOF_FOUND_DEBUG") == "1":
+                    print(f"  [отказ-основания] unit/{uid} на {tuple(pos)}: мир не даёт основать "
+                          f"здесь — клетка в чёрном списке, ищем другую", flush=True)
                 continue
             # ── §13.358: ЕГО ПУТЬ (`dai_unit_goto`, `daitools.c:242-291`) — идём по кратчайшему
             # пути, а не одним жадным шагом: жадный упирался в воду/тупик и стоял (§13.348).
