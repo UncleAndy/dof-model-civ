@@ -1747,7 +1747,7 @@ def _order_city_production(env_getter, username):
     (`city_ctrl.cities`). Поэтому берём города прямо у клиента и фильтруем по владельцу.
     """
     st = globals().setdefault("_CITY_ORDER", {"tried": 0})
-    if st["tried"] >= 6:
+    if st["tried"] >= 80:  # §13.388: заказов много — городов и ходов больше
         return None
     try:
         env = env_getter()
@@ -1760,8 +1760,8 @@ def _order_city_production(env_getter, username):
                 if isinstance(rec, dict) and int(rec.get("owner", mine)) == mine}
         if not ours:
             return None
-        if len(ours) >= 3:
-            st["tried"] = 6
+        if len(ours) >= 6:  # §13.388: цель роста — 6 городов (норма встроенного ИИ ранней игры)
+            st["tried"] = 80
             print(f"  [заказ] городов у клиента уже {len(ours)} — поселенец не нужен", flush=True)
             return None
         _save_build = {}
