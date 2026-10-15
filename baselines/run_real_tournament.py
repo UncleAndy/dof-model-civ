@@ -1184,9 +1184,15 @@ def _founder_step(obs: dict, avail: dict, mindist: int | None = None, env_getter
             _kept = [c for c in ranked_all if (int(c[0]), int(c[1])) not in _black]
             if _kept:
                 ranked_all = _kept
-            elif os.environ.get("DOF_FOUND_DEBUG") == "1":
-                print(f"  [чёрный-список] unit/{uid}: все площадки отказные ({len(_black)}) — "
-                      f"беру лучшую из них", flush=True)
+            else:
+                # §13.414: все площадки ЭТОГО поселенца уже отвергнуты миром. Прежде мы брали
+                # лучшую из отказных и снова шли туда — замер r940: 72 отказа за партию, все
+                # приходятся на повторные заходы в отказные клетки. Мир отказал — не идём туда
+                # снова: пусть лучше постоит, чем жжёт ходы в заведомо бесплодной поездке.
+                ranked_all = []
+                if os.environ.get("DOF_FOUND_DEBUG") == "1":
+                    print(f"  [чёрный-список] unit/{uid}: все площадки отказные ({len(_black)}) — "
+                          f"никуда не иду (мир отверг их все)", flush=True)
         if not ranked_all:
             if os.environ.get("DOF_FOUND_DEBUG") == "1":
                 # §13.407: почему площадок нет — иначе не отличить «карта пустая» от «всё
@@ -1294,8 +1300,11 @@ def _founder_step(obs: dict, avail: dict, mindist: int | None = None, env_getter
                 # поселенцем, чтобы он не выбрал её снова (без этого стоял тут весь прогон).
                 _FOUND_BLACK.setdefault(str(uid), set()).add((int(pos[0]), int(pos[1])))
                 if os.environ.get("DOF_FOUND_DEBUG") == "1":
+                    # §13.414: печатаем ПРИЧИНУ со стороны мира, а не только своё решение:
+                    # предлагает ли мир основание (`build_city`) на этой клетке прямо сейчас.
                     print(f"  [отказ-основания] unit/{uid} на {tuple(pos)}: мир не даёт основать "
-                          f"здесь — клетка в чёрном списке, ищем другую", flush=True)
+                          f"здесь (build_city={avail.get('build_city') if isinstance(avail, dict) else '?'}) "
+                          f"— клетка в чёрный список, ищем другую", flush=True)
                 continue
             # ── §13.358: ЕГО ПУТЬ (`dai_unit_goto`, `daitools.c:242-291`) — идём по кратчайшему
             # пути, а не одним жадным шагом: жадный упирался в воду/тупик и стоял (§13.348).
