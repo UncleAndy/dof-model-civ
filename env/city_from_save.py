@@ -83,3 +83,16 @@ def cities_for_production(text: str) -> dict[str, dict[str, Any]]:
         if rec:
             out[cid] = rec
     return out
+
+def dump_structure(text: str, city_lines: int = 14) -> str:
+    """Оглавление сейва: заголовки разделов + первые строки со словом `city`."""
+    heads: list[str] = []
+    cityish: list[str] = []
+    for raw in str(text).splitlines():
+        line = raw.rstrip("\r")
+        if line.startswith("[") and len(heads) < 40:
+            heads.append(line)
+        elif "city" in line.lower() and len(cityish) < city_lines:
+            cityish.append(line[:120])
+    return ("разделы: " + ", ".join(heads) + "\n"
+            + "\n".join(cityish))
