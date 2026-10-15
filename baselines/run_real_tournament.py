@@ -1155,7 +1155,22 @@ def _founder_step(obs: dict, avail: dict, mindist: int | None = None, env_getter
                       f"беру лучшую из них", flush=True)
         if not ranked_all:
             if os.environ.get("DOF_FOUND_DEBUG") == "1":
-                print(f"  [пропуск] unit/{uid} на {tuple(pos)}: достижимых площадок нет",
+                # §13.407: почему площадок нет — иначе не отличить «карта пустая» от «всё
+                # отсечено правилами». Считаем видимые клетки, наши города, резерв и citymindist.
+                _vis = 0
+                try:
+                    _mp = as_dict((obs or {}).get("map")) or {}
+                    for _k, _v in _mp.items():
+                        if str(_k) in ("width", "height", "x", "y") and not hasattr(_v, "shape"):
+                            continue
+                        if hasattr(_v, "shape") and len(getattr(_v, "shape", ())) >= 2:
+                            _vis += int(_v.shape[0]) * int(_v.shape[1])
+                            break
+                except Exception:  # noqa: BLE001
+                    _vis = -1
+                print(f"  [пропуск] unit/{uid} на {tuple(pos)}: достижимых площадок нет "
+                      f"(видимых клеток {_vis}, наших городов {len(_known_cities or [])}, "
+                      f"citymindist {_mindist}, резерв занят {len(getattr(_cmap, '_spots', {}) or {})})",
                       flush=True)
             continue                      # некуда идти — не мешаем основанию
         here = next((c for c in ranked_all
