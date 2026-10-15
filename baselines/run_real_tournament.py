@@ -1328,6 +1328,7 @@ def _founder_step(obs: dict, avail: dict, mindist: int | None = None, env_getter
     return None
 
 
+
 def _city_tile_rescue(obs: dict, avail: dict):
     """Спасение ГОЛОДАЮЩЕГО города: у него годность идёт ПЕРЕД выгодой (§13.305).
 
@@ -4909,6 +4910,15 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                             print(f"  [позиции] ошибка: {type(_exc).__name__}: {_exc}", flush=True)
                     if os.environ.get("DOF_WHOAMI") == "1" and int(str(info.get("turn", 0) or 0)) % 5 == 1:
                         _whoami_probe(env_getter)
+                    if os.environ.get("DOF_UNIT_DEBUG") == "1":
+                        # §13.401: прибор «что мир предлагает нашим юнитам» — иначе не отличить
+                        # «работник не действует» от «миру нечего предложить работнику».
+                        try:
+                            _ua = as_dict(as_dict((info or {}).get("available_actions")).get("unit")) or {}
+                            print(f"  [юнит-предложение] ход {info.get('turn')}: "
+                                  f"{str(_ua)[:400]}", flush=True)
+                        except Exception:  # noqa: BLE001
+                            pass
                     if os.environ.get("DOF_ORDER_SETTLERS") == "1":
                         _order = _order_city_production(env_getter, fc_args.get("username"), obs, info, dof.state, extractor)
                         if _order is not None:
