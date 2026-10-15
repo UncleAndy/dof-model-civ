@@ -703,6 +703,21 @@ def _land_work_want(obs: dict, map_obs: dict, offered: dict, pos) -> float:
     return best_improvement_want(entries)
 
 
+def _controller_cities(env_getter) -> dict:
+    """СВОИ ГОРОДА ИЗ КОНТРОЛЛЕРА полными записями — второй канал (§13.357, §13.369)."""
+    if env_getter is None:
+        return {}
+    try:
+        env = env_getter()
+        ctl = getattr(getattr(env, "unwrapped", None), "civ_controller", None)
+        _cities = getattr(getattr(ctl, "city_ctrl", None), "cities", None)
+        if not isinstance(_cities, dict):
+            return {}
+        return {str(k): (dict(v) if isinstance(v, dict) else v) for k, v in _cities.items()}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
 def _our_cities_from_controller(env_getter, obs: dict) -> set[tuple[int, int]]:
     """СВОИ ГОРОДА ИЗ КОНТРОЛЛЕРА (`city_ctrl.cities`) — второй канал, как у позиций юнитов §13.348.
 
@@ -743,6 +758,44 @@ def _our_cities_from_controller(env_getter, obs: dict) -> set[tuple[int, int]]:
         return out
     except Exception:  # noqa: BLE001
         return set()
+
+
+def _city_channels_probe(obs, avail, env_getter, extractor=None):
+    """Прибор §13.369: что видно по городам в КАЖДОМ канале (наблюдение / контроллер / маски)."""
+    try:
+        _st = globals().setdefault("_CITY_CH_PROBE", {"n": 0})
+        _st["n"] += 1
+        if _st["n"] > 8:
+            return
+        _obs_city = (as_dict((as_dict(obs) or {}).get("city")) or {})
+        _ctl_city = _controller_cities(env_getter)
+        _avail_city = {}
+        if isinstance(avail, dict):
+            for _ctrl, _actors in avail.items():
+                if str(_ctrl) in ("city", "city_ctrl") and isinstance(_actors, dict):
+                    _avail_city[str(_ctrl)] = sum(len(a) if isinstance(a, dict) else 0
+                                for a in _actors.values())
+        _masks = []
+        for _cid, _rec in list(_obs_city.items())[:3]:
+            if not isinstance(_rec, dict):
+                continue
+            _m = []
+            for _f in ("can_build_unit", "can_build_improvement"):
+                _v = _rec.get(_f)
+                if _v is None:
+                    _m.append(_f.split("_")[-1] + "=нет")
+                else:
+                    try:
+                        _m.append(_f.split("_")[-1] + f"={int(sum(1 for x in list(_v) if int(x) != 0))}")
+                    except Exception:  # noqa: BLE001
+                        _m.append(_f.split("_")[-1] + "=?")
+            _masks.append(f"{_cid}({','.join(_m)})")
+        print(f"  [каналы] ход-вызов {_st['n']}: наблюдение {len(_obs_city)} "
+              f"{[str(k) for k in list(_obs_city)[:3]]}, контроллер {len(_ctl_city)} "
+              f"{[str(k) for k in list(_ctl_city)[:3]]}, действия города {_avail_city}, "
+              f"маски {_masks}", flush=True)
+    except Exception as _exc:  # noqa: BLE001
+        print(f"  [каналы] проба упала: {type(_exc).__name__}: {_exc}", flush=True)
 
 
 def _maybe_learn_map_from_save(turn, every=10):
@@ -1664,6 +1717,14 @@ def _production_candidate(obs: dict, info: dict, dof_state, extractor,
         except Exception as _exc:  # noqa: BLE001
             print(f"  [выбор-производства] проба упала: {type(_exc).__name__}: {_exc}", flush=True)
     cities = (obs or {}).get("city") or {}
+    if not cities:
+        # §13.369: слой городов наблюдения бывает пуст (`действий у города всего []`). Тогда
+        # сборочный проход не начинается вовсе и заказов производству не появляется. Берём
+        # записи городов у КОНТРОЛЛЕРА — тот же мир, второй канал (§13.357).
+        try:
+            cities = _controller_cities(env_getter) or cities
+        except Exception:  # noqa: BLE001
+            pass
     # Его правило: чудеса строит ТОЛЬКО город чудес (`daicity.c:1972`). Без этой проверки
     # наш город населением 3 ставил `Colossus` (измерено, игра 6001: `produce_Colossus` ×5) —
     # вложение в 100 щитов, которое окупается позже конца партии, тогда как у него чудо
@@ -4410,6 +4471,8 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                                           f"значение {str(_u0)[:100]!r}", flush=True)
                         except Exception as _exc:  # noqa: BLE001
                             print(f"  [позиции] ошибка: {type(_exc).__name__}: {_exc}", flush=True)
+                    if os.environ.get("DOF_CITY_DEBUG") == "1":
+                        _city_channels_probe(obs, avail, env_getter, extractor)
                     if os.environ.get("DOF_MAP_FROM_SAVE") == "1":
                         _maybe_learn_map_from_save(
                             info.get("turn") if isinstance(info, dict) else None)
