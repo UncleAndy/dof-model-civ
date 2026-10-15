@@ -1298,12 +1298,29 @@ def _founder_step(obs: dict, avail: dict, mindist: int | None = None, env_getter
                     return ("unit", uid, founding[0])
                 # §13.402: мир отказал в основании на этой клетке — запоминаем её за этим
                 # поселенцем, чтобы он не выбрал её снова (без этого стоял тут весь прогон).
-                _FOUND_BLACK.setdefault(str(uid), set()).add((int(pos[0]), int(pos[1])))
+                _key = (int(pos[0]), int(pos[1]))
+                # §13.416: мир отвечает `build_city=False` и тогда, когда у поселенца просто
+                # кончился ход (действие требует очков движения), — а не только когда клетка
+                # негодна. Замер r970: 24 отказные клетки — все на хорошей земле (трава, равнина,
+                # лес, холмы), ни одной из `NoCities`. Прежде мы с первого отказа писали клетку
+                # в чёрный список и больше туда не шли. Теперь пишем только после ВТОРОГО отказа
+                # на той же клетке: первый — «попробуй ещё раз следующим ходом».
+                _cnt = globals().setdefault("_FOUND_REFUSALS", {})
+                _per = _cnt.setdefault(str(uid), {})
+                _per[_key] = int(_per.get(_key, 0)) + 1
+                if _per[_key] < 2:
+                    if os.environ.get("DOF_FOUND_DEBUG") == "1":
+                        print(f"  [отказ-основания] unit/{uid} на {tuple(pos)}: мир не даёт основать "
+                              f"здесь (build_city={offered.get('build_city')}) — пробую снова "
+                              f"следующим ходом (отказ {_per[_key]})", flush=True)
+                    _FOUND_TARGET.pop(str(uid), None)
+                    continue
+                _FOUND_BLACK.setdefault(str(uid), set()).add(_key)
                 if os.environ.get("DOF_FOUND_DEBUG") == "1":
                     # §13.414: печатаем ПРИЧИНУ со стороны мира, а не только своё решение:
                     # предлагает ли мир основание (`build_city`) на этой клетке прямо сейчас.
                     print(f"  [отказ-основания] unit/{uid} на {tuple(pos)}: мир не даёт основать "
-                          f"здесь (build_city={avail.get('build_city') if isinstance(avail, dict) else '?'}) "
+                          f"здесь (build_city={offered.get('build_city')}) "
                           f"— клетка в чёрный список, ищем другую", flush=True)
                 continue
             # ── §13.358: ЕГО ПУТЬ (`dai_unit_goto`, `daitools.c:242-291`) — идём по кратчайшему
@@ -6265,7 +6282,7 @@ def main():
             # имени: эти имена объявлены на уровне модуля, и их удаление ломает партию
             # (`NameError: name '_FOUND_TARGET' is not defined` в самом первом прогоне).
             for _nm in ("_FOUNDED_SITES", "_FOUND_TARGET", "_FOUND_BLACK", "_FOUND_FAIL",
-                        "_ORDERED_THIS_TURN"):
+                        "_FOUND_REFUSALS", "_ORDERED_THIS_TURN"):
                 _mem = globals().get(_nm)
                 if hasattr(_mem, "clear"):
                     _mem.clear()

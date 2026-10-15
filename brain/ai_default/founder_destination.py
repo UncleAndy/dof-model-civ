@@ -163,6 +163,34 @@ def citymindist_blocks(x: int, y: int,
     return False
 
 
+# ── §13.415: местности, на которых городов не бывает (`NoCities` в правилах мира).
+# Взято из `data/classic/terrain.ruleset` (стенд играет на `rulesetdir="classic"`).
+TERRAIN_NO_CITIES = frozenset({"Inaccessible", "Lake", "Ocean", "Deep Ocean", "Glacier"})
+
+
+def terrain_allows_city(x: int, y: int) -> bool:
+    """Можно ли вообще ставить город на клетке — ЕГО `terrain_has_flag(TER_NO_CITIES)`.
+
+    `city_can_be_built_here` (`common/city.c:1465`) начинается с
+    `city_can_be_built_tile_only` (`:1539`), а тот — с этого флага. Значения взяты из правил
+    мира: стенд играет на `rulesetdir="classic"` (видно в сейве, `[settings]`), а в
+    `data/classic/terrain.ruleset` флаг `NoCities` стоит у Inaccessible, Lake, Ocean,
+    Deep Ocean и Glacier (см. `drafts/reference/freeciv-src/data/classic/terrain.ruleset`).
+
+    Местность берём из памяти мира (сейв + наблюдение). Неизвестную считаем пригодной:
+    «незнание ≠ отсутствие возможностей».
+    """
+    try:
+        from env.world_memory import tile as _tile
+        rec = _tile(int(x), int(y))
+    except Exception:  # noqa: BLE001
+        return True
+    if not rec:
+        return True
+    name = rec[0] if isinstance(rec, (tuple, list)) and rec else rec
+    return str(name) not in TERRAIN_NO_CITIES
+
+
 def rank_sites(obs: dict, *, size: int = 1, exclude: Iterable[tuple[int, int]] = (),
                reference: tuple[int, int] | None = None, move_rate: float = 1.0,
                settler_shield_cost: float = 0.0, limit: int = 200,
@@ -218,6 +246,12 @@ def rank_sites(obs: dict, *, size: int = 1, exclude: Iterable[tuple[int, int]] =
     for _dist, x, y in _iter:
         _seen += 1
         if (x, y) in skip:
+            continue
+        # ── §13.415: ЕГО ПЕРВАЯ проверка `city_can_be_built_here` (`common/city.c:1471`) —
+        # `city_can_be_built_tile_only` (`:1541`): `terrain_has_flag(TER_NO_CITIES)`. Без неё мы
+        # предлагали воду и ледник: мир отвечал `build_city=False` (замер r960: 13 отказов), а мы
+        # записывали клетку в отказные и искали другую.
+        if not terrain_allows_city(x, y):
             continue
         # ── ЕГО `city_desirability` (`daisettler.c:715-719`): площадка отбрасывается, если
         # ЛЮБАЯ клетка в пределах `citymindist-1` от неё уже занята (`citymap_is_reserved`).
