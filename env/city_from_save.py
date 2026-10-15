@@ -90,9 +90,48 @@ def dump_structure(text: str, city_lines: int = 14) -> str:
     cityish: list[str] = []
     for raw in str(text).splitlines():
         line = raw.rstrip("\r")
-        if line.startswith("[") and len(heads) < 40:
+        if line.startswith("[") and len(heads) < 200:
             heads.append(line)
-        elif "city" in line.lower() and len(cityish) < city_lines:
+        elif (str(line).startswith("c=") or line.lower().startswith("city")) and len(cityish) < city_lines:
             cityish.append(line[:120])
     return ("разделы: " + ", ".join(heads) + "\n"
             + "\n".join(cityish))
+
+def dump_player_section(text: str, limit: int = 42) -> str:
+    """Первый раздел игрока КАК ЕСТЬ — там лежат векторы городов и юнитов."""
+    lines = str(text).splitlines()
+    start = None
+    for i, raw in enumerate(lines):
+        head = raw.strip().lower()
+        if head.startswith("[player") and "score" not in head:
+            start = i
+            break
+    if start is None:
+        return ""
+    return "\n".join(x[:150] for x in lines[start:start + limit])
+
+def dump_players_summary(text: str) -> str:
+    """Кто есть кто в сейве: для каждого раздела игрока — имя, логин, `ai_type`, векторы."""
+    rows: list[str] = []
+    cur: str | None = None
+    info: dict[str, str] = {}
+    def _flush() -> None:
+        if cur:
+            rows.append(cur + ": " + ", ".join(f"{k}={v}" for k, v in info.items()))
+    for raw in str(text).splitlines():
+        line = raw.rstrip()
+        if line.startswith("["):
+            _flush()
+            cur = line if line.lower().startswith("[player") and "score" not in line.lower() else None
+            info = {}
+            continue
+        if not cur:
+            continue
+        for key in ("name=", "username=", "ai_type=", "is_alive="):
+            if line.startswith(key):
+                info[key.rstrip("=")] = line.split("=", 1)[1].strip()
+        if line.startswith(("u=", "c=", "w=")) or "_size=" in line and "unit" in line.lower():
+            info.setdefault("vectors", "")
+            info["vectors"] = (info["vectors"] + " | " + line[:60]).strip(" |")
+    _flush()
+    return "\n".join(rows) if rows else "(разделов игроков не найдено)"

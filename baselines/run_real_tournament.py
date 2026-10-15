@@ -784,6 +784,13 @@ def _save_and_dump_cities(env_getter, username):
         if not text:
             print("  [города-сейв] сейва пока нет", flush=True)
             return
+        if not globals().setdefault("_CITY_SAVE_STRUCT", {"done": False})["done"]:
+            globals()["_CITY_SAVE_STRUCT"]["done"] = True
+            print("  [оглавление-сейва]", flush=True)
+            print(_cfs.dump_structure(text), flush=True)
+            print("  [раздел игрока]", flush=True)
+            print("  [кто-есть-кто]", flush=True)
+            print(_cfs.dump_players_summary(text), flush=True)
         block = _cfs.dump_city_block(text)
         if block:
             _st["done"] = True
