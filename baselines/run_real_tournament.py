@@ -402,7 +402,16 @@ def _hold_military_candidates(cands: list, obs: dict, my_id, military: set,
             continue
         cx, cy = int(city.get("x")), int(city.get("y"))
         threats = []
+        # §13.421: та же ЕГО проверка опасности и здесь (`adv_is_player_dangerous`): без неё
+        # угрозой считался любой видимый чужой юнит, и постановка уходила в военных.
+        try:
+            from env.diplomacy_from_save import dangerous_now as _dangerous_now2
+            _allowed2 = _dangerous_now2(int(my_id))
+        except Exception:  # noqa: BLE001
+            _allowed2 = None
         for _owner, ux, uy in _threat.foreign_units_from_map(obs, my_id):
+            if _allowed2 is not None and int(_num(_owner, -1)) not in _allowed2:
+                continue
             rec = passports.get((int(ux), int(uy))) or {}
             threats.append(_ai_mil.Threat(
                 attack_strength=_num(rec.get("type_attack_strength"), fill_attack),
@@ -2147,7 +2156,12 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
                 # размере 1, не растёт НИКОГДА, и такой заказ надо не «дожимать», а снимать.
                 _sz1 = _city_size_of(rec, _save_fields, cid)
                 if (_sz1 is not None and _sz1 <= 1.0
-                        and os.environ.get("DOF_NO_SIZE_RULE") != "1"):
+                        and os.environ.get("DOF_SIZE_RULE") == "1"):
+                    # §13.422: правило §13.419 ВЫКЛЮЧЕНО по умолчанию — оно противоречит
+                    # наблюдённому поведению его ИИ (`DOF_AI_CITY_TRACE`: его города размера 1
+                    # СТРОЯТ поселенцев, §13.420) и, как показал замер s1075, запирало нас в
+                    # двух городах: города размера 1 получали `Coinage` и не расширялись вовсе.
+                    # Включается только явным ключом `DOF_SIZE_RULE=1` — для честного A/B.
                     _alt2 = _first_legal_build(info, cid, avoid=("Settlers",))
                     if _alt2:
                         _ord_mem[str(cid)] = _alt2
@@ -2159,6 +2173,23 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
                 # остальные (замер r695: основаны на 23, 29, 37 ходах) дожимали `Warriors`.
                 continue
             if _any_settlers_now:
+                # §13.423: но если город стоит на ВОЕННОМ и опасных сторон нет вовсе — заказ
+                # снимаем: без этого города, чья очередь оказалась `Warriors`, так и дожимали
+                # военных, пока мы расширялись. Замер s1085: 7 `Warriors`, рождённых на ходах
+                # 27-41, при том что к 60-му ходу опасных сторон нет ни одной.
+                try:
+                    from env.diplomacy_from_save import dangerous_now as _dn3
+                    _danger3 = _dn3(int(mine))
+                except Exception:  # noqa: BLE001
+                    _danger3 = None
+                _mils3 = {str(_x) for _x in (_military_type_names(env_getter()) or ())}
+                if _danger3 is not None and not _danger3 and built in _mils3:
+                    _alt4 = _first_legal_build(info, cid, avoid=tuple(_mils3) + ("Barracks",))
+                    if _alt4:
+                        _ord_mem[str(cid)] = _alt4
+                        print(f"  [заказ] город {cid} строит военного {built!r} без опасных сторон "
+                              f"→ {_alt4!r} (его adv_is_player_dangerous)", flush=True)
+                        return ("city", cid, f"produce_{_alt4}")
                 # §13.403: поселенцев уже строит другой город — этот город отдаём ЕГО выбору
                 # (постановка прогноза ниже), иначе все города до цели роста строят только
                 # поселенцев и не растут (население 8.5 против 37 у него).
@@ -2221,7 +2252,8 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
                 return ('city', cid, 'produce_Warriors')
             _sz2 = _city_size_of(rec, _save_fields, cid)
             if (_sz2 is not None and _sz2 <= 1.0
-                    and os.environ.get("DOF_NO_SIZE_RULE") != "1"):
+                    and os.environ.get("DOF_SIZE_RULE") == "1"):
+                # §13.422: см. пояснение выше — правило выключено по умолчанию.
                 # §13.419: то же правило и для НАШЕЙ постановки — городу размера 1 поселенца не
                 # заказываем (он не может отдать население: `daicity.c:788`).
                 _alt3 = _first_legal_build(info, cid, avoid=("Settlers",))

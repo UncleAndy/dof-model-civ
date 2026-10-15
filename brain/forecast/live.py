@@ -1067,8 +1067,21 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
         fill_move = float(mean_move) if mean_move is not None else 0.0
 
         threats: list[Any] = []
+        # §13.421: ЕГО первая проверка — `adv_is_player_dangerous` (`server/advisors/advdata.c:1103`):
+        # угрозой считается только тот, с кем война или перемирие, либо у кого есть повод
+        # расторгнуть договор. Здесь этой проверки не было, и постановка уходила в военных:
+        # замер s1070 (60 ходов) — у нас 4 `Horsemen` и 1 `Warriors` при 2 городах, поселенцев
+        # нет вовсе, города основаны только на 5-м и 7-м ходу. Сведения об отношениях — из сейва;
+        # нет сведений (`None`) — оставляем как было («незнание ≠ отсутствие возможностей»).
+        try:
+            from env.diplomacy_from_save import dangerous_now as _dangerous_now
+            _allowed = _dangerous_now(int(my_id))
+        except Exception:  # noqa: BLE001
+            _allowed = None
         if city_x is not None and city_y is not None:
             for _owner, ux, uy in _spec_threat.foreign_units_from_map(obs, my_id):
+                if _allowed is not None and int(_num(_owner, -1)) not in _allowed:
+                    continue
                 _rec = passports.get((int(ux), int(uy))) or {}
                 attack = _num(_rec.get("type_attack_strength"), fill_attack)
                 hp = _num(_rec.get("type_hp"), 1.0)
