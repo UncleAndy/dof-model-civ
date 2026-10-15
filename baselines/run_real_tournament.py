@@ -638,6 +638,9 @@ _LAST_PROD: dict = {}
 #: сидит дорога (`amortize(total, PERFECTION*turns)`), поэтому «лучшая» переезжала на соседнюю
 #: клетку и обратно: поселенец качался между двумя и не основывал вовсе (измерено §13.347).
 _FOUND_TARGET: dict = {}
+#: §13.395: сколько раз подряд шаг к удерживаемой цели не нашёлся. Цель бросаем не сразу:
+#: сброс цели из-за одного недоступного шага и давал качание поселенцев (§13.394).
+_FOUND_FAIL: dict = {}
 
 #: §13.339: проба «действует ли путь `ctrl_type=city` в этом стенде». Помним, какой ход по
 #: клетке заказан и какими были выходы города; на следующем появлении города сравниваем.
@@ -1231,11 +1234,51 @@ def _founder_step(obs: dict, avail: dict, mindist: int | None = None, env_getter
             if _step_held is None:
                 _step_held = step_toward(tuple(pos), _held, offered=gotos or None,
                                          blocked=_blocked_step)
+            if _step_held is None and gotos:
+                # §13.395: цель НЕ сбрасываем из-за одного недоступного шага — именно это давало
+                # качание (§13.394: площадка (25,9) → (24,9) и обратно). Его поселенец идёт к
+                # `task->target` (`daitasks.c`, `dai_unit_new_task`), а не пересчитывает лучшую
+                # соседнюю площадку каждый ход. Берём любой ПРЕДЛОЖЕННЫЙ мир ход, который
+                # уменьшает расстояние до удерживаемой цели.
+                try:
+                    from brain.ai_default.founder_destination import (
+                        _wrap as _wrap_of, goto_name as _goto_name_of)
+                    _cur_d = max(abs(int(_held[0]) - int(pos[0])),
+                                 abs(int(_held[1]) - int(pos[1])))
+                    _best_step, _best_d = None, _cur_d
+                    for _dx in (-1, 0, 1):
+                        for _dy in (-1, 0, 1):
+                            if _dx == 0 and _dy == 0:
+                                continue
+                            _nm2 = _goto_name_of(_dx, _dy)
+                            if _nm2 is None or _nm2 not in gotos:
+                                continue
+                            _nx2 = _wrap_of(int(pos[0]) + _dx, int(pos[1]) + _dy, _shape)
+                            if _nx2 is None:
+                                continue
+                            _d2 = max(abs(int(_held[0]) - int(_nx2[0])),
+                                      abs(int(_held[1]) - int(_nx2[1])))
+                            if _d2 < _best_d:
+                                _best_d, _best_step = _d2, _nm2
+                    _step_held = _best_step
+                except Exception:  # noqa: BLE001
+                    _step_held = None
             if _step_held is not None:
+                _FOUND_FAIL.pop(str(uid), None)
                 if os.environ.get("DOF_TRACE_FILTERS") == "1":
                     print(f"  [поселенец] unit/{uid}: держу цель {_held} (его миссия) "
                           f"→ шаг {_step_held}", flush=True)
                 return ("unit", uid, _step_held)
+            # Шага нет вовсе. Держим цель ещё несколько ходов: путь может открыться (юнит
+            # освободит клетку, откроется берег), а сброс цели возвращает качание.
+            _n_fail = _FOUND_FAIL.get(str(uid), 0) + 1
+            _FOUND_FAIL[str(uid)] = _n_fail
+            if os.environ.get("DOF_TRACE_FILTERS") == "1":
+                print(f"  [поселенец] unit/{uid}: шага к цели {_held} нет "
+                      f"(попытка {_n_fail} из 3) — цель держу", flush=True)
+            if _n_fail <= 3:
+                continue
+            _FOUND_FAIL.pop(str(uid), None)
             _FOUND_TARGET.pop(str(uid), None)
             _cmap.free_city_spot(_held[0], _held[1], uid)   # цель недостижима — место свободно
         # Берётся ПЕРВАЯ площадка, к которой мир предлагает законный шаг. Измерено: без
