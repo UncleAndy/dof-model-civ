@@ -1778,12 +1778,37 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
         # §13.389: ЕГО выбор производства — максимум хотелок советников (§13.364). Считаем
         # хотелку для каждого законного имени постановки и берём наибольшую.
         _ctx = None
-        # §13.389: слой городов в наблюдении бывает пуст — подкладываем города КЛИЕНТА,
-        # иначе контекст его выбора собрать нечем.
+        # §13.389/13.391: слой городов в наблюдении бывает пуст — подкладываем города КЛИЕНТА,
+        # иначе контекст его выбора собрать нечем. И дополняем их числами ИЗ СЕЙВА: клиент не
+        # даёт городу ни щитов/ход, ни координат, из-за чего его выбор видел только постройки
+        # (замер §13.390: единственный вариант — `Barracks`).
+        _save_fields = {}
         try:
-            if isinstance(obs, dict) and ours and not (obs.get("city") or {}):
-                obs = dict(obs)
-                obs["city"] = {str(k): dict(v) for k, v in ours.items()}
+            from env.city_vector import parse_player_section as _pps2
+            from env.map_from_save import fetch_newest_save as _fs2
+            _t2 = _fs2(str(username or "")) if username else None
+            if _t2:
+                for _r2 in _pps2(_t2, _my_index(env_getter)).values():
+                    _save_fields[str(_r2.get("id"))] = _r2
+        except Exception:  # noqa: BLE001
+            _save_fields = {}
+        try:
+            if isinstance(obs, dict) and (_save_fields or ours):
+                _city_layer = {str(_k): dict(_v) for _k, _v in (obs.get("city") or {}).items()
+                               if isinstance(_v, dict)}
+                for _k, _v in ours.items():
+                    _city_layer.setdefault(str(_k), dict(_v))
+                for _k, _v in list(_city_layer.items()):
+                    _sv = _save_fields.get(str(_v.get("id", _k))) or {}
+                    for _dst, _src in (("x", "x"), ("y", "y"),
+                                       ("shield_stock", "shield_stock"),
+                                       ("prod_shield", "last_turns_shield_surplus"),
+                                       ("food_stock", "food_stock")):
+                        if _v.get(_dst) is None and _sv.get(_src) is not None:
+                            _v[_dst] = _sv.get(_src)
+                _obs2 = dict(obs)
+                _obs2["city"] = _city_layer
+                obs = _obs2
         except Exception:  # noqa: BLE001
             pass
         if obs is not None and info is not None and dof_state is not None:
@@ -1818,6 +1843,13 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
                         _first = _opt[0]
                         _nm = str(_first[0] if isinstance(_first, (list, tuple)) else _first)
                         print(f"  [заказ] его выбор города {cid}: {_nm!r} (первые 3: {str(_opt[:3])[:120]})", flush=True)
+                    if not globals().get('_OPT_DUMP'):
+                        globals()['_OPT_DUMP'] = True
+                        print(f"  [опции] все его варианты: {str(_opt)[:400]}", flush=True)
+                        print(f"  [опции] не оценено у него: {str(getattr(_ctx, 'unpriced', None))[:200]}", flush=True)
+                        _recs = getattr(_ctx, 'state', None)
+                        print(f"  [опции] запись города как её видит он: "
+                              f"{str({k: rec.get(k) for k in ('prod_shield','shield_stock','surplus_food','production_value','production_kind','size','x','y')})}", flush=True)
                         if _nm and _nm != built:
                             return ('city', cid, f'produce_{_nm}')
                         return None
