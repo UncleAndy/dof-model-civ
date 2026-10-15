@@ -1917,10 +1917,11 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
                 if isinstance(rec, dict) and int(rec.get("owner", mine)) == mine}
         if not ours:
             return None
-        if len(ours) >= 6:  # §13.388: цель роста — 6 городов (норма встроенного ИИ ранней игры)
-            st["tried"] = 80
-            print(f"  [заказ] городов у клиента уже {len(ours)} — поселенец не нужен", flush=True)
-            return None
+        # §13.417: прежде при шести и более городах стоял `return None` — и БОЛЬШЕ НИКАКИХ заказов.
+        # Без заказа мир достраивает то, что стоит по умолчанию, а по умолчанию первым идёт военный
+        # юнит: замер r980 — у нас 10 `Warriors` при 4 городах и размере 1.5, у сторон-ИИ военных 0.
+        # Теперь заказы идут и дальше (`_settlers_wanted` ниже даёт 0 — поселенцев не заказываем),
+        # чтобы ни один город не оставался без решения.
         _save_build = {}
         try:
             from env.city_vector import parse_player_section as _pps
