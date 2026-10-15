@@ -1926,7 +1926,10 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
             print(f"  [заказ] город клиента {cid}: по сейву строит {built!r} (номер {rec.get('production_value')}), щитов/ход {rec.get('prod_shield')}, щитов {rec.get('shield_stock')}",
                   flush=True)
             if built.endswith("Settlers") or built == "Settlers":
-                return None
+                # §13.396: этот город УЖЕ строит нужное — заказ отдаём следующему. Прежде здесь
+                # стоял `return None`, и заказ всегда доставался первому по номеру городу, а
+                # остальные (замер r695: основаны на 23, 29, 37 ходах) дожимали `Warriors`.
+                continue
             try:
                 _av = (info.get("available_actions") or {}).get("city") or {}
                 _acts = _av.get(str(cid)) or _av.get(cid)
