@@ -2004,9 +2004,26 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
         _turn_now = int((info or {}).get("turn") or 0) if isinstance(info, dict) else 0
     except (TypeError, ValueError):
         _turn_now = 0
+    # §13.428: ход берём из СЕЙВА, а не только из наблюдения. Замер s1170: поле `turn` в
+    # наблюдении приходило пустым, `_turn_now` не менялся, память `_ord_mem` не сбрасывалась —
+    # и после первого же прохода НИ ОДИН город больше не получал заказа. Следствие в сейве
+    # 60-го хода: основаны два города на 4-м ходу, оба строят `Coinage`, юнитов трое
+    # (Explorer и два Workers), поселенцев нет вовсе. Это же объясняет, почему трасса очередей
+    # обрывалась на 11-м ходу. Ход из сейва — та же мера, что и в трассе.
+    if not _turn_now:
+        try:
+            from env.map_from_save import fetch_newest_save as _fs_t0
+            _m0 = re.search(r"^turn=(\d+)", (_fs_t0(str(username or "")) or ""), re.M)
+            if _m0:
+                _turn_now = int(_m0.group(1))
+        except Exception:  # noqa: BLE001
+            pass
     if _ord_mem.get("turn") != _turn_now:
         _ord_mem.clear()
         _ord_mem["turn"] = _turn_now
+        # §13.428: счётчик попыток тоже обнуляем на новом ходу. Прежде он рос за ВСЮ партию
+        # (`>= 80` → `return None`), и после восьмидесятой попытки заказы прекращались навсегда.
+        st["tried"] = 0
     if st["tried"] >= 80:  # §13.388: заказов много — городов и ходов больше
         return None
     try:
