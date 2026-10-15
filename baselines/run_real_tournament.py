@@ -1895,7 +1895,14 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
         # (`_production_candidate`). Прежде мы требовали поселенцев от КАЖДОГО города, пока
         # городов меньше цели: города не росли вовсе (замер: население 8.5 против 37, размер
         # 1-2, и у него же города строят City Walls/Great Wall, а не одних поселенцев).
-        _any_settlers_now = any(str(_v).endswith("Settlers") for _v in (_save_build or {}).values())
+        # §13.411: но при двух-трёх городах одного источника не хватает — расширение отстаёт
+        # вдвое-втрое (замер r895: 2 города против 5). Поэтому источников столько же, сколько
+        # не хватает до цели: меньше четырёх городов — двух, до шести — один, дальше ни одного.
+        _n_cities = len(ours)
+        _settlers_wanted = 2 if _n_cities < 4 else (1 if _n_cities < 6 else 0)
+        _settlers_now = sum(1 for _v in (_save_build or {}).values()
+                            if str(_v).endswith("Settlers"))
+        _any_settlers_now = _settlers_now >= _settlers_wanted
         # §13.389: ЕГО выбор производства — максимум хотелок советников (§13.364). Считаем
         # хотелку для каждого законного имени постановки и берём наибольшую.
         _ctx = None
