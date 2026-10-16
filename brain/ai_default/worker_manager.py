@@ -79,6 +79,101 @@ def tile_value(food: float, shield: float, trade: float, weights: Mapping[str, f
             + float(trade) * (float(w.get("gold", 0.0)) + float(w.get("science", 0.0))))
 
 
+def best_arrangement(
+    yields_by_offset: Mapping[tuple[int, int], tuple[float, float, float]],
+    *,
+    size: float,
+    candidates: Iterable[tuple[int, int]] = (),
+    food_cost: float = 2.0,
+    granary_full: bool = False,
+    notradesize: int = 0,
+) -> dict[str, Any]:
+    """ЛУЧШАЯ расстановка — полный поиск с отсечением, как у него в CMA (`cm.c`).
+
+    Зачем отдельная функция. Наш `choose_arrangement` берёт лучшие клетки жадно и чинит нехватку
+    еды заменой: он не доказывает, что найденная комбинация лучшая. У него поиск полный — отсекаются
+    только заведомо худшие ветви (`choice_is_promising`, `cm.c:1655`), а оценка ветви сверху — по
+    каждому выходу отдельно (`compute_max_stats_heuristic`, `cm.c:1584`). Здесь перенесено ровно это:
+    отсечение не меняет ответ, поэтому найденная расстановка максимальна по его весам.
+
+    Возвращает `{"chosen": [...], "surplus": {...}, "value": float}`. Если требования наименьших
+    избытков не выполнимы ни при каком наборе, возвращается лучший найденный набор с `feasible=False`
+    — молчание не выдаётся за успех.
+    """
+    size = float(size or 1.0)
+    slots = max(1, int(round(size)) + 1)          # центр + `размер` жителей
+    weights = factors(size, granary_full=granary_full, notradesize=notradesize)
+    mins = minimal_surplus(granary_full=granary_full)
+
+    def yields(off: tuple[int, int]) -> tuple[float, float, float]:
+        if off == (0, 0):
+            return yields_by_offset.get((0, 0), (1.0, 1.0, 0.0))
+        return yields_by_offset.get(off, (0.0, 0.0, 0.0))
+
+    pool: list[tuple[int, int]] = []
+    for off in candidates:
+        if off == (0, 0) or off in pool:
+            continue
+        pool.append(off)
+    # Порядок обхода — по ценности: с ним отсечение работает раньше (у него тот же смысл обхода).
+    pool.sort(key=lambda o: -tile_value(*yields(o), weights))
+
+    center = (0, 0)
+    need_cost = float(food_cost) * size
+    min_food = float(mins["food"])
+    min_shield = float(mins["shield"])
+
+    best: dict[str, Any] = {"chosen": [], "value": float("-inf"), "feasible": False}
+
+    def value_of(offs: Iterable[tuple[int, int]]) -> float:
+        return sum(tile_value(*yields(o), weights) for o in offs)
+
+    def bound(prefix_value: float, remaining: int, start: int) -> float:
+        """Потолок ветви: текущее плюс лучшие `remaining` клеток, ещё доступные после `start`."""
+        if remaining <= 0:
+            return prefix_value
+        rest = sorted((tile_value(*yields(o), weights) for o in pool[start:]), reverse=True)
+        return prefix_value + sum(rest[:remaining])
+
+    def dfs(i: int, taken: list[tuple[int, int]], remaining: int,
+            food: float, shield: float) -> None:
+        nonlocal best
+        if remaining == 0:
+            feas = (food - need_cost >= min_food - 1e-9) and (shield >= min_shield - 1e-9)
+            if not feas:
+                # Его поведение при отсутствии годной расстановки (`cmr->found_a_valid = FALSE`):
+                # НЕ выдумывать замену, а сказать «годной нет» — вызывающий оставляет как было.
+                return
+            cur = value_of([center] + list(taken))
+            if cur > best["value"]:
+                best = {"chosen": [center] + list(taken), "value": cur, "feasible": True,
+                        "surplus": {"food": food - need_cost, "shield": shield}}
+            return
+        if i >= len(pool):
+            return
+        # Отсечение 1: даже при самом щедром допущении не хватает еды или щитов — ветвь бесполезна.
+        max_food = max((yields(o)[0] for o in pool[i:]), default=0.0)
+        max_shield = max((yields(o)[1] for o in pool[i:]), default=0.0)
+        if food + max_food * remaining - need_cost < min_food - 1e-9:
+            return
+        if shield + max_shield * remaining < min_shield - 1e-9:
+            return
+        # Отсечение 2: потолок ветви не превосходит уже найденное — ответ из неё не изменится.
+        if best["feasible"] and bound(value_of([center] + list(taken)), remaining,
+                                      i) <= float(best["value"]) + 1e-9:
+            return
+        y = yields(pool[i])
+        dfs(i + 1, taken + [pool[i]], remaining - 1, food + y[0], shield + y[1])
+        dfs(i + 1, taken, remaining, food, shield)
+
+    c = yields(center)
+    # Жителей столько, сколько есть клеток: если клеток меньше, город занимает столько,
+    # сколько доступно (иначе поиск объявил бы «годной нет» там, где она есть).
+    k = max(0, min(slots - 1, len(pool)))
+    dfs(0, [], k, c[0], c[1])
+    return best
+
+
 def choose_arrangement(
     yields_by_offset: Mapping[tuple[int, int], tuple[float, float, float]],
     *,
