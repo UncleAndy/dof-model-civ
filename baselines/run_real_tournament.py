@@ -1356,7 +1356,7 @@ def _founder_step(obs: dict, avail: dict, mindist: int | None = None, env_getter
                             try:
                                 # §13.438: в наблюдении типа нет (замер s1375: тип=None),
                                 # поэтому берём его у контроллера — там же, где его читает
-                                # перебор наших юнитов ().
+                                # перебор наших юнитов (civ_controller.unit_ctrl.units).
                                 _env2 = env_getter() if env_getter else None
                                 _c2 = getattr(getattr(_env2, "unwrapped", None), "civ_controller", None)
                                 _uc = getattr(_c2, "unit_ctrl", None)
