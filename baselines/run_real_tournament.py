@@ -2385,7 +2385,21 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
                         if not _known_w:
                             continue
                         _sz_w = float((_rows_save.get(_cw) or {}).get("size") or 1.0)
-                        _save_surplus[str(_cw)] = _food_w - 2.0 * _sz_w
+                        # §13.441: КЛЕТКА ГОРОДА считается всегда и бесплатно — её в `worked0000…`
+                        # нет (проверено: у id127 избыток «−1.0» при растущей на +1 за ход пище,
+                        # то есть мы теряли ровно выход центральной клетки). Его управляющий центр
+                        # тоже берёт первым и бесплатно (§13.432, `chosen = [(0,0)] + …`).
+                        _cx_w = (_rows_save.get(_cw) or {}).get("x")
+                        _cy_w = (_rows_save.get(_cw) or {}).get("y")
+                        if _cx_w is not None and _cy_w is not None:
+                            _oc_w = _tor(_terr_sv.get((int(_cx_w), int(_cy_w)), "")) \
+                                if (int(_cx_w), int(_cy_w)) in _terr_sv else None
+                            if _oc_w is not None:
+                                _food_w += float(_oc_w[0])
+                            else:
+                                _known_w = False
+                        if _known_w:
+                            _save_surplus[str(_cw)] = _food_w - 2.0 * _sz_w
                     # §13.437: города ВСЕХ сторон из сейва — с координатами. Мир считает
                     # `citymindist` по всем городам карты, а клиент отдаёт список с задержкой
                     # (замер s1355: «городов известно 0»), из-за чего поселенцы шли основывать
