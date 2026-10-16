@@ -1354,11 +1354,21 @@ def _founder_step(obs: dict, avail: dict, mindist: int | None = None, env_getter
                             # у поселенца быть не может. Печатаем собственный тип юнита из
                             # наблюдения: если это не поселенец, то он и ждёт не того.
                             try:
-                                from env.spec_threat import _our_units as _ou
-                                _me = _ou(obs, 0) or {}
-                                _rec = _me.get(str(uid)) or {}
-                                _utype = _rec.get("type") or _rec.get("utype") or _rec.get("name")
-                                _moves = _rec.get("moves_left")
+                                # §13.438: в наблюдении типа нет (замер s1375: тип=None),
+                                # поэтому берём его у контроллера — там же, где его читает
+                                # перебор наших юнитов ().
+                                _env2 = env_getter() if env_getter else None
+                                _c2 = getattr(getattr(_env2, "unwrapped", None), "civ_controller", None)
+                                _uc = getattr(_c2, "unit_ctrl", None)
+                                _us2 = getattr(_uc, "units", None) or {}
+                                _rule2 = getattr(_c2, "rule_ctrl", None)
+                                _uts = getattr(_rule2, "unit_types", None) or {}
+                                _rec2 = _us2.get(str(uid)) or _us2.get(uid) or {}
+                                if isinstance(_rec2, dict):
+                                    _t2 = _rec2.get("type")
+                                    _spec2 = _uts.get(_t2) if isinstance(_uts, dict) else None
+                                    _utype = (_spec2 or {}).get("name") if isinstance(_spec2, dict) else _t2
+                                    _moves = _rec2.get("moves_left", _rec2.get("moves"))
                             except Exception:  # noqa: BLE001
                                 pass
                             _us = obs.get("units")
