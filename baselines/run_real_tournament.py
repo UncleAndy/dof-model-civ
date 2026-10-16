@@ -1348,16 +1348,28 @@ def _founder_step(obs: dict, avail: dict, mindist: int | None = None, env_getter
                         try:
                             _keys = sorted(str(k) for k in offered)
                             _moves = None
+                            _utype = None
+                            # §13.438: КОГО мы ведём основывать. В списке предложенного у этих
+                            # юнитов 120 действий (`airbase`, `airlift`, `attack_0…N`) — столько
+                            # у поселенца быть не может. Печатаем собственный тип юнита из
+                            # наблюдения: если это не поселенец, то он и ждёт не того.
+                            try:
+                                from env.spec_threat import _our_units as _ou
+                                _me = _ou(obs, 0) or {}
+                                _rec = _me.get(str(uid)) or {}
+                                _utype = _rec.get("type") or _rec.get("utype") or _rec.get("name")
+                                _moves = _rec.get("moves_left")
+                            except Exception:  # noqa: BLE001
+                                pass
                             _us = obs.get("units")
-                            if isinstance(_us, dict):
-                                _moves = (_us.get(str(uid)) or {}).get("moves_left")
-                            elif isinstance(_us, list):
+                            if _moves is None and isinstance(_us, list):
                                 for _u in _us:
                                     if str(_u.get("id")) == str(uid):
                                         _moves = _u.get("moves_left")
+                                        _utype = _utype or _u.get("type")
                                         break
                             print(f"  [отказ-основания] unit/{uid} на {tuple(pos)}: мир НЕ предлагает "
-                                  f"основание; build_city={_avail!r}, очки={_moves}, "
+                                  f"основание; тип={_utype!r}, build_city={_avail!r}, очки={_moves}, "
                                   f"всего {len(_keys)}: {_keys}", flush=True)
                         except Exception:  # noqa: BLE001
                             pass
