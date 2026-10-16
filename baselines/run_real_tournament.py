@@ -6697,6 +6697,17 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
 
                 step_action_context = _action_position_context(action, obs)
                 stepped = True  # from here a hang belongs to the chosen action
+                if os.environ.get("DOF_TRACE_UNITS") == "1" and action is not None:
+                    # §13.452: прибор ИМЕННО на отправку действия. Прежний канал `[прогноз]`
+                    # в этих партиях не печатает ни строки, поэтому судить о работах по нему
+                    # было нельзя. Здесь видно ровно то, что уходит клиенту.
+                    try:
+                        _a = _to_action(action)
+                        if _a and str(_a[0]) == "unit":
+                            print(f"  [отправка-юнита] ход {turns_played + 1}: "
+                                  f"unit/{_a[1]} → {_a[2]}", flush=True)
+                    except Exception:  # noqa: BLE001
+                        pass
                 obs, reward, terminated, truncated, info = env.step(action)
                 _record_step_success(metrics, action, turns_played + 1,
                                      step_action_context)
