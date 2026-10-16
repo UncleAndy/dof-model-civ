@@ -1654,8 +1654,33 @@ def _city_tile_his_manager(obs: dict, avail: dict):
             food_cost = float(_fg.food_cost_of(obs) or 2.0)
         except Exception:  # noqa: BLE001
             food_cost = 2.0
-        plan = choose_arrangement(yields, size=size, worked=worked, free=free,
-                                  food_cost=food_cost, granary_full=False)
+        if os.environ.get("DOF_BEST_ARRANGE") == "1":
+            # §13.461: полный поиск с отсечением (CMA) вместо жадного перебора. Если годной
+            # расстановки нет — НЕ выдумываем замену (у него `cmr->found_a_valid = FALSE`).
+            plan = None
+            try:
+                from brain.ai_default.worker_manager import best_arrangement
+
+                _cand = [o for o in list(worked) + list(free) if o != (0, 0)]
+                _b = best_arrangement(yields, size=size, candidates=_cand, food_cost=food_cost,
+                                      granary_full=False)
+                if _b.get("feasible"):
+                    _tot = [sum(float(yields.get(o, (0.0, 0.0, 0.0))[i]) for o in _b["chosen"])
+                            for i in range(3)]
+                    plan = {"chosen": _b["chosen"], "ok": True, "food": _tot[0], "shield": _tot[1],
+                            "surplus": {"food": _b["surplus"]["food"],
+                                        "shield": _b["surplus"]["shield"]}}
+                    if _dbg and globals().get("_MGR_DBG", 0) <= 25:
+                        print(f"  [расстановка-полная] город {cid}: размер {size:g}, "
+                              f"набор {sorted(plan['chosen'])}, избыток "
+                              f"{plan['surplus']['food']:+.1f}", flush=True)
+            except Exception:  # noqa: BLE001
+                plan = None
+            if plan is None:
+                continue
+        else:
+            plan = choose_arrangement(yields, size=size, worked=worked, free=free,
+                                      food_cost=food_cost, granary_full=False)
         if _dbg and globals().get("_MGR_DBG", 0) <= 25:
             print(f"  [расстановка-проба] город {cid}: размер {size:g}, обрабатывает {sorted(worked)}, "
                   f"свободных посчитано {len(free)}, клеток с выходами {len(yields)}, "
