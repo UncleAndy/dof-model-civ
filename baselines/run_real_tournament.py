@@ -2418,17 +2418,43 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
                     # по сейву. Без неё нельзя судить, почему город не дорастает до второго
                     # размера, а на нём держится право заказывать поселенца (§13.434). Печать —
                     # один раз на ход.
+                    _mg = re.search(r'^turn=(\d+)', _txt, re.M)
+                    _turn_g = _mg.group(1) if _mg else None
+                    _seen_g = globals().setdefault("_GROWTH_SEEN", set())
+                    if _turn_g is not None and _turn_g not in _seen_g:
+                        _seen_g.add(_turn_g)
+                        # §13.442: ИЗБЫОК ПО НАБЛЮДЕНИЮ. Замер s1420: запас пищи рос на +1 за ход,
+                        # а наша формула печатала 2.0 — клетка города то попадает в `worked`, то
+                        # нет, и мы считали её дважды. Поэтому избыток берём из фактического
+                        # прироста запаса пищи (размер города при этом не менялся), а расчётную
+                        # формулу оставляем запасным источником. Наблюдение — характеристика
+                        # мира, и оно надёжнее нашей арифметики.
+                        _prev_g = globals().setdefault("_FOOD_PREV", {})
+                        for _cg, _rg in _rows_save.items():
+                            try:
+                                _fs = float(_rg.get("food_stock") or 0)
+                                _sz = float(_rg.get("size") or 1)
+                            except Exception:  # noqa: BLE001
+                                continue
+                            _pk = str(_cg)
+                            _old = _prev_g.get(_pk)
+                            if _old is not None and _old[0] != _sz:
+                                _old = None          # город вырос: запас обнулился, прирост неверен
+                            if _old is not None:
+                                _delta = _fs - float(_old[1])
+                                if -8.0 <= _delta <= 8.0 and abs(_delta - round(_delta)) < 1e-6:
+                                    _save_surplus[_pk] = float(round(_delta))
+                            _prev_g[_pk] = (_sz, _fs)
                     if os.environ.get("DOF_GROWTH_DEBUG") == "1":
-                        _mg = re.search(r'^turn=(\d+)', _txt, re.M)
-                        _turn_g = _mg.group(1) if _mg else None
-                        _seen_g = globals().setdefault("_GROWTH_SEEN", set())
-                        if _turn_g is not None and _turn_g not in _seen_g:
-                            _seen_g.add(_turn_g)
-                            _parts_g = [f"id{_cg} разм{_rg.get('size')} пища{_rg.get('food_stock')} "
-                                        f"избыток{_save_surplus.get(str(_cg), '?')} "
-                                        f"строит{_rg.get('currently_building_name')}"
-                                        for _cg, _rg in _rows_save.items()]
-                            print(f"  [рост] ход {_turn_g}: " + " | ".join(_parts_g), flush=True)
+                        if _turn_g is not None and _turn_g in _seen_g:
+                            _seen_print = globals().setdefault("_GROWTH_PRINTED", set())
+                            if _turn_g not in _seen_print:
+                                _seen_print.add(_turn_g)
+                                _parts_g = [f"id{_cg} разм{_rg.get('size')} пища{_rg.get('food_stock')} "
+                                            f"избыток{_save_surplus.get(str(_cg), '?')} "
+                                            f"строит{_rg.get('currently_building_name')}"
+                                            for _cg, _rg in _rows_save.items()]
+                                print(f"  [рост] ход {_turn_g}: " + " | ".join(_parts_g), flush=True)
                 except Exception:  # noqa: BLE001
                     pass
         except Exception:  # noqa: BLE001
