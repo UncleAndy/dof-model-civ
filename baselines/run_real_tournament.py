@@ -2465,12 +2465,14 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
                 # размере 1, не растёт НИКОГДА, и такой заказ надо не «дожимать», а снимать.
                 _sz1 = _city_size_of(rec, _save_fields, cid)
                 _sur1 = _save_surplus.get(str(cid))
-                # §13.433: ЕГО условие вместо нашего «размер 1 — нельзя»: город может заказать
-                # поселенца, если прокормит его (`ai/default/daicity.c:560`:
-                # `surplus[O_FOOD] >= utype_upkeep_cost(founder, O_FOOD)`, содержание поселенца — 1).
-                # Неизвестный избыток НЕ запрещает: незнание не выдаём за отсутствие возможностей.
-                if (_sz1 is not None and _sz1 <= 1.0
-                        and _sur1 is not None and _sur1 < 1.0
+                # §13.434: ЕГО оба условия вместе, а не по отдельности:
+                #   (1) `daicity.c:788` — поселенца берём не там, где `pop_cost >= city_size`,
+                #       то есть город размера 1 поселенца НЕ заказывает (иначе оба наших города
+                #       садятся в Settlers, ни один не растёт, и расширение кончается — это и
+                #       видел замер трассы s1335: мы замерли на 2 городах с 11-го хода, он
+                #       основывал 3-й, 4-й, 5-й каждые ~10 ходов);
+                #   (2) `daicity.c:560` — избыток еды должен покрывать содержание поселенца.
+                if (_sz1 is not None and (_sz1 <= 1.0 or (_sur1 is not None and _sur1 < 1.0))
                         and os.environ.get("DOF_NO_SIZE_RULE") != "1"):
                     # §13.427: правило СНОВА ВКЛЮЧЕНО. Замер середины партии (сейв 60-го хода)
                     # снял противоречие §13.420: у его сторон города размера 1 строят City Walls
@@ -2568,8 +2570,9 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
                 return ('city', cid, 'produce_Warriors')
             _sz2 = _city_size_of(rec, _save_fields, cid)
             _sur2 = _save_surplus.get(str(cid))
-            if (_sz2 is not None and _sz2 <= 1.0
-                    and _sur2 is not None and _sur2 < 1.0
+            # §13.434: см. пояснение выше — его ДВА условия вместе (размер больше содержания И
+            # избыток еды покрывает содержание поселенца).
+            if (_sz2 is not None and (_sz2 <= 1.0 or (_sur2 is not None and _sur2 < 1.0))
                     and os.environ.get("DOF_NO_SIZE_RULE") != "1"):
                 # §13.427: см. пояснение выше — правило снова включено по умолчанию
                 # (`DOF_NO_SIZE_RULE=1` выключает для честного A/B).
