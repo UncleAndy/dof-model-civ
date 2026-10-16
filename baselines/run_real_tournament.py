@@ -2245,17 +2245,22 @@ def _first_legal_build(info: dict, cid, avoid: tuple[str, ...] = (),
     # мы 7 городов размерами 1–5).
     _by_size = {
         1: ("City Walls", "Archers", "Barracks", "Granary", "Coinage"),
-        2: ("City Walls", "Granary", "Barracks", "Library", "Temple", "Marketplace", "Coinage"),
-        3: ("City Walls", "Granary", "Library", "Courthouse", "Temple", "Marketplace",
+        2: ("City Walls", "Granary", "Workers", "Barracks", "Library", "Temple", "Marketplace",
+            "Coinage"),
+        3: ("City Walls", "Granary", "Workers", "Library", "Courthouse", "Temple", "Marketplace",
             "Barracks", "Coinage"),
-        4: ("Library", "Caravan", "City Walls", "Granary", "Barracks", "Marketplace",
+        4: ("Library", "Caravan", "Workers", "City Walls", "Granary", "Barracks", "Marketplace",
             "Temple", "Coinage"),
-        5: ("Caravan", "Colosseum", "City Walls", "Temple", "Marketplace", "Library",
+        5: ("Caravan", "Colosseum", "Workers", "City Walls", "Temple", "Marketplace", "Library",
             "Granary", "Coinage"),
     }
+    # §13.448: `Workers` добавлены по наблюдению его очередей (§13.445): у него рабочие — обычная
+    # постройка городов размера 2–3 (Workers 5 на размере 2). Без рабочих у нас нет ни дорог
+    # (торговля), ни ирригации (еда), то есть не запускается его цикл
+    # «население → торговля → технологии → постройки → население» (§13.447).
     _size_now = size
     _prefs = list(_by_size.get(int(_size_now or 0)) or ()) if _size_now else []
-    _prefs += ["City Walls", "Granary", "Temple", "Marketplace", "Library", "Barracks",
+    _prefs += ["City Walls", "Granary", "Workers", "Temple", "Marketplace", "Library", "Barracks",
                "Caravan", "Colosseum", "Courthouse", "Coinage"]
     for pref in _prefs:
         if pref in names:
