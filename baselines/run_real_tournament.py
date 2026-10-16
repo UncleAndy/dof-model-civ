@@ -991,7 +991,15 @@ def _founder_step(obs: dict, avail: dict, mindist: int | None = None, env_getter
     # район и получали отказ — наш список городов от клиента отстаёт от мира, и ранжирование
     # предлагало клетки рядом с уже поставленным городом.
     _known_cities = (set(city_positions(obs)) | _our_cities_from_controller(env_getter, obs)
-                     | set(globals().get("_FOUNDED_SITES") or set()))
+                     | set(globals().get("_FOUNDED_SITES") or set())
+                     # §13.437: ГЛАВНОЕ — города из СЕЙВА по всем сторонам. Замер s1355 показал
+                     # прямо: `[citymindist] 2 (источник: живое), городов известно 0` — наш список
+                     # городов был ПУСТ (клиент отдаёт его с задержкой, контроллер тоже), поэтому
+                     # проверка `citymindist_blocks` не отсекала НИЧЕГО и поселенцы шли на клетки
+                     # вплотную к уже стоящему городу — а мир там основание запрещает (30 отказов,
+                     # ни одного основания за партию). Мир считает `citymindist` по ВСЕМ городам
+                     # карты, а не по нашим, поэтому берём все стороны.
+                     | set(globals().get("_SAVE_CITIES") or set()))
     if os.environ.get("DOF_FOUND_DEBUG") == "1":
         _seen_turn = globals().setdefault("_MAP_LAYERS_SEEN", set())
         _seen_cnt = globals().setdefault("_MAP_LAYERS_CALLS", [0])
@@ -2326,6 +2334,20 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
                             continue
                         _sz_w = float((_rows_save.get(_cw) or {}).get("size") or 1.0)
                         _save_surplus[str(_cw)] = _food_w - 2.0 * _sz_w
+                    # §13.437: города ВСЕХ сторон из сейва — с координатами. Мир считает
+                    # `citymindist` по всем городам карты, а клиент отдаёт список с задержкой
+                    # (замер s1355: «городов известно 0»), из-за чего поселенцы шли основывать
+                    # вплотную к существующим городам и получали отказ.
+                    _all_cities: set[tuple[int, int]] = set()
+                    for _pl in range(0, 12):
+                        try:
+                            for _cc in _pps(_txt, _pl).values():
+                                if _cc.get("x") is not None and _cc.get("y") is not None:
+                                    _all_cities.add((int(_cc["x"]), int(_cc["y"])))
+                        except Exception:  # noqa: BLE001
+                            continue
+                    if _all_cities:
+                        globals()["_SAVE_CITIES"] = _all_cities
                 except Exception:  # noqa: BLE001
                     pass
         except Exception:  # noqa: BLE001
