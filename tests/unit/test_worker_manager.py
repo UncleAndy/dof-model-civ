@@ -26,7 +26,10 @@ def test_factors_by_size_and_full_granary():
     """Размер 2-3 до notradesize — еда 15; выше — 10; полная житница — еда 0."""
     assert factors(2, notradesize=4)["food"] == FACTOR_FOOD_BELOW_TRADE == 15.0
     assert factors(3, notradesize=2)["food"] == FACTOR_FOOD_ABOVE_TRADE == 10.0
-    assert factors(1, granary_full=True)["food"] == 0.0
+    assert factors(2, granary_full=True)["food"] == 0.0
+    # У него проверка полной житницы стоит ТОЛЬКО в ветви `csize > 1` (cityturn.c:320-338), поэтому
+    # для размера 1 вес еды остаётся 20 независимо от житницы. Тест приведён к исходнику.
+    assert factors(1, granary_full=True)["food"] == FACTOR_FOOD_SIZE1 == 20.0
 
 
 def test_minimal_surplus_food_one_and_zero_when_full():
@@ -74,7 +77,7 @@ def test_swap_improves_food_surplus():
 def test_full_granary_switches_weight_to_shields():
     """Полная житница: еда не весит ничего — город берёт щиты."""
     y = {(0, 0): (1.0, 1.0, 0.0), (1, 0): (1.0, 3.0, 0.0), (0, 1): (2.0, 0.0, 0.0)}
-    plan = choose_arrangement(y, size=1, worked={(1, 0)}, free={(0, 1)},
+    plan = choose_arrangement(y, size=2, worked={(1, 0)}, free={(0, 1)},
                               food_cost=2.0, granary_full=True)
     assert (1, 0) in plan["chosen"]
     assert plan["weights"]["food"] == 0.0

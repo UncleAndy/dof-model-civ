@@ -38,16 +38,23 @@ MIN_SURPLUS_SCIENCE = 0.0
 
 def factors(size: float, *, granary_full: bool = False,
             notradesize: int = 0) -> dict[str, float]:
-    """Веса выходов города — как у него, по размеру города и состоянию житницы."""
+    """Веса выходов города — как у него, по размеру города и состоянию житницы.
+
+    Ветвление ровно как в источнике (`server/cityturn.c:320-338`): нулевой вес еды при полной
+    житнице ставится ТОЛЬКО в ветви `csize > 1`; для размера 1 он не ставится никогда, потому что и
+    условия у него стоят по-разному. На практике это недостижимо (житница размера 1 полной не бывает),
+    но приведено к источнику буквально, чтобы расхождений не осталось ни одного.
+    """
     size = float(size or 0.0)
     if size <= 1.0:
         food = FACTOR_FOOD_SIZE1
-    elif int(size) <= int(notradesize or 0):
-        food = FACTOR_FOOD_BELOW_TRADE
     else:
-        food = FACTOR_FOOD_ABOVE_TRADE
-    if granary_full:
-        food = FACTOR_FOOD_FULL_GRANARY
+        if int(size) <= int(notradesize or 0):
+            food = FACTOR_FOOD_BELOW_TRADE
+        else:
+            food = FACTOR_FOOD_ABOVE_TRADE
+        if granary_full:
+            food = FACTOR_FOOD_FULL_GRANARY
     return {"food": food, "shield": FACTOR_SHIELD, "trade": FACTOR_TRADE,
             "gold": FACTOR_GOLD, "luxury": FACTOR_LUXURY, "science": FACTOR_SCIENCE,
             "happy": FACTOR_HAPPY}
