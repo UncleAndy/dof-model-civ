@@ -6700,12 +6700,11 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
                 if os.environ.get("DOF_TRACE_UNITS") == "1" and action is not None:
                     # §13.452: прибор ИМЕННО на отправку действия. Прежний канал `[прогноз]`
                     # в этих партиях не печатает ни строки, поэтому судить о работах по нему
-                    # было нельзя. Здесь видно ровно то, что уходит клиенту.
+                    # было нельзя. Здесь видно ровно то, что уходит клиенту — и в сыром виде
+                    # тоже, потому что вид действия заранее не известен.
                     try:
-                        _a = _to_action(action)
-                        if _a and str(_a[0]) == "unit":
-                            print(f"  [отправка-юнита] ход {turns_played + 1}: "
-                                  f"unit/{_a[1]} → {_a[2]}", flush=True)
+                        print(f"  [отправка-юнита] ход {turns_played + 1}: {str(action)[:110]}",
+                              flush=True)
                     except Exception:  # noqa: BLE001
                         pass
                 obs, reward, terminated, truncated, info = env.step(action)
