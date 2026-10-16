@@ -36,6 +36,9 @@ JOIN = "join_city"
 
 #: `food_cost` по умолчанию — из правил мира; берётся из `obs['rules']`, если есть.
 DEFAULT_FOOD_COST = 2.0
+#: §13.432: разрешения на обмен «снять плохую → занять лучшую», выданные управляющим на ход.
+#: Ключ — id города, значение — (смещение, избыток еды ПОСЛЕ обмена, размер, food_cost).
+_SWAP_ALLOWANCE: dict = {}
 #: Наибольшая измеренная еда клетки вокруг своих городов (4155 клеток): граница
 #: консервативной ветви для `city_change_specialist`, цена которого из имени не видна.
 MAX_TILE_FOOD = 3.0
@@ -166,6 +169,31 @@ def food_cost_of(obs: dict, default: float = DEFAULT_FOOD_COST) -> float:
     return float(default)
 
 
+def allow_swap(city_id, offset, *, food_after: float, size: float = 1.0,
+               food_cost: float = 2.0) -> None:
+    """§13.432: разрешить снятие жителя, если оно — половина ОБМЕНА «снять плохую → занять лучшую».
+
+    Правило F смотрит на одно действие и потому запрещает снять клетку с едой у города с нулевым
+    избытком — то есть запрещает ЛЮБОЙ обмен, и город навсегда остаётся на плохой клетке (замер
+    §13.431: наши города размера 1 работали Forest с едой 1, имея рядом свою же Grassland с едой 2).
+    Здесь разрешение выдаёт наш управляющий (`brain/ai_default/worker_manager.py`) вместе с
+    доказательством: каким станет избыток еды ПОСЛЕ обмена. Оно живёт один ход.
+    """
+    _SWAP_ALLOWANCE[str(city_id)] = (tuple(offset), float(food_after), float(size), float(food_cost))
+
+
+def swap_allowed(city_id, offset, *, surplus: float) -> bool:
+    """Проверить и снять разрешение обмена для города и клетки."""
+    rec = _SWAP_ALLOWANCE.get(str(city_id))
+    if not rec:
+        return False
+    off, food_after, _size, _fc = rec
+    if tuple(offset) != tuple(off):
+        return False
+    _SWAP_ALLOWANCE.pop(str(city_id), None)
+    return float(food_after) >= 0.0 or float(surplus) < 0.0
+
+
 def _offset(name: str):
     """Смещение `(dx, dy)` из имени `city_<family>_<idx>_<dx>_<dy>`."""
     parts = str(name).split("_")
@@ -200,6 +228,11 @@ def denies(name: str, *, city=None, obs: dict | None = None,
     if text.startswith(UNWORK):
         off = _offset(text)
         if off is None:
+            return False, ""
+        # §13.432: обмен «снять плохую → занять лучшую» — разрешение выдано управляющим с
+        # доказательством избытка ПОСЛЕ обмена; иначе правило F запрещало бы любой обмен.
+        if swap_allowed(city.get("id"), off, surplus=surplus):
+            _note({"turn": turn, "name": text, "surplus": surplus, "swap": True, "deny": False})
             return False, ""
         cx, cy = city.get("x"), city.get("y")
         tf = tile_food(obs or {}, (cx or 0) + off[0], (cy or 0) + off[1]) \

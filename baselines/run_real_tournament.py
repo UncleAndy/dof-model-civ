@@ -1464,6 +1464,143 @@ def _founder_step(obs: dict, avail: dict, mindist: int | None = None, env_getter
     return None
 
 
+def _city_tile_his_manager(obs: dict, avail: dict):
+    """§13.432: расстановка жителей его управляющим — ОДНОЙ задачей, а не по одной клетке.
+
+    Управляющий (`brain/ai_default/worker_manager.py`) считает желаемый набор клеток по его весам
+    (размер 1 → еда 20 против щитов 5) и наименьшим избыткам, а мы отдаём ОДИН шаг пары
+    «снять плохую → занять лучшую»: постановка жителя в клиенте действительна лишь при свободном
+    горожанине (`city/city_actions.py:150`), поэтому снимаем первым, а займём следующим ходом.
+
+    Снятие при этом разрешается стражем (§13.432 в `env/food_gate.py`) вместе с доказательством:
+    каким станет избыток еды ПОСЛЕ обмена. Иначе правило F запрещало бы у города с нулевым
+    избытком любой обмен, и город оставался бы на плохой клетке навсегда (§13.431).
+    """
+    try:
+        from brain.ai_default.worker_manager import choose_arrangement
+        from env.site_eval import tile_output
+        from env import food_gate as _fg
+    except Exception:  # noqa: BLE001
+        return None
+    map_obs = as_dict(as_dict(obs).get("map")) or {}
+    city_actions = as_dict(as_dict(avail).get("city")) or {}
+    cities = as_dict((obs or {}).get("city")) or {}
+    _dbg = os.environ.get("DOF_TILE_DEBUG") == "1"
+    if _dbg and city_actions:
+        globals()["_MGR_DBG"] = globals().get("_MGR_DBG", 0) + 1
+        if globals()["_MGR_DBG"] <= 3:
+            print(f"  [расстановка-проба] городов в действиях {len(city_actions)}, "
+                  f"записей городов {len(cities)}, ключи записей {list(cities)[:2]}", flush=True)
+    for cid, actions in city_actions.items():
+        names = {str(n): params for n, params in as_dict(actions).items()
+                 if truthy(params) and str(n).startswith(("city_work_", "city_unwork_"))}
+        if _dbg and globals()["_MGR_DBG"] <= 3:
+            print(f"  [расстановка-проба] город {cid}: действий по клеткам {len(names)}, "
+                  f"пример {list(names)[:2]}", flush=True)
+        if not names:
+            continue
+        rec = None
+        for _key in (cid, str(cid), int(cid) if str(cid).lstrip("-").isdigit() else None):
+            if _key is not None and _key in cities:
+                rec = cities[_key]
+                break
+        if not isinstance(rec, dict) or rec.get("x") is None or rec.get("y") is None:
+            continue
+        try:
+            cx, cy = int(rec["x"]), int(rec["y"])
+            size = float(rec.get("size") or 1.0)
+        except (TypeError, ValueError):
+            continue
+        offs: dict[tuple[int, int], tuple[str, str]] = {}
+        for _n in names:
+            _off = _tile_offset_of(_n)
+            if _off is None:
+                continue
+            offs[_off] = ("unwork" if _n.startswith("city_unwork_") else "work", _n)
+        if not offs:
+            continue
+        worked = {o for o, (kind, _n) in offs.items() if kind == "unwork"}
+        free = {o for o, (kind, _n) in offs.items() if kind == "work"}
+        if not worked and not free:
+            continue
+        # §13.432: клиент предлагает `city_work_*` только при СВОБОДНОМ горожанине, поэтому
+        # свободных клеток в списке нет вовсе (замер s1245: у обоих наших городов предложено
+        # лишь по одному `city_unwork_*`). Но какие клетки станут свободны после снятия — мы
+        # знаем: это весь радиус, кроме обрабатываемых. Их годность берём из карты, а не из
+        # предложения, чтобы задачу можно было посчитать ЦЕЛИКОМ (как делает его управляющий).
+        for _dx in range(-2, 3):
+            for _dy in range(-2, 3):
+                _o = (_dx, _dy)
+                if _o in worked or _o in free:
+                    continue
+                try:
+                    _yy = tile_output(map_obs, cx + _dx, cy + _dy)
+                except Exception:  # noqa: BLE001
+                    _yy = None
+                if _yy is None:
+                    continue
+                if float(_yy[0]) <= 0.0 and float(_yy[1]) <= 0.0:
+                    continue          # ни еды, ни щитов — держать такую клетку незачем
+                free.add(_o)
+        yields: dict[tuple[int, int], tuple[float, float, float]] = {}
+        for o in worked | free | {(0, 0)}:
+            try:
+                _y = tile_output(map_obs, cx + o[0], cy + o[1])
+            except Exception:  # noqa: BLE001
+                _y = None
+            if _y is None:
+                continue
+            yields[o] = (float(_y[0]), float(_y[1]), float(_y[2]))
+        if len(yields) < 2:
+            continue
+        try:
+            food_cost = float(_fg.food_cost_of(obs) or 2.0)
+        except Exception:  # noqa: BLE001
+            food_cost = 2.0
+        plan = choose_arrangement(yields, size=size, worked=worked, free=free,
+                                  food_cost=food_cost, granary_full=False)
+        if _dbg and globals().get("_MGR_DBG", 0) <= 25:
+            print(f"  [расстановка-проба] город {cid}: размер {size:g}, обрабатывает {sorted(worked)}, "
+                  f"свободных посчитано {len(free)}, клеток с выходами {len(yields)}, "
+                  f"набор {plan['chosen']}, еда {plan['food']:.1f} щиты {plan['shield']:.1f} "
+                  f"избыток {plan['surplus']['food']:+.1f}, годится {plan['ok']}", flush=True)
+        if not plan.get("ok"):
+            continue
+        chosen = set(plan["chosen"])
+        surplus_after = float(plan["surplus"]["food"])
+        # 1) Есть обрабатываемая клетка, которой не место в желаемом наборе — снимаем её.
+        for o in sorted(worked - chosen):
+            kind, name = offs[o]
+            if kind != "unwork":
+                continue
+            _fg.allow_swap(cid, o, food_after=surplus_after, size=size, food_cost=food_cost)
+            if os.environ.get("DOF_TILE_DEBUG") == "1":
+                print(f"  [расстановка] город {cid} (размер {size:g}): снимаю {o} "
+                      f"(еда после обмена {surplus_after:+.1f}, веса "
+                      f"еда {plan['weights']['food']:g}/щиты {plan['weights']['shield']:g}) "
+                      f"→ {name}", flush=True)
+            return ("city", cid, name)
+        # 2) Есть свободная клетка из желаемых и свободный горожанин — занимаем.
+        for o in sorted(chosen - worked):
+            kind, name = offs.get(o, (None, None))
+            if kind != "work":
+                continue
+            if os.environ.get("DOF_TILE_DEBUG") == "1":
+                print(f"  [расстановка] город {cid} (размер {size:g}): занимаю {o} → {name}",
+                      flush=True)
+            return ("city", cid, name)
+    return None
+
+
+def _tile_offset_of(name: str):
+    """Смещение `(dx, dy)` из имени `city_<family>_<idx>_<dx>_<dy>`."""
+    parts = str(name).split("_")
+    try:
+        return int(parts[-2]), int(parts[-1])
+    except (TypeError, ValueError, IndexError):
+        return None
+
+
 def _city_tile_rescue(obs: dict, avail: dict):
     """Спасение ГОЛОДАЮЩЕГО города: у него годность идёт ПЕРЕД выгодой (§13.305).
 
@@ -1544,6 +1681,16 @@ def _city_tile_candidate(obs: dict, avail: dict):
     Возвращает `(ctrl, actor, action)` или None. None — если данных нет ИЛИ лучший ход был бы
     обратным к нашему же прошлому ходу по этой клетке (чередование измеренно вредит).
     """
+    # §13.432: сперва — ЕГО управляющий городом: расстановка как одна задача (веса еда 20/щиты 5
+    # при размере 1, наименьшие избытки еда 1, щиты 1). Прежде жителей никто не расставлял: в
+    # предложенных действиях были только `city_unwork_*`, а правило F запрещало любое снятие у
+    # города с нулевым избытком еды (замер §13.431: города размера 1 работали Forest с едой 1,
+    # имея рядом свою же Grassland с едой 2, и потому не росли вовсе).
+    if os.environ.get("DOF_NO_WORKER_MANAGER") != "1":
+        _mgr = _city_tile_his_manager(obs, avail)
+        if _mgr is not None:
+            _LAST_TILE_ACTION[str(_mgr[1])] = _mgr[2]
+            return _mgr
     # Сперва — спасение голодающего города: годность ПЕРЕД выгодой (его порядок).
     # Только если спасать нечего, переходим к выбору по выигрышу.
     _rescue = _city_tile_rescue(obs, avail)
