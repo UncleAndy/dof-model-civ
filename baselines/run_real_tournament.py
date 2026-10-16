@@ -1326,9 +1326,12 @@ def _founder_step(obs: dict, avail: dict, mindist: int | None = None, env_getter
                     _per[_key] = 0
                     if os.environ.get("DOF_FOUND_DEBUG") == "1":
                         print(f"  [отказ-основания] unit/{uid} на {tuple(pos)}: мир не предлагает "
-                              f"основание сейчас (build_city={_avail}) — жду, счётчик отказов не "
-                              f"трогаю (движение)", flush=True)
-                    _FOUND_TARGET.pop(str(uid), None)
+                              f"основание сейчас (build_city={_avail}) — жду на этой же клетке, "
+                              f"цель НЕ снимаю (движение)", flush=True)
+                    # §13.429: цель НЕ снимаем. Прежде здесь стоял `_FOUND_TARGET.pop`, и поселенец
+                    # терял цель, выбирал заново (часто другую площадку) и уходил — за партию
+                    # s1210 было 7 случаев «основать_здесь=True» и всего 2 основания. Достаточно
+                    # подождать: в следующем ходу очки движения есть, и основание пройдёт.
                     continue
                 _cnt = globals().setdefault("_FOUND_REFUSALS", {})
                 _per = _cnt.setdefault(str(uid), {})
@@ -1396,6 +1399,14 @@ def _founder_step(obs: dict, avail: dict, mindist: int | None = None, env_getter
                 return ("unit", uid, _step_held)
             # Шага нет вовсе. Держим цель ещё несколько ходов: путь может открыться (юнит
             # освободит клетку, откроется берег), а сброс цели возвращает качание.
+            if _held is not None and (int(_held[0]), int(_held[1])) == (int(pos[0]), int(pos[1])):
+                # §13.430: мы СТОИМ на удерживаемой площадке — «шага нет» здесь не неудача, а
+                # ожидание: мир не даёт основание без очков движения. Прежде этот случай считался
+                # неудачей и на третьем ходу цель сбрасывалась — поселенец выбирал заново и
+                # уходил. Замер s1215: 200 «основать_здесь=False» и только 5 «True»; два
+                # поселенца за партию так и не основали город.
+                _FOUND_FAIL.pop(str(uid), None)
+                continue
             _n_fail = _FOUND_FAIL.get(str(uid), 0) + 1
             _FOUND_FAIL[str(uid)] = _n_fail
             if os.environ.get("DOF_TRACE_FILTERS") == "1":
