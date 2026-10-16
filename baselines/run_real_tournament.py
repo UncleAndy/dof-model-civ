@@ -1322,9 +1322,23 @@ def _founder_step(obs: dict, avail: dict, mindist: int | None = None, env_getter
                     # основание — 30 отказов и НИ ОДНОГО основания за партию, у нас остался всего
                     # один город. Без полного списка предложенного нельзя отличить «кончился ход»
                     # от «эта клетка миру не годится», а лечение у этих двух причин разное.
+                    # §13.436: ПРИБОР (`DOF_FORCE_FOUND=1`) — послать основание ПО ИМЕНИ, даже
+                    # если клиент помечает его негодным. Замер s1360: у поселенцев на площадках
+                    # `build_city` в списке предложенного ЕСТЬ, но со значением «нельзя», а очки
+                    # движения из наблюдения не читаются (`None`) — то есть «кончился ход» и
+                    # «клетка негодна» различить пока нельзя, и поселенец ждёт вечно (30 отказов,
+                    # ни одного основания за партию, у нас 1 город против 6).
+                    # Прибор отделяет «наш ВЫБОР неверен» от «приказ не проходит у мира»: стоит
+                    # один ход, отказ виден в `[отказ-основания]`.
+                    if os.environ.get("DOF_FORCE_FOUND") == "1":
+                        if os.environ.get("DOF_FOUND_DEBUG") == "1":
+                            print(f"  [основание-прибор] unit/{uid} на {tuple(pos)}: посылаю "
+                                  f"build_city по имени, хотя клиент отвечает "
+                                  f"build_city={_avail!r}", flush=True)
+                        return ("unit", uid, "build_city")
                     if os.environ.get("DOF_FOUND_DEBUG") == "1":
                         try:
-                            _keys = sorted(str(k) for k in offered)[:14]
+                            _keys = sorted(str(k) for k in offered)
                             _moves = None
                             _us = obs.get("units")
                             if isinstance(_us, dict):
@@ -1335,7 +1349,8 @@ def _founder_step(obs: dict, avail: dict, mindist: int | None = None, env_getter
                                         _moves = _u.get("moves_left")
                                         break
                             print(f"  [отказ-основания] unit/{uid} на {tuple(pos)}: мир НЕ предлагает "
-                                  f"основание; очки движения={_moves}, предложено={_keys}", flush=True)
+                                  f"основание; build_city={_avail!r}, очки={_moves}, "
+                                  f"всего {len(_keys)}: {_keys}", flush=True)
                         except Exception:  # noqa: BLE001
                             pass
                     # §13.424: мир не ПРЕДЛАГАЕТ основание вовсе — это не отказ клетки, а
