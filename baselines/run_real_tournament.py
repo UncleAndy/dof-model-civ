@@ -2400,6 +2400,21 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
                             continue
                     if _all_cities:
                         globals()["_SAVE_CITIES"] = _all_cities
+                    # §13.440: РОСТ — хронология размеров наших городов, запаса пищи и избытка
+                    # по сейву. Без неё нельзя судить, почему город не дорастает до второго
+                    # размера, а на нём держится право заказывать поселенца (§13.434). Печать —
+                    # один раз на ход.
+                    if os.environ.get("DOF_GROWTH_DEBUG") == "1":
+                        _mg = re.search(r'^turn=(\d+)', _txt, re.M)
+                        _turn_g = _mg.group(1) if _mg else None
+                        _seen_g = globals().setdefault("_GROWTH_SEEN", set())
+                        if _turn_g is not None and _turn_g not in _seen_g:
+                            _seen_g.add(_turn_g)
+                            _parts_g = [f"id{_cg} разм{_rg.get('size')} пища{_rg.get('food_stock')} "
+                                        f"избыток{_save_surplus.get(str(_cg), '?')} "
+                                        f"строит{_rg.get('currently_building_name')}"
+                                        for _cg, _rg in _rows_save.items()]
+                            print(f"  [рост] ход {_turn_g}: " + " | ".join(_parts_g), flush=True)
                 except Exception:  # noqa: BLE001
                     pass
         except Exception:  # noqa: BLE001
