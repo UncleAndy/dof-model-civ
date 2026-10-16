@@ -2213,6 +2213,8 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
         except Exception:  # noqa: BLE001
             pass
         _save_build = {}
+        # §13.433: избыток еды наших городов по сейву (нижняя оценка, без улучшений клеток).
+        _save_surplus: dict[str, float] = {}
         try:
             # §13.420: КОГДА ЕГО ГОРОДА СТРОЯТ ПОСЕЛЕНЦЕВ — из сейва, по всем сторонам, каждые
             # 5 ходов. Без этого «подгонять порог роста» пришлось бы своим числом, а нужно ЕГО
@@ -2255,8 +2257,40 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
             from env.map_from_save import fetch_newest_save as _fs
             _txt = _fs(str(username or "")) if username else None
             if _txt:
-                for _r in _pps(_txt, mine).values():
+                _rows_save = _pps(_txt, mine)
+                for _r in _rows_save.values():
                     _save_build[str(_r.get("id"))] = str(_r.get("currently_building_name") or "")
+                # §13.433: ЕГО условие для поселенца — `pcity->surplus[O_FOOD] >=
+                # utype_upkeep_cost(founder, pplayer, O_FOOD)` (`ai/default/daicity.c:560`), то есть
+                # город может отдать поселенца, только если прокормит его. Считаем избыток еды по
+                # ОБРАБОТАННЫМ клеткам из сейва (`worked0000…`) и правилам мира. Улучшений
+                # (ирригация, шахты) сейв не хранит, поэтому это нижняя оценка — и мы её помечаем
+                # как таковую: неизвестное не выдаём за ноль.
+                try:
+                    from env.map_from_save import parse_map_rows as _pmr
+                    from brain.ai_default.tile_outputs import tile_outputs_from_rules as _tor
+                    _terr_sv = _pmr(_txt)
+                    _wk_sv: dict[str, list[tuple[int, int]]] = {}
+                    for _mw in re.finditer(r'^worked(\d{4})="([^"]*)"$', _txt, re.M):
+                        _yw = int(_mw.group(1))
+                        for _xw, _vw in enumerate(_mw.group(2).split(',')):
+                            if _vw not in ("-", ""):
+                                _wk_sv.setdefault(_vw, []).append((_xw, _yw))
+                    for _cw, _cells in _wk_sv.items():
+                        _food_w = 0.0
+                        _known_w = True
+                        for _xw, _yw in _cells:
+                            _ow = _tor(_terr_sv.get((_xw, _yw), "")) if (_xw, _yw) in _terr_sv else None
+                            if _ow is None:
+                                _known_w = False
+                                continue
+                            _food_w += float(_ow[0])
+                        if not _known_w:
+                            continue
+                        _sz_w = float((_rows_save.get(_cw) or {}).get("size") or 1.0)
+                        _save_surplus[str(_cw)] = _food_w - 2.0 * _sz_w
+                except Exception:  # noqa: BLE001
+                    pass
         except Exception:  # noqa: BLE001
             _save_build = {}
         # §13.403: поселенцев должен строить РОВНО ОДИН город, остальные — по ЕГО выбору
@@ -2430,7 +2464,13 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
                 # ходу ВСЕ размера 1 (у сторон-ИИ 2.17-2.33) — город, строящий поселенца при
                 # размере 1, не растёт НИКОГДА, и такой заказ надо не «дожимать», а снимать.
                 _sz1 = _city_size_of(rec, _save_fields, cid)
+                _sur1 = _save_surplus.get(str(cid))
+                # §13.433: ЕГО условие вместо нашего «размер 1 — нельзя»: город может заказать
+                # поселенца, если прокормит его (`ai/default/daicity.c:560`:
+                # `surplus[O_FOOD] >= utype_upkeep_cost(founder, O_FOOD)`, содержание поселенца — 1).
+                # Неизвестный избыток НЕ запрещает: незнание не выдаём за отсутствие возможностей.
                 if (_sz1 is not None and _sz1 <= 1.0
+                        and _sur1 is not None and _sur1 < 1.0
                         and os.environ.get("DOF_NO_SIZE_RULE") != "1"):
                     # §13.427: правило СНОВА ВКЛЮЧЕНО. Замер середины партии (сейв 60-го хода)
                     # снял противоречие §13.420: у его сторон города размера 1 строят City Walls
@@ -2527,7 +2567,9 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
                 _ord_mem[str(cid)] = "Warriors"
                 return ('city', cid, 'produce_Warriors')
             _sz2 = _city_size_of(rec, _save_fields, cid)
+            _sur2 = _save_surplus.get(str(cid))
             if (_sz2 is not None and _sz2 <= 1.0
+                    and _sur2 is not None and _sur2 < 1.0
                     and os.environ.get("DOF_NO_SIZE_RULE") != "1"):
                 # §13.427: см. пояснение выше — правило снова включено по умолчанию
                 # (`DOF_NO_SIZE_RULE=1` выключает для честного A/B).
