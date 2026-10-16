@@ -19713,3 +19713,27 @@ s1220 — оснований 2 (ходы 3, 6), «основать_здесь=Tr
 (`ai/default/daicity.c:1860,1897,1955,1964` — накопление и обнуление желания), а сам выбор идёт
 из `building_want` (`daicity.c:120-188`, `dai_choose_building`). Это и есть следующий шаг: перенести
 его правило выбора постройки целиком, вместо нашего списка предпочтений.
+
+## 13.445. Постройки по размеру города — из его очередей
+
+Посчитал по трассе s1455 (ходы 60–100), что строит его сторона при каждом размере города:
+
+    размер 1: City Walls 5, Archers 5
+    размер 2: City Walls 22, Granary 12, Barracks 8, Workers 5
+    размер 3: City Walls 17, Granary 16, Library 15, Courthouse 12, Great Library 12
+    размер 4: Library 15, Great Library 12, Caravan 11, City Walls 9
+    размер 5: Pikemen 13, Caravan 11, Colosseum 8, City Walls 7, Temple 6
+    размер 6: Caravan 11, Diplomat 7, Marketplace 5, Library 4, Temple 3
+    размер 7: Caravan 10, City Walls 7, Marketplace 3
+    размер 8: City Walls 3, Caravan 2, Colosseum 2
+
+Его набор заметно шире нашего: Library, Courthouse, Marketplace, Temple, Colosseum, Caravan. Мы же,
+исчерпав короткий список §13.427, уходили в `Phalanx` и `Coinage`.
+
+Правка: порядок предпочтения построек задан ПО РАЗМЕРУ ГОРОДА (таблица из этой же таблицы выше), а
+в общий запасной список добавлены Caravan, Colosseum и Courthouse. Таблица по размеру применяется,
+когда размер городу известен из сейва; если неизвестен — работает прежний список, то есть
+поведение не меняется наугад.
+
+Ссылки на его код для будущего полного переноса: `ai/default/daicity.c:120-188` (`dai_choose_building`),
+`:1860,1897,1955,1964` (накопление и обнуление `building_want`).

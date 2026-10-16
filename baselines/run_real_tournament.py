@@ -2214,7 +2214,8 @@ def _city_size_of(rec: dict, save_fields: dict | None, cid) -> float | None:
     return None
 
 
-def _first_legal_build(info: dict, cid, avoid: tuple[str, ...] = ()) -> str | None:
+def _first_legal_build(info: dict, cid, avoid: tuple[str, ...] = (),
+                       size: float | None = None) -> str | None:
     """Первая законная постановка города, кроме запрещённых (§13.419).
 
     Берём ИМЕННО то, что мир предлагает городу (`info['available_actions']['city']`), — ничего не
@@ -2234,8 +2235,29 @@ def _first_legal_build(info: dict, cid, avoid: tuple[str, ...] = ()) -> str | No
     # §13.427: порядок предпочтения — КАК У НЕГО в середине партии. Замер сейва 60-го хода: его
     # города размера 1-3 строят City Walls (8 из 8 у игрока 1), Granary и Great Wall, и только
     # постройки. Прежде мы брали `Coinage` первым и не давали городу ни роста, ни защиты.
-    for pref in ("City Walls", "Granary", "Temple", "Marketplace", "Library",
-                 "Barracks", "Coinage"):
+    # §13.445: порядок построек — ПО РАЗМЕРУ ГОРОДА, из наблюдения его очередей (§13.444, 100 ходов):
+    #   размер 1: City Walls, Archers        размер 4: Library, Great Library, Caravan, City Walls
+    #   размер 2: City Walls, Granary, …     размер 5: Pikemen, Caravan, Colosseum, City Walls, Temple
+    #   размер 3: City Walls, Granary, …     размер 6+: Caravan, Diplomat, Marketplace, Library, Temple
+    # Наш прежний набор (§13.427) я собрал из очередей 60-го хода и он зависит от хода: к 100-му у
+    # него в очереди Colosseum, Caravan, Courthouse, а мы, исчерпав короткий список, уходили в
+    # Phalanx и Coinage — город перестал работать на рост (замер s1455: он 13 городов размерами 4–8,
+    # мы 7 городов размерами 1–5).
+    _by_size = {
+        1: ("City Walls", "Archers", "Barracks", "Granary", "Coinage"),
+        2: ("City Walls", "Granary", "Barracks", "Library", "Temple", "Marketplace", "Coinage"),
+        3: ("City Walls", "Granary", "Library", "Courthouse", "Temple", "Marketplace",
+            "Barracks", "Coinage"),
+        4: ("Library", "Caravan", "City Walls", "Granary", "Barracks", "Marketplace",
+            "Temple", "Coinage"),
+        5: ("Caravan", "Colosseum", "City Walls", "Temple", "Marketplace", "Library",
+            "Granary", "Coinage"),
+    }
+    _size_now = size
+    _prefs = list(_by_size.get(int(_size_now or 0)) or ()) if _size_now else []
+    _prefs += ["City Walls", "Granary", "Temple", "Marketplace", "Library", "Barracks",
+               "Caravan", "Colosseum", "Courthouse", "Coinage"]
+    for pref in _prefs:
         if pref in names:
             return pref
     return names[0]
