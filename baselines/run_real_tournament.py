@@ -1114,8 +1114,38 @@ def _founder_step(obs: dict, avail: dict, mindist: int | None = None, env_getter
             _seen_cm.add(_mindist_src)
             print(f"  [citymindist] {_mindist} (источник: {_mindist_src}), "
                   f"городов известно {len(_known_cities)}", flush=True)
+    # §13.439: имена типов наших юнитов. В наблюдении типа нет (замер s1375: тип=None), поэтому
+    # берём у контроллера — там же, где его читает перебор наших юнитов.
+    _type_names: dict[str, str] = {}
+    if env_getter is not None:
+        try:
+            _env_t = env_getter()
+            _c_t = getattr(getattr(_env_t, "unwrapped", None), "civ_controller", None)
+            _uts_t = getattr(getattr(_c_t, "rule_ctrl", None), "unit_types", None) or {}
+            for _uid_t, _rec_t in (getattr(getattr(_c_t, "unit_ctrl", None), "units", None) or {}).items():
+                if not isinstance(_rec_t, dict):
+                    continue
+                _spec_t = _uts_t.get(_rec_t.get("type")) if isinstance(_uts_t, dict) else None
+                _type_names[str(_uid_t)] = str((_spec_t or {}).get("name") or _rec_t.get("type") or "")
+        except Exception:  # noqa: BLE001
+            _type_names = {}
     for uid, actions in unit_actions.items():
         offered = as_dict(actions) or {}
+        # §13.439: ЕГО ПРАВИЛО МИССИИ относится к ПОСЕЛЕНЦУ, а не к любому юниту. Замер s1380
+        # показал прямо в журнале, кого мы ведём основывать:
+        #   unit/107 тип='Workers', unit/108 тип='Explorer', unit/106 тип='Workers'
+        # — ни одного поселенца. Рабочие и разведчик не могут основать город (`build_city=False`
+        # у мира — законный ответ), поэтому они «ждали площадку» всю партию, стояли без работы,
+        # а наши поселенцы, если и были, в этом же цикле путались с ними; отсюда и 120 действий
+        # в списке, и нулевой рост числа городов. Тип берём у контроллера: в наблюдении его нет
+        # (замер s1375: тип=None).
+        if _type_names:
+            _tn = str(_type_names.get(str(uid)) or "")
+            if "settler" not in _tn.lower():
+                if os.environ.get("DOF_FOUND_DEBUG") == "1":
+                    print(f"  [не-поселенец] unit/{uid} (тип {_tn!r}) — правило основания к нему "
+                          f"не применяется", flush=True)
+                continue
         founding = [str(n) for n, params in offered.items()
                     if str(n).startswith(("build_city", "found_city")) and truthy(params)]
         # ── §13.349: ЕГО правило миссии (`daisettler.c:1036-1040`): если город ЗДЕСЬ основать
