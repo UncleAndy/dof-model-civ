@@ -3299,6 +3299,119 @@ def _port_work_choice_for(actor, candidates, obs, dof_state, avail=None):
     return choice.activity or None
 
 
+def _worker_dest_step(actor: str, cands: list, obs: dict, dof_state, avail=None) -> str | None:
+    """Шаг рабочего к клетке, где работа даёт прирост (§13.451).
+
+    Зачем: §13.450 показала, что цепочка работ исправна, но рассматривает ТУ клетку, на которой
+    рабочий стоит. Если работы на ней нет, встроенный ИИ ведёт рабочего туда, где она есть. Здесь
+    ровно это: из клеток в радиусе выбирается клетка с наибольшим ДИСКОНТИРОВАННЫМ выигрышем работы
+    (`amortize`), и рабочему возвращается имя хода `goto_*` в её сторону.
+
+    Включается только прибором `DOF_WORK_MOVE=1`: новая ветка решения не должна менять поведение
+    полосы до отдельного прогона. Ценности не выдумываются — они берутся из правил мира (выходы
+    террейна с уже имеющимися улучшениями) и коэффициентов его управляющего городом.
+    """
+    if os.environ.get("DOF_WORK_MOVE") != "1":
+        return None
+    try:
+        from brain.ai_default.founder_destination import goto_name_to, path_first_step
+        from brain.ai_default.tile_outputs import tile_outputs_from_rules
+        from brain.ai_default.worker_choice import work_options_from_rules
+        from brain.ai_default.worker_destination import best_work_tile
+        from brain.ai_default.worker_manager import factors, tile_value
+        from env.terrain_work import tile_terrain_extras
+    except Exception:  # noqa: BLE001
+        return None
+
+    positions = getattr(dof_state, "positions", None) or {}
+    pos = positions.get(str(actor)) or positions.get(f"unit_{actor}")
+    if not pos:
+        return None
+    try:
+        px, py = int(pos[0]), int(pos[1])
+    except Exception:  # noqa: BLE001
+        return None
+
+    map_obs = obs.get("map") if isinstance(obs, dict) else None
+    rules = obs.get("rules") if isinstance(obs, dict) else None
+    if not isinstance(map_obs, dict) or not isinstance(rules, dict):
+        return None
+    try:
+        xs, ys = int(rules.get("xsize") or 0), int(rules.get("ysize") or 0)
+    except Exception:  # noqa: BLE001
+        return None
+    if xs <= 0 or ys <= 0:
+        return None
+
+    weights = factors(1.0)
+
+    def _outputs(tile):
+        tx, ty = tile
+        try:
+            ter, extras = tile_terrain_extras(map_obs, tx, ty)
+        except Exception:  # noqa: BLE001
+            return None
+        if not ter:
+            return None
+        ter = str(ter).strip().lower().replace(" ", "_")
+        outs = tile_outputs_from_rules(ter, extras)
+        if outs is None:
+            return None
+        return ter, tuple(outs)
+
+    def options_for(tile):
+        """{работа: выигрыш} для клетки — из правил мира, без выдуманных значений."""
+        got = _outputs(tile)
+        if got is None:
+            return None
+        ter, old = got
+        try:
+            raw = work_options_from_rules(ter, old, _PORT_WORK_NAMES)
+        except Exception:  # noqa: BLE001
+            return None
+        if not raw:
+            return None
+        base = float(tile_value(old[0], old[1], old[2], weights))
+        out = {}
+        for name, (new_outs, delay) in raw.items():
+            gain = float(tile_value(new_outs[0], new_outs[1], new_outs[2], weights)) - base
+            if gain <= 0.0:
+                continue
+            out[name] = _amortize_gain(gain, int(delay))
+        return out or None
+
+    tiles = [(x, y) for x in range(max(0, px - 4), min(xs, px + 5))
+             for y in range(max(0, py - 4), min(ys, py + 5))]
+    try:
+        target = best_work_tile(worker_pos=(px, py), tiles=tiles, options_for=options_for,
+                                gain_of=lambda opts: max(opts.values()), radius=4)
+    except Exception:  # noqa: BLE001
+        return None
+    if not target:
+        return None
+
+    step = goto_name_to((px, py), target)
+    if step is None:
+        return None
+    have = {str(_to_action(c)[2]) for c in cands
+            if _to_action(c) and str(_to_action(c)[0]) == "unit"
+            and str(_to_action(c)[1]) == str(actor)}
+    if step in have:
+        if os.environ.get("DOF_TRACE_FILTERS") == "1":
+            print(f"  [работа-цель] unit/{actor}: иду на {target} шагом {step}", flush=True)
+        return step
+    return None
+
+
+def _amortize_gain(gain: float, delay: int) -> float:
+    """`amortize` из его `advtools.c` (MORT = 24) — выигрыш работы с учётом срока."""
+    try:
+        from brain.ai_default.worker_choice import amortize
+        return float(amortize(gain, delay))
+    except Exception:  # noqa: BLE001
+        return gain
+
+
 def _prefer_port_work_choice(cands: list, obs: dict, dof_state, avail=None) -> list:
     """Оставить выбранную ИМ работу среди предложенных работ КАЖДОГО юнита (§13.288).
 
@@ -3322,7 +3435,18 @@ def _prefer_port_work_choice(cands: list, obs: dict, dof_state, avail=None) -> l
         chosen = _port_work_choice_for(actor, cands, obs, dof_state, avail)
         if chosen:
             keep[actor] = chosen
-    if not keep:
+    # §13.451: если работы на текущей клетке нет — вести рабочего туда, где она есть.
+    move_keep: dict = {}
+    for actor in by_actor:
+        if keep.get(actor):
+            continue
+        try:
+            step = _worker_dest_step(actor, cands, obs, dof_state, avail)
+        except Exception:  # noqa: BLE001
+            step = None
+        if step:
+            move_keep[actor] = step
+    if not keep and not move_keep:
         return cands
 
     out = []
@@ -3337,6 +3461,12 @@ def _prefer_port_work_choice(cands: list, obs: dict, dof_state, avail=None) -> l
             if os.environ.get("DOF_TRACE_FILTERS") == "1":
                 print(f"  [работа-перенос] unit/{actor}: {name} отложено — его правило "
                       f"выбрало {chosen}", flush=True)
+            continue
+        step = move_keep.get(actor)
+        if ctrl == "unit" and step and name.startswith("goto_") and name != step:
+            if os.environ.get("DOF_TRACE_FILTERS") == "1":
+                print(f"  [работа-цель] unit/{actor}: {name} отложено — иду шагом {step}",
+                      flush=True)
             continue
         out.append(c)
     if not out:
