@@ -3418,6 +3418,8 @@ def _worker_dest_step(actor: str, cands: list, obs: dict, dof_state, avail=None)
     полосы до отдельного прогона. Ценности не выдумываются — они берутся из правил мира (выходы
     террейна с уже имеющимися улучшениями) и коэффициентов его управляющего городом.
     """
+    if os.environ.get("DOF_WORK_DEBUG") == "1":
+        print(f"  [работа-вход] вызван для {actor}, DOF_WORK_MOVE={os.environ.get('DOF_WORK_MOVE')}", flush=True)
     if os.environ.get("DOF_WORK_MOVE") != "1":
         return None
     try:
