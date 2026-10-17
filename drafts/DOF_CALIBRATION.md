@@ -20545,3 +20545,33 @@ s1220 — оснований 2 (ходы 3, 6), «основать_здесь=Tr
 
 Остаток разрыва по-прежнему в ТЕМПЕ роста, а не в выборе: население на город у него выше при том же
 отношении городов (×1.5), то есть каждый его город растёт быстрее нашего.
+
+## 13.471. Работы рабочих: оценка улучшений живёт в `server/advisors/autoworkers.c`
+
+`ai/default/daicity.c:747-840` (`contemplate_terrain_improvements`) — где он решает, ЧТО улучшать:
+
+    if (!private->contemplace_workers) return;      /* у другого типа ИИ свой способ */
+    city_data->worker_want = 0;
+    want = settler_evaluate_improvements(nmap, virtualunit, &best_act, &best_target,
+                                         &best_tile, ...);
+    if (unit_type_get(virtualunit)->pop_cost >= city_size_get(pcity)) return;
+    want = (want - unit_food_upkeep(virtualunit) * FOOD_WEIGHTING / 2) * 100
+           / (40 + unit_foodbox_cost(virtualunit));
+
+ГЛАВНОЕ: `settler_evaluate_improvements` объявлена в **`server/advisors/autoworkers.c`** (и
+`autoworkers.h`, `infracache.c`). Это полная оценка улучшений по клеткам, из которой он получает
+`best_act` и `best_tile` — то есть и «что делать», и «куда идти». У нас вместо неё своя таблица
+эффектов (`env/terrain_work_effects.py`), и именно поэтому наши рабочие за партию делают 0–2 работы,
+а его — работают постоянно. Раньше я снял с повестки `infracache.c`; правильный адрес оказался
+`autoworkers.c`, и он с повестки НЕ снят.
+
+Плюс его защита от переполнения рабочими (`:811-818`):
+
+    want /= MAX(1, stats.workers[place] / (cities[place] + 1));
+    want -= stats.workers[place];
+    want = MAX(want, 0);
+
+Это объясняет, почему ОН не спамит рабочими; нашей проблемы (рабочих мало и они не работают) оно не
+решает — наша проблема в отсутствии оценки `best_act`/`best_tile`.
+
+Следующий предмет переноса — `server/advisors/autoworkers.c`: `settler_evaluate_improvements`.
