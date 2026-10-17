@@ -20310,3 +20310,26 @@ s1220 — оснований 2 (ходы 3, 6), «основать_здесь=Tr
 
 Следующий шаг — перенести это условие вызова (наличие защитников и значение опасности) в наше
 правило производства, а не менять веса.
+
+### 13.465. Условие вызова защитника — полностью найдено (вторая ветвь)
+
+`ai/default/daimilitary.c:1907-1925`:
+
+    /* If our choice isn't defender unit already, consider one */
+    if (!def_unit_selected) {
+      if ((danger > 0 && num_defenders <= urgency) || martial_value > 0) {
+        ...
+        if (dai_process_defender_want(...)) {
+          if (urgency == 0 && uchoice.value.utype->defense_strength == 1) {
+            if (get_city_bonus(pcity, EFT_HP_REGEN) > 0) uchoice.want = MIN(49, danger);
+            else                                          uchoice.want = MIN(25, danger);
+          }
+
+Итого его правило целиком: защитник рассматривается, только если `danger > 0` и
+`num_defenders <= urgency` (то есть защитников МЕНЬШЕ, чем требует опасность), либо при
+`martial_value > 0`; а для слабого защитника (`defense_strength == 1`) желание ещё и ограничивается
+сверху — `MIN(49, danger)` при наличии лечения в городе, иначе `MIN(25, danger)`.
+
+У нас в коде уже есть `_ai_mil.defenders_wanted(danger)` (`run_real_tournament.py:423`) — это и есть
+`urgency`. Не хватает ровно условия `num_defenders <= urgency` перед применением хотелки.
+Правка стала однозначной; нужен только счётчик защитников города.
