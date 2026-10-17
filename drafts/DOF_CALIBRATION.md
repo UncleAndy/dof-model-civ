@@ -20575,3 +20575,29 @@ s1220 — оснований 2 (ходы 3, 6), «основать_здесь=Tr
 решает — наша проблема в отсутствии оценки `best_act`/`best_tile`.
 
 Следующий предмет переноса — `server/advisors/autoworkers.c`: `settler_evaluate_improvements`.
+
+## 13.472. Устройство его оценки улучшений (`autoworkers.c:439-520`)
+
+`settler_evaluate_improvements` — один вызов даёт ВСЁ: `best_act` (что делать), `best_target`
+(чем), `best_tile` (куда идти) и `want`. Как устроен (первые 80 строк):
+
+    int best_oldv = 9999;  /* не 0 — чтобы действия с newv == 0 не выбирались */
+    adv_want best_newv = 0;
+    ...
+    parameter.get_TB = autosettler_tile_behavior;
+    city_tile_iterate_index(city_map_radius_sq_get(pcity), pcenter, ptile, ...) {
+      bool in_use = (tile_worked(ptile) == pcity);
+      if (!in_use && !city_can_work_tile(pcity, ptile))      continue;  /* клетка не наша */
+      if (!adv_settler_safe_tile(nmap, pplayer, punit, ptile)) continue; /* небезопасно */
+      ... /* Do not go to tiles that already have workers there. */
+
+Существенное:
+* перебор идёт по клеткам В РАДИУСЕ ГОРОДА (`city_map_radius_sq_get`) — то есть у него «клетка вне
+  радиуса» тоже не рассматривается, как и у нас (§13.450). Наш вывод про радиус был верным;
+* он ОЦЕНИВАЕТ КЛЕТКИ по приросту (`best_newv`, ничьи разрешает `best_oldv`) с помощью
+  `autosettler_tile_behavior` — эта функция и есть «что вообще можно сделать на клетке». У нас вместо
+  неё своя таблица эффектов, поэтому наши рабочие не находят цели;
+* у него отдельно отбрасываются клетки, где уже стоит рабочий.
+
+Следующий предмет чтения — `autosettler_tile_behavior` (там список деятельностей и их ценность);
+после него перенос становится механическим.
