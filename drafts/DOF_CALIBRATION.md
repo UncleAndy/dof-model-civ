@@ -20601,3 +20601,28 @@ s1220 — оснований 2 (ходы 3, 6), «основать_здесь=Tr
 
 Следующий предмет чтения — `autosettler_tile_behavior` (там список деятельностей и их ценность);
 после него перенос становится механическим.
+
+### 13.472 (продолжение) — `autosettler_tile_behavior` оказалась не тем, что я ожидал
+
+`server/advisors/autoworkers.c:410-423` — вся функция:
+
+    static enum tile_behavior
+    autosettler_tile_behavior(const struct tile *ptile, enum known_type known,
+                              const struct pf_parameter *param)
+    {
+      const struct owner *owner = tile_owner(ptile);
+      if (NULL != owner && !pplayers_allied(owner, param->owner)) return TB_IGNORE;
+      return TB_NORMAL;
+    }
+
+То есть она делает ОДНО: не входить на клетки чужих не-союзников. Списка деятельностей и их ценности
+в ней нет — я ожидал не того, и это надо записать как есть, чтобы следующий заход не искал здесь.
+
+Что даёт доккумент над `settler_evaluate_improvements`: возвращаемое значение — «добротность лучшей
+клетки и действия», 0 значит «годных действий нет»; в оценку ВХОДИТ ВРЕМЯ ПУТИ
+(`completion_time` — «время, которое уйдёт на дорогу и работу»), и есть состояние
+`state`/`unit id`/`eta` для рабочих, идущих к клетке (используется, чтобы не дублировать их).
+
+Значит ценность действия считается в самой петле отбора (внутри `autoworkers.c:439-520`), а не в
+`autosettler_tile_behavior`. Следующий предмет чтения — именно эта петля целиком (от `city_tile_iterate`
+до `best_tile`), где `newv`/`oldv` и вычисляются.
