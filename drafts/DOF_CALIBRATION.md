@@ -20506,3 +20506,26 @@ s1220 — оснований 2 (ходы 3, 6), «основать_здесь=Tr
 
 Отсюда следующий замер: сверить по числам его `founder_want` (daisettlers.c) и `worker_want`
 (daicity.c) с нашими `_founder_want_of` / `ctx.worker_want`, а не переписывать выбор.
+
+## 13.470. Источник `founder_want` — `contemplate_new_city` (daicity.c), и у него КЭШ на 5–10 ходов
+
+`ai/default/daicity.c:926-936`:
+
+    if (city_data->founder_turn <= game.info.turn) {
+      contemplate_new_city(ait, pcity);              /* пишет pcity->founder_want */
+      city_data->founder_turn =
+        game.info.turn + fc_rand(AI_CITY_RECALC_SPEED) + AI_CITY_RECALC_SPEED;
+    }
+
+    (AI_CITY_RECALC_SPEED = 5 — его же константа)
+
+То есть желание поселенца он пересчитывает НЕ каждый ход, а раз в 5–10 ходов, и сам это комментирует:
+«This means AI is not very opportunistic if there happens to open up spot for a new city».
+МЫ пересчитываем каждый ход — то есть мы «более оппортунистичны», чем он, и заказываем поселенцев
+там, где он ещё держит прежнее (возможно, нулевое) желание. Это ЛИШНЕЕ кандидатское объяснение того,
+почему наши очереди полны поселенцев.
+
+ОТДЕЛЬНО и важно: файла `ai/default/daisettlers.c` в нашем дереве исходников НЕТ (grep по каталогу —
+«Нет такого файла»), а в докстроке нашей `_founder_want_of` он указан как источник
+(`daisettlers.c:1316`). Настоящий источник — `contemplate_new_city` в `daicity.c`. Докстроку надо
+поправить: ссылка на несуществующий файл в журнале хуже пробела.
