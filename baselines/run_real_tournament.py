@@ -451,6 +451,23 @@ def _his_danger(obs: dict, extractor) -> float:
     return 0.0
 
 
+def _city_defenders(env_getter, cid):
+    """Число ЗАЩИТНИКОВ города — у контроллера, по городу-владельцу юнита (§13.438/§13.465).
+
+    Возвращает None, если данных нет: «не знаю» отличается от нуля, и условие его вызова тогда не
+    срабатывает — незнание не запрещает.
+    """
+    try:
+        _ctl = getattr(getattr(env_getter(), "unwrapped", None), "civ_controller", None)
+        _units = getattr(getattr(_ctl, "unit_ctrl", None), "units", None)
+        if not isinstance(_units, dict) or cid is None:
+            return None
+        return sum(1 for _u in _units.values()
+                   if isinstance(_u, dict) and str(_u.get("homecity", -1)) == str(cid))
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _his_production_want(name: str, rec: dict, ctx, danger: float,
                          defenders: float | None = None,
                          urgency: float | None = None):
@@ -2675,7 +2692,8 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
                     _dgr = _his_danger(obs, extractor)
                     _w = {}
                     for _n in _legal2:
-                        _val = _his_production_want(_n, rec, _ctx, _dgr)
+                        _val = _his_production_want(_n, rec, _ctx, _dgr,
+                                                defenders=_city_defenders(env_getter, rec.get("id")))
                         if _val is not None:
                             _w[_n] = float(_val)
                     if _w:
