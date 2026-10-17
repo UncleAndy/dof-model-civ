@@ -340,6 +340,15 @@ def _hold_production_candidates(cands: list, obs: dict, type_names: dict | None)
         cur = now.get(str(actor))
         if cur is None or want in held or f"{actor}|{cur}" not in offered_now:
             keep.append(c)
+        elif os.environ.get("DOF_WORK_DEBUG") == "1":
+            # §13.477: прибор — почему кандидат на смену производства НЕ проходит фильтр.
+            _key = f"держит «{cur}»"
+            _PORDFILT[_key] = _PORDFILT.get(_key, 0) + 1
+            if "Workers" in want:
+                _k2 = "из них рабочих: " + _key
+                _PORDFILT[_k2] = _PORDFILT.get(_k2, 0) + 1
+    if os.environ.get("DOF_WORK_DEBUG") == "1" and _PORDFILT:
+        print(f"  [фильтр-заказов] {_PORDFILT}", flush=True)
     return keep
 
 
@@ -2250,6 +2259,9 @@ def _founder_want_of(obs, rec, cities_xy, mindist: int = 2) -> float:_FOUNDER_CA
 
 #: Причины, по которым рабочий не нашёл работу (прибор `DOF_WORK_DEBUG=1`).
 _WORK_DIAG: dict = {}
+
+#: Почему кандидат на смену производства не прошёл фильтр (§13.477).
+_PORDFILT: dict = {}
 
 
 def _founder_want_cached(obs, rec, cities_xy, mindist: int, turn: int) -> float:
