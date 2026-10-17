@@ -20656,3 +20656,11 @@ s1220 — оснований 2 (ходы 3, 6), «основать_здесь=Tr
 
 Следующий предмет переноса: `city_tile_value` и `adv_city_worker_act_get` (найти их адреса), затем
 `consider_settler_action`. После них механизм работ становится переносимым целиком.
+
+### 13.473 (поправка) — `infracache.c` НУЖЕН после всех
+
+`adv_city_worker_act_get` объявлена в **`server/advisors/infracache.h`** и определена в
+**`server/advisors/infracache.c`** — том самом файле, который я ранее (§13.446) снял с повестки как
+«уже сделанный». Снимаю это снятие: ценность действия на клетке живёт именно там, и без него перенос
+работ не сделать. Порядок переноса: `infracache.c` (`adv_city_worker_act_get`) → `autoworkers.c`
+(`settler_evaluate_improvements`, `consider_settler_action`) → наш вызов.
