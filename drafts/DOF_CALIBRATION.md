@@ -20626,3 +20626,33 @@ s1220 — оснований 2 (ходы 3, 6), «основать_здесь=Tr
 Значит ценность действия считается в самой петле отбора (внутри `autoworkers.c:439-520`), а не в
 `autosettler_tile_behavior`. Следующий предмет чтения — именно эта петля целиком (от `city_tile_iterate`
 до `best_tile`), где `newv`/`oldv` и вычисляются.
+
+## 13.473. ГДЕ именно считается ценность улучшения (петля `autoworkers.c:520-575`)
+
+Теперь видно устройство целиком — и это готовый чертёж переноса:
+
+    oldv = city_tile_value(pcity, ptile, 0, 0);            /* ценность клетки СЕЙЧАС */
+    aw_transform_action_iterate(act) {                      /* перебор действий на клетке */
+      cause   = activity_to_extra_cause(action_id_get_activity(act));
+      rmcause = activity_to_extra_rmcause(action_id_get_activity(act));
+      ... newv = adv_city_worker_act_get(pcity, cindex, activity) ...   /* ценность ПОСЛЕ */
+      int base_value = adv_city_worker_act_get(pcity, cindex, activity);
+      delay = get_turns_for_activity_at(punit, activity, ptile, ...);   /* ХОДЫ: дорога + работа */
+      if (pos.moves_left == 0) { /* нужны ходы, чтобы начать сразу */ }
+      consider_settler_action(pplayer, ...);
+    }
+
+Четыре имени, которых у нас нет и которые дают его рабочим работу:
+
+1. **`city_tile_value(pcity, ptile, 0, 0)`** — ценность клетки как обрабатываемой городом (то, чем
+   он измеряет «стало лучше»);
+2. **`adv_city_worker_act_get(pcity, cindex, activity)`** — ценность клетки ПОСЛЕ действия; разница
+   с `city_tile_value` и есть прирост от шахты/ирригации/дороги;
+3. **`get_turns_for_activity_at(punit, activity, ptile, …)`** — ходы «дорога + работа» (его `delay`);
+4. **`consider_settler_action(...)`** — сравнение кандидатов (`newv`, `oldv`, `delay`) и выбор лучшего.
+
+То есть «работа рабочего» у него = max по клеткам радиуса и действиям от прироста ценности с учётом
+времени. У нас вместо этого таблица эффектов и никакого учёта времени.
+
+Следующий предмет переноса: `city_tile_value` и `adv_city_worker_act_get` (найти их адреса), затем
+`consider_settler_action`. После них механизм работ становится переносимым целиком.
