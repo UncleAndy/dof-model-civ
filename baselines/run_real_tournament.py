@@ -3435,6 +3435,10 @@ def _worker_dest_step(actor: str, cands: list, obs: dict, dof_state, avail=None)
     positions = getattr(dof_state, "positions", None) or {}
     pos = positions.get(str(actor)) or positions.get(f"unit_{actor}")
     if not pos:
+        if os.environ.get("DOF_WORK_DEBUG") == "1":
+            print("  [работа-нет-позиции] " + str(actor) + ": записей в positions "
+                  + str(len(positions)) + ", пример ключей " + str(list(positions)[:4]),
+                  flush=True)
         return None
     try:
         px, py = int(pos[0]), int(pos[1])
