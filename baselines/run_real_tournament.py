@@ -471,11 +471,14 @@ def _his_production_want(name: str, rec: dict, ctx, danger: float,
             # и поведение прежнее, а не запрет: незнание не запрещает.
             _def = defenders
             if _def is None:
+                # «Не знаю» и «ноль защитников» — РАЗНОЕ: если контроллера в контексте нет, число
+                # неизвестно (None) и условие не срабатывает; ноль считается только тогда, когда
+                # список юнитов действительно доступен, и в нём нет защитников этого города.
                 try:
                     _ctl = getattr(ctx, "ctl", None)
-                    _units = getattr(getattr(_ctl, "unit_ctrl", None), "units", None) or {}
+                    _units = getattr(getattr(_ctl, "unit_ctrl", None), "units", None)
                     _cid = rec.get("id") if isinstance(rec, dict) else None
-                    if _cid is not None and isinstance(_units, dict):
+                    if _ctl is not None and isinstance(_units, dict) and _cid is not None:
                         _def = sum(1 for _u in _units.values()
                                    if isinstance(_u, dict)
                                    and str(_u.get("homecity", -1)) == str(_cid))
