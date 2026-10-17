@@ -2246,7 +2246,27 @@ def _my_index(env_getter) -> int:
     except Exception:  # noqa: BLE001
         return 0
 
-def _founder_want_of(obs, rec, cities_xy, mindist: int = 2) -> float:
+def _founder_want_of(obs, rec, cities_xy, mindist: int = 2) -> float:_FOUNDER_CACHE: dict = {}
+
+
+def _founder_want_cached(obs, rec, cities_xy, mindist: int, turn: int) -> float:
+    """Желание поселенца С КЭШЕМ — как у него (`ai/default/daicity.c:926-936`).
+
+    Он пересчитывает `contemplate_new_city` не каждый ход, а раз в
+    `fc_rand(AI_CITY_RECALC_SPEED) + AI_CITY_RECALC_SPEED` ходов (`AI_CITY_RECALC_SPEED = 5`),
+    и сам комментирует: «This means AI is not very opportunistic if there happens to open up spot
+    for a new city». Мы пересчитывали каждый ход — то есть были оппортунистичнее его.
+    """
+    import random as _rnd
+    cid = rec.get("id") if isinstance(rec, dict) else None
+    slot = _FOUNDER_CACHE.get(cid)
+    if slot is not None and int(turn) < int(slot[0]):
+        return float(slot[1])
+    want = float(_founder_want_of(obs, rec, cities_xy, mindist))
+    _FOUNDER_CACHE[cid] = (int(turn) + _rnd.randrange(5) + 5, want)
+    return want
+
+
     """ЕГО `founder_want` для города (`ai/default/daisettler.c:1316`, `daicity.c`).
 
     Это ЛУЧШИЙ результат основания рядом с городом: он считает его как виртуальный поселенец в
@@ -2595,7 +2615,7 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
             _mind5 = int(_world_citymindist(env_getter()) or 0) or 2
             _settlers_wanted = sum(
                 1 for _r in ours.values()
-                if _founder_want_of(obs, _r, _cities_xy, _mind5) > 0.0)
+                if _founder_want_cached(obs, _r, _cities_xy, _mind5, _turn_now) > 0.0)
             if os.environ.get("DOF_FOUND_DEBUG") == "1":
                 print(f"  [поселенцы] городов {_n_cities}, из них с площадкой рядом "
                       f"{_settlers_wanted} (его founder_want)", flush=True)
