@@ -2248,6 +2248,9 @@ def _my_index(env_getter) -> int:
 
 def _founder_want_of(obs, rec, cities_xy, mindist: int = 2) -> float:_FOUNDER_CACHE: dict = {}
 
+#: Причины, по которым рабочий не нашёл работу (прибор `DOF_WORK_DEBUG=1`).
+_WORK_DIAG: dict = {}
+
 
 def _founder_want_cached(obs, rec, cities_xy, mindist: int, turn: int) -> float:
     """Желание поселенца С КЭШЕМ — как у него (`ai/default/daicity.c:926-936`).
@@ -3463,10 +3466,17 @@ def _worker_dest_step(actor: str, cands: list, obs: dict, dof_state, avail=None)
             return None
         return ter, tuple(outs)
 
+    _wd = _WORK_DIAG if os.environ.get("DOF_WORK_DEBUG") == "1" else None
+
+    def _wdc(reason):
+        if _wd is not None:
+            _wd[reason] = _wd.get(reason, 0) + 1
+
     def options_for(tile):
         """{работа: выигрыш} для клетки — из правил мира, без выдуманных значений."""
         got = _outputs(tile)
         if got is None:
+            _wdc("выходов клетки нет (террейн/эффекты неизвестны)")
             return None
         ter, old = got
         try:
@@ -3474,6 +3484,7 @@ def _worker_dest_step(actor: str, cands: list, obs: dict, dof_state, avail=None)
         except Exception:  # noqa: BLE001
             return None
         if not raw:
+            _wdc("правила не предлагают работ для этого террейна")
             return None
         base = float(tile_value(old[0], old[1], old[2], weights))
         out = {}
@@ -3492,6 +3503,10 @@ def _worker_dest_step(actor: str, cands: list, obs: dict, dof_state, avail=None)
     except Exception:  # noqa: BLE001
         return None
     if not target:
+        _wdc("годной цели нет: все приросты <= 0")
+        if _wd is not None and len(_wd) > 3:
+            _wd = None  # печатаем сводку один раз, чтобы не залить журнал
+        print(f"  [работа-клетки] причин: {_WORK_DIAG}", flush=True)
         return None
 
     step = goto_name_to((px, py), target)
