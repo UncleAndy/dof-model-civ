@@ -3430,9 +3430,9 @@ def _worker_dest_step(actor: str, cands: list, obs: dict, dof_state, avail=None)
         from brain.ai_default.worker_manager import factors, tile_value
         from env.terrain_work import tile_terrain_extras
     except Exception:  # noqa: BLE001
-        return None
         if os.environ.get("DOF_WORK_DEBUG") == "1":
             print("  [работа-обрыв] строка 3433", flush=True)
+        return None
 
     positions = getattr(dof_state, "positions", None) or {}
     pos = positions.get(str(actor)) or positions.get(f"unit_{actor}")
@@ -3441,32 +3441,32 @@ def _worker_dest_step(actor: str, cands: list, obs: dict, dof_state, avail=None)
             print("  [работа-нет-позиции] " + str(actor) + ": записей в positions "
                   + str(len(positions)) + ", пример ключей " + str(list(positions)[:4]),
                   flush=True)
-        return None
         if os.environ.get("DOF_WORK_DEBUG") == "1":
             print("  [работа-обрыв] строка 3442", flush=True)
+        return None
     try:
         px, py = int(pos[0]), int(pos[1])
     except Exception:  # noqa: BLE001
-        return None
         if os.environ.get("DOF_WORK_DEBUG") == "1":
             print("  [работа-обрыв] строка 3446", flush=True)
+        return None
 
     map_obs = obs.get("map") if isinstance(obs, dict) else None
     rules = obs.get("rules") if isinstance(obs, dict) else None
     if not isinstance(map_obs, dict) or not isinstance(rules, dict):
-        return None
         if os.environ.get("DOF_WORK_DEBUG") == "1":
             print("  [работа-обрыв] строка 3451", flush=True)
+        return None
     try:
         xs, ys = int(rules.get("xsize") or 0), int(rules.get("ysize") or 0)
     except Exception:  # noqa: BLE001
-        return None
         if os.environ.get("DOF_WORK_DEBUG") == "1":
             print("  [работа-обрыв] строка 3455", flush=True)
-    if xs <= 0 or ys <= 0:
         return None
+    if xs <= 0 or ys <= 0:
         if os.environ.get("DOF_WORK_DEBUG") == "1":
             print("  [работа-обрыв] строка 3457", flush=True)
+        return None
 
     weights = factors(1.0)
 
@@ -3475,13 +3475,13 @@ def _worker_dest_step(actor: str, cands: list, obs: dict, dof_state, avail=None)
         try:
             ter, extras = tile_terrain_extras(map_obs, tx, ty)
         except Exception:  # noqa: BLE001
-            return None
             if os.environ.get("DOF_WORK_DEBUG") == "1":
                 print("  [работа-обрыв] строка 3466", flush=True)
-        if not ter:
             return None
+        if not ter:
             if os.environ.get("DOF_WORK_DEBUG") == "1":
                 print("  [работа-обрыв] строка 3468", flush=True)
+            return None
         ter = str(ter).strip().lower().replace(" ", "_")
         outs = tile_outputs_from_rules(ter, extras)
         if outs is None:
