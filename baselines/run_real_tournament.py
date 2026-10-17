@@ -451,7 +451,9 @@ def _his_danger(obs: dict, extractor) -> float:
     return 0.0
 
 
-def _his_production_want(name: str, rec: dict, ctx, danger: float):
+def _his_production_want(name: str, rec: dict, ctx, danger: float,
+                         defenders: float | None = None,
+                         urgency: float | None = None):
     """Хотелка его советников для этого имени производства (§13.366)."""
     try:
         from brain.ai_default import military_want as _mw
@@ -463,9 +465,45 @@ def _his_production_want(name: str, rec: dict, ctx, danger: float):
                 _stats = _spec(str(name)) or {} if callable(_spec) else {}
             except Exception:  # noqa: BLE001
                 _stats = {}
+            # §13.465: его УСЛОВИЕ ВЫЗОВА (`ai/default/daimilitary.c:1907-1925`) — защитник
+            # рассматривается, только если `danger > 0` И `num_defenders <= urgency` (защитников
+            # меньше, чем требует опасность). Если число защитников получить не удалось — «не знаю»,
+            # и поведение прежнее, а не запрет: незнание не запрещает.
+            _def = defenders
+            if _def is None:
+                try:
+                    _ctl = getattr(ctx, "ctl", None)
+                    _units = getattr(getattr(_ctl, "unit_ctrl", None), "units", None) or {}
+                    _cid = rec.get("id") if isinstance(rec, dict) else None
+                    if _cid is not None and isinstance(_units, dict):
+                        _def = sum(1 for _u in _units.values()
+                                   if isinstance(_u, dict)
+                                   and str(_u.get("homecity", -1)) == str(_cid))
+                except Exception:  # noqa: BLE001
+                    _def = None
+            _urg = urgency
+            if _def is not None:
+                if _urg is None:
+                    try:
+                        from brain.ai_default.military import defenders_wanted as _dw
+                        _urg = float(_dw(danger))
+                    except Exception:  # noqa: BLE001
+                        _urg = None
+                if _urg is not None and not (float(danger or 0.0) > 0.0
+                                             and float(_def) <= float(_urg)):
+                    return 0.0
             # Защитные роли берём из мира, если он их отдаёт; без роли желание 0 — как у него
             # для юнита без `L_DEFEND_GOOD`/`L_DEFEND_OK` (`daimilitary.c:1078-1081`).
-            return _mw.city_military_want(dict(_stats), danger, defend_good=False)
+            _want = _mw.city_military_want(dict(_stats), danger, defend_good=False)
+            # Слабый защитник (`defense_strength == 1`) при `urgency == 0`: желание ограничено
+            # сверху — `MIN(49, danger)` при лечении в городе, иначе `MIN(25, danger)`.
+            try:
+                if _urg == 0 and float(_stats.get("defense_strength") or 0) == 1.0:
+                    _cap = 49.0 if float(getattr(ctx, "hp_regen", 0.0) or 0.0) > 0.0 else 25.0
+                    _want = min(_cap, float(danger or 0.0))
+            except Exception:  # noqa: BLE001
+                pass
+            return _want
         _mw_name = str(name)
         if _mw_name in ("Settlers", "Founder", "Found city"):
             _fw = getattr(ctx, "founder_want", None)
