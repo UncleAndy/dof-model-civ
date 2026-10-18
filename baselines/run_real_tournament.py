@@ -2346,9 +2346,13 @@ def _first_legal_build(info: dict, cid, avoid: tuple[str, ...] = (),
         names = [str(k)[len("produce_"):] for k, v in dict(one).items()
                  if v and str(k).startswith("produce_")]
     except Exception:  # noqa: BLE001
+        if os.environ.get("DOF_TABLE_DEBUG") == "1":
+            print("  [таблица] город " + str(cid) + ", размер " + str(size) + " → " + str(None), flush=True)
         return None
     names = [n for n in names if n not in avoid]
     if not names:
+        if os.environ.get("DOF_TABLE_DEBUG") == "1":
+            print("  [таблица] город " + str(cid) + ", размер " + str(size) + " → " + str(None), flush=True)
         return None
     # §13.427: порядок предпочтения — КАК У НЕГО в середине партии. Замер сейва 60-го хода: его
     # города размера 1-3 строят City Walls (8 из 8 у игрока 1), Granary и Great Wall, и только
@@ -2382,7 +2386,11 @@ def _first_legal_build(info: dict, cid, avoid: tuple[str, ...] = (),
                "Caravan", "Colosseum", "Courthouse", "Coinage"]
     for pref in _prefs:
         if pref in names:
+            if os.environ.get("DOF_TABLE_DEBUG") == "1":
+                print("  [таблица] город " + str(cid) + ", размер " + str(size) + " → " + str(pref), flush=True)
             return pref
+    if os.environ.get("DOF_TABLE_DEBUG") == "1":
+        print("  [таблица] город " + str(cid) + ", размер " + str(size) + " → " + str(names[0]), flush=True)
     return names[0]
 
 
