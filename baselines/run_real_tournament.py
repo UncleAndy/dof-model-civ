@@ -2421,6 +2421,11 @@ def _first_legal_build(info: dict, cid, avoid: tuple[str, ...] = (),
     _prefs = list(_by_size.get(int(_size_now or 0)) or ()) if _size_now else []
     _prefs += ["City Walls", "Granary", "Workers", "Temple", "Marketplace", "Library", "Barracks",
                "Caravan", "Colosseum", "Courthouse", "Coinage"]
+    # §13.508 (проба, под прибором): ЕГО правило поселенца — город, у которого есть куда идти
+    # (`founder_want > 0`), заказывает поселенца, а не монету и не казармы. Проверяем это прямой
+    # вставкой поселенца в начало списка: у города размера 1 поселенец невозможен (§13.419).
+    if os.environ.get("DOF_SETTLER_FIRST") == "1" and _size_now and float(_size_now) >= 2.0:
+        _prefs = ["Settlers"] + _prefs
     for pref in _prefs:
         if pref in names:
             if os.environ.get("DOF_TABLE_DEBUG") == "1":
