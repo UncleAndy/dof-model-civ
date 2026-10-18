@@ -2822,7 +2822,8 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
                     _danger3 = None
                 _mils3 = {str(_x) for _x in (_military_type_names(env_getter()) or ())}
                 if _danger3 is not None and not _danger3 and built in _mils3:
-                    _alt4 = _first_legal_build(info, cid, avoid=tuple(_mils3) + ("Barracks",))
+                    _alt4 = _first_legal_build(info, cid, avoid=tuple(_mils3) + ("Barracks",),
+                                              size=locals().get("_sz2"))
                     if _alt4:
                         _ord_mem[str(cid)] = _alt4
                         print(f"  [заказ] город {cid} строит военного {built!r} без опасных сторон "
@@ -2898,7 +2899,7 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
                 # (`DOF_NO_SIZE_RULE=1` выключает для честного A/B).
                 # §13.419: то же правило и для НАШЕЙ постановки — городу размера 1 поселенца не
                 # заказываем (он не может отдать население: `daicity.c:788`).
-                _alt3 = _first_legal_build(info, cid, avoid=("Settlers",))
+                _alt3 = _first_legal_build(info, cid, avoid=("Settlers",), size=_sz2)
                 if _alt3:
                     _ord_mem[str(cid)] = _alt3
                     print(f"  [заказ] город {cid} размера {_sz2:g} не может строить поселенца "
