@@ -2800,7 +2800,7 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
                     # поселенцев не строит — поселенцы у него были только в самой первой
                     # очереди. Наши же два города размера 1 к 60-му ходу всё ещё строят
                     # поселенцев и потому не растут (у него размеры 2-3, у нас 1).
-                    _alt2 = _first_legal_build(info, cid, avoid=("Settlers",))
+                    _alt2 = _first_legal_build(info, cid, avoid=("Settlers",), size=_sz1)
                     if _alt2:
                         _ord_mem[str(cid)] = _alt2
                         print(f"  [заказ] город {cid} размера {_sz1:g} не может строить поселенца "
