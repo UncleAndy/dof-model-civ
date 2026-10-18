@@ -2255,7 +2255,44 @@ def _my_index(env_getter) -> int:
     except Exception:  # noqa: BLE001
         return 0
 
-def _founder_want_of(obs, rec, cities_xy, mindist: int = 2) -> float:_FOUNDER_CACHE: dict = {}
+def _founder_want_of(obs, rec, cities_xy, mindist: int = 2) -> float:
+    """ЕГО `founder_want` для города (`ai/default/daisettler.c:1316`, `daicity.c`).
+
+    Это ЛУЧШИЙ результат основания рядом с городом: он считает его как виртуальный поселенец в
+    центре города и берёт максимум по площадкам. Условия отбора — его же: клетка должна
+    допускать город (`city_can_be_built_here` → наша `terrain_allows_city`), не быть ближе
+    `citymindist` к уже имеющимся городам и давать неотрицательный избыток еды (`food_surplus`).
+    Ноль значит «этому городу идти некуда» — тогда поселенца он не заказывает.
+    """
+    try:
+        cx, cy = int(rec.get("x")), int(rec.get("y"))
+    except Exception:  # noqa: BLE001
+        return 0.0
+    best = 0.0
+    for dx in range(-2, 3):
+        for dy in range(-2, 3):
+            x, y = cx + dx, cy + dy
+            try:
+                from brain.ai_default.founder_destination import terrain_allows_city as _tac
+                if not _tac(x, y):
+                    continue
+            except Exception:  # noqa: BLE001
+                continue
+            if any(max(abs(x - int(a)), abs(y - int(b))) < int(mindist)
+                   for a, b in (cities_xy or ())):
+                continue
+            try:
+                from env.site_eval import evaluate_site as _ev_site
+                ev = _ev_site(obs, x, y, size=1)
+            except Exception:  # noqa: BLE001
+                continue
+            if float(getattr(ev, "food_surplus", 0.0) or 0.0) <= 0.0:
+                continue
+            best = max(best, float(ev.food) + float(ev.shields) + float(ev.trade))
+    return best
+
+
+_FOUNDER_CACHE: dict = {}
 
 #: Причины, по которым рабочий не нашёл работу (прибор `DOF_WORK_DEBUG=1`).
 _WORK_DIAG: dict = {}
