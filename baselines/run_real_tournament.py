@@ -2834,7 +2834,10 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
                             except Exception:  # noqa: BLE001
                                 _mil = set()
                             _civ = [o for o in _opt
-                                    if str(o[0] if isinstance(o, (list, tuple)) else o) not in _mil]
+                                    if str(o[0] if isinstance(o, (list, tuple)) else o) not in _mil
+                                    # §13.538-правка: `Barracks` — ПОСТРОЙКА, а `_military_type_names`
+                                    # перечисляет только юнитов; фильтр её не ловил (94 заказа за 60 ходов).
+                                    and str(o[0] if isinstance(o, (list, tuple)) else o) != "Barracks"]
                             if _civ:
                                 _opt = _civ
                         _first = _opt[0]
