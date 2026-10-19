@@ -1757,6 +1757,17 @@ def _city_tile_his_manager(obs: dict, avail: dict):
             continue
         chosen = set(plan["chosen"])
         surplus_after = float(plan["surplus"]["food"])
+        # §13.516: СПЕРВА ЗАНЯТЬ, если горожанин свободен. Иначе сервер сам вернёт снятого
+        # жителя на прежнюю клетку, и мы будем снимать одну и ту же клетку каждый ход
+        # (измерено: 28 снятий против 7 постановок, клетка (1,0) снималась повторно).
+        for o in sorted(chosen - worked):
+            kind, name = offs.get(o, (None, None))
+            if kind != "work":
+                continue
+            if os.environ.get("DOF_TILE_DEBUG") == "1":
+                print(f"  [расстановка] город {cid} (размер {size:g}): занимаю {o} → {name} "
+                      f"(§13.516: раньше снятия)", flush=True)
+            return ("city", cid, name)
         # 1) Есть обрабатываемая клетка, которой не место в желаемом наборе — снимаем её.
         for o in sorted(worked - chosen):
             kind, name = offs[o]
