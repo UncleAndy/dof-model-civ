@@ -2838,8 +2838,14 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
                                     # §13.538-правка: `Barracks` — ПОСТРОЙКА, а `_military_type_names`
                                     # перечисляет только юнитов; фильтр её не ловил (94 заказа за 60 ходов).
                                     and str(o[0] if isinstance(o, (list, tuple)) else o) != "Barracks"]
+                            _coin = [o for o in _opt
+                                     if str(o[0] if isinstance(o, (list, tuple)) else o) == "Coinage"]
+                            # §13.538c: если мирного в меню не осталось (город размера 1 без
+                            # поселенца), берём монету, а не казармы: казармы — это щиты в никуда.
                             if _civ:
                                 _opt = _civ
+                            elif _coin:
+                                _opt = _coin
                         _first = _opt[0]
                         _nm = str(_first[0] if isinstance(_first, (list, tuple)) else _first)
                         print(f"  [заказ] его выбор города {cid}: {_nm!r} (первые 3: {str(_opt[:3])[:120]})", flush=True)
