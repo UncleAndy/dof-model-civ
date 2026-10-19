@@ -2380,6 +2380,21 @@ def _city_size_of(rec: dict, save_fields: dict | None, cid) -> float | None:
     return None
 
 
+def _current_build_of(rec) -> str | None:
+    """Имя текущей постановки города из сейва — для правила §13.196.
+
+    Правило владельца: начатое производство доводится до конца. Проверка нужна в «аварийных»
+    ветвях, которые возвращают заказ НАПРЯМУЮ, минуя `_hold_production_candidates` (строка 3861).
+    Измерено §13.519: город менял постановку четыре раза за партию (Granary → Settlers → Granary),
+    теряя вложенные щиты (22 → 9).
+    """
+    try:
+        name = rec.get("currently_building_name") if isinstance(rec, dict) else None
+    except Exception:  # noqa: BLE001
+        return None
+    return str(name) if name else None
+
+
 def _first_legal_build(info: dict, cid, avoid: tuple[str, ...] = (),
                        size: float | None = None) -> str | None:
     """Первая законная постановка города, кроме запрещённых (§13.419).
@@ -2846,6 +2861,7 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
                 #       основывал 3-й, 4-й, 5-й каждые ~10 ходов);
                 #   (2) `daicity.c:560` — избыток еды должен покрывать содержание поселенца.
                 if (_sz1 is not None and (_sz1 <= 1.0 or (_sur1 is not None and _sur1 < 1.0))
+                        and _current_build_of(rec) in (None, "Settlers")
                         and os.environ.get("DOF_NO_SIZE_RULE") != "1"):
                     # §13.427: правило СНОВА ВКЛЮЧЕНО. Замер середины партии (сейв 60-го хода)
                     # снял противоречие §13.420: у его сторон города размера 1 строят City Walls
@@ -2947,6 +2963,7 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
             # §13.434: см. пояснение выше — его ДВА условия вместе (размер больше содержания И
             # избыток еды покрывает содержание поселенца).
             if (_sz2 is not None and (_sz2 <= 1.0 or (_sur2 is not None and _sur2 < 1.0))
+                    and _current_build_of(rec) in (None, "Settlers")
                     and os.environ.get("DOF_NO_SIZE_RULE") != "1"):
                 # §13.427: см. пояснение выше — правило снова включено по умолчанию
                 # (`DOF_NO_SIZE_RULE=1` выключает для честного A/B).
