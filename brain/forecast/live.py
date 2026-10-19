@@ -1005,7 +1005,14 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
         rec = city_records.get(city_id) or {}
         offered = _offered_for(offered_city, city_id)
         stock = _num(rec.get("shield_stock"), 0.0)
-        shields = _num(rec.get("prod_shield"), 0.0)
+        # §13.536: наблюдение отдаёт сетку щитов как `surplus_shield` (`env/spec_obs.py:186`,
+        # `env/entity_extractor.py:1333`), а здесь читался только `prod_shield`. Из-за пустого
+        # значения цена не считалась, предмет выбрасывался, и у города оставался ОДИН вариант
+        # (`[опции] все его варианты: [('Barracks', 8.0, 30)]`). Пустое ≠ ноль: пробуем оба имени.
+        _shields_raw = rec.get("prod_shield")
+        if _shields_raw is None:
+            _shields_raw = rec.get("surplus_shield")
+        shields = _num(_shields_raw, 0.0)
         surplus_food = rec.get("surplus_food")
         surplus_food = None if surplus_food is None else _num(surplus_food, 0.0)
         # Что стоит в очереди города СЕЙЧАС: только этой постановке принадлежат
