@@ -1108,6 +1108,13 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
                 have_military += 1
         need_defender = (_ai_mil.needs_defender(danger, garrison)
                          and have_military < _ai_mil.defenders_wanted(danger))
+        if os.environ.get("DOF_DANGER_DEBUG") == "1" and _num(danger, 0.0) > 0.0:
+            # §13.535: прибор — откуда берётся защитник. Без него выбор `Phalanx` неотличим
+            # от выбора поселенца: обе ветви молчат одинаково.
+            print(f"  [опасность] город {cid}: danger={danger}, угроз={len(threats)}, "
+                  f"гарнизон={garrison}, военных={have_military}, "
+                  f"нужно={_ai_mil.defenders_wanted(danger)}, разрешённые={_allowed}",
+                  flush=True)
         if shields <= 0.0:
             return []
         out: list[tuple[str, float, int]] = []
