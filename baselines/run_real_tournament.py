@@ -2823,6 +2823,20 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
                             _opt = _one
                             break
                     if _opt:
+                        # §13.538: у противников НОЛЬ военных юнитов, а `danger` за 100 ходов ни разу
+                        # не поднимался выше нуля — а города строили Barracks просто потому, что
+                        # в меню из 3-4 постановок это единственный «не монета». Военное из МЕНЮ
+                        # убираем, когда войны нет: у встроенного ИИ защитник идёт от опасности,
+                        # а не от скудости предложения.
+                        if os.environ.get("DOF_NO_MIL_MENU", "1") != "0":
+                            try:
+                                _mil = _military_type_names(env_getter()) or set()
+                            except Exception:  # noqa: BLE001
+                                _mil = set()
+                            _civ = [o for o in _opt
+                                    if str(o[0] if isinstance(o, (list, tuple)) else o) not in _mil]
+                            if _civ:
+                                _opt = _civ
                         _first = _opt[0]
                         _nm = str(_first[0] if isinstance(_first, (list, tuple)) else _first)
                         print(f"  [заказ] его выбор города {cid}: {_nm!r} (первые 3: {str(_opt[:3])[:120]})", flush=True)
