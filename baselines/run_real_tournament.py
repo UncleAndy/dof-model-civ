@@ -2837,7 +2837,7 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
                                     if str(o[0] if isinstance(o, (list, tuple)) else o) not in _mil
                                     # §13.538-правка: `Barracks` — ПОСТРОЙКА, а `_military_type_names`
                                     # перечисляет только юнитов; фильтр её не ловил (94 заказа за 60 ходов).
-                                    and str(o[0] if isinstance(o, (list, tuple)) else o) != "Barracks"]
+                                    and str(o[0] if isinstance(o, (list, tuple)) else o) not in ("Barracks", "Coinage")]
                             _coin = [o for o in _opt
                                      if str(o[0] if isinstance(o, (list, tuple)) else o) == "Coinage"]
                             # §13.538c: если мирного в меню не осталось (город размера 1 без
@@ -2881,7 +2881,7 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
                         # одна ветвь казармы убирала, другая ставила обратно.
                         if os.environ.get("DOF_NO_MIL_MENU", "1") != "0":
                             try:
-                                _milf = set(_military_type_names(env_getter()) or set()) | {"Barracks"}
+                                _milf = set(_military_type_names(env_getter()) or set()) | {"Barracks", "Coinage"}
                             except Exception:  # noqa: BLE001
                                 _milf = {"Barracks"}
                             _w2 = {k: v for k, v in _w.items() if str(k) not in _milf}
