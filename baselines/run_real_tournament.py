@@ -2493,6 +2493,11 @@ def _first_legal_build(info: dict, cid, avoid: tuple[str, ...] = (),
         _prefs = ["Settlers"] + _prefs
     for pref in _prefs:
         if pref in names:
+            if pref == "Coinage" and os.environ.get("DOF_COINAGE_DEBUG") == "1":
+                # §13.527: прибор — ПОЧЕМУ выбран простой. Без него ветвь приходилось угадывать.
+                print("  [монета] город " + str(cid) + ", размер " + str(size)
+                      + ", поселенец в предложении: " + ("да" if "Settlers" in names else "НЕТ")
+                      + ", первые предпочтения: " + str(_prefs[:7]), flush=True)
             if os.environ.get("DOF_TABLE_DEBUG") == "1":
                 print("  [таблица] город " + str(cid) + ", размер " + str(size) + " → " + str(pref), flush=True)
             return pref
