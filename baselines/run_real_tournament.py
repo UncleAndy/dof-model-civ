@@ -523,6 +523,12 @@ def _his_production_want(name: str, rec: dict, ctx, danger: float,
                     return 0.0
             # Защитные роли берём из мира, если он их отдаёт; без роли желание 0 — как у него
             # для юнита без `L_DEFEND_GOOD`/`L_DEFEND_OK` (`daimilitary.c:1078-1081`).
+            # §13.522: второе его условие (`ai/default/daimilitary.c:1907-1925`) — защитник
+            # рассматривается только при `danger > 0` (вторая половина условия, `martial_value > 0`,
+            # относится к наступающим юнитам, а роль наступающего мир не отдаёт). Без этого порога
+            # мирный город с нулевой опасностью всё равно получал 4.5625 и перебивал поселенца.
+            if float(danger or 0.0) <= 0.0 and os.environ.get("DOF_MIL_GATE") != "0":
+                return 0.0
             _want = _mw.city_military_want(dict(_stats), danger, defend_good=False)
             # Слабый защитник (`defense_strength == 1`) при `urgency == 0`: желание ограничено
             # сверху — `MIN(49, danger)` при лечении в городе, иначе `MIN(25, danger)`.
