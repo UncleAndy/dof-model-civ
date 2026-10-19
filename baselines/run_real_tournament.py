@@ -291,6 +291,33 @@ def allocate_port(wait: int = 120, bad_slots: set | None = None):
         signal.signal(signal.SIGALRM, previous)
 
 
+def _same_class(cities: dict, cid, target: str) -> bool:
+    """Один ли класс у текущей постановки города и у предлагаемой (§13.523).
+
+    Штраф за смену берётся ТОЛЬКО при смене класса (`common/city.c:1906-1917`: внутри класса
+    «There's never a penalty»), причём у ИИ на `normal` он не берётся вовсе
+    (`server/citytools.c:3180`). Значит запрещать надо смену класса, а не любую смену.
+    Род цели берём из `can_build_unit`/`can_build_improvement` записи города; не опознали —
+    возвращаем False, то есть работаем по-прежнему (незнание не запрещает).
+    """
+    city = cities.get(str(cid)) or cities.get(cid)
+    if not isinstance(city, dict):
+        return False
+    try:
+        cur_kind = int(city.get("production_kind"))
+    except (TypeError, ValueError):
+        return False
+    units = str(city.get("can_build_unit") or "")
+    imps = str(city.get("can_build_improvement") or "")
+    if units and target in units:
+        new_kind = 6
+    elif imps and target in imps:
+        new_kind = 3
+    else:
+        return False
+    return (cur_kind == 6) == (new_kind == 6)
+
+
 def _hold_production_candidates(cands: list, obs: dict, type_names: dict | None) -> list:
     """Правило владельца §13.196 в ОБЩЕМ пути: запущенное производство идёт до конца.
 
@@ -340,7 +367,13 @@ def _hold_production_candidates(cands: list, obs: dict, type_names: dict | None)
         cur = now.get(str(actor))
         if cur is None or want in held or f"{actor}|{cur}" not in offered_now:
             keep.append(c)
-        elif os.environ.get("DOF_WORK_DEBUG") == "1":
+            continue
+        # §13.523: смена ВНУТРИ класса бесплатна — её запрещать нечего.
+        if os.environ.get("DOF_HOLD_CLASS_ONLY", "1") != "0" and _same_class(
+                cities, actor, str(name)[len("produce_"):]):
+            keep.append(c)
+            continue
+        if os.environ.get("DOF_WORK_DEBUG") == "1":
             # §13.477: прибор — почему кандидат на смену производства НЕ проходит фильтр.
             _key = f"держит «{cur}»"
             _PORDFILT[_key] = _PORDFILT.get(_key, 0) + 1
