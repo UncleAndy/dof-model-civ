@@ -1004,6 +1004,12 @@ def build_context(obs: dict, info: dict, dof_state: Any, extractor: Any, *,
         """
         rec = city_records.get(city_id) or {}
         offered = _offered_for(offered_city, city_id)
+        if os.environ.get("DOF_OPT_DEBUG") == "1":
+            # §13.537: прибор — что МИР предлагает городу, ДО всякой цены. Прежний прибор печатал
+            # только итог, и по нему нельзя было отличить «не предложено» от «предложено, но не оценено».
+            _keys = [k for k, v in (offered or {}).items() if v] if isinstance(offered, dict) else []
+            print(f"  [предложение] город {city_id}: {len(_keys)} действий, пример {_keys[:10]}",
+                  flush=True)
         stock = _num(rec.get("shield_stock"), 0.0)
         # §13.536: наблюдение отдаёт сетку щитов как `surplus_shield` (`env/spec_obs.py:186`,
         # `env/entity_extractor.py:1333`), а здесь читался только `prod_shield`. Из-за пустого
