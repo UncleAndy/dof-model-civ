@@ -7013,6 +7013,10 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
                               flush=True)
                     except Exception:  # noqa: BLE001
                         pass
+                if os.environ.get("DOF_STEP_DEBUG") == "1":
+                    # §13.543: ЕДИНСТВЕННАЯ точка, через которую проходит ход. Прежние приборы
+                    # стояли в неисполняемых копиях и молчали.
+                    print(f"  [шаг] {str(action)[:160]}", flush=True)
                 obs, reward, terminated, truncated, info = env.step(action)
                 _record_step_success(metrics, action, turns_played + 1,
                                      step_action_context)
