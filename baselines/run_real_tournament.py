@@ -2876,6 +2876,17 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
                         if _val is not None:
                             _w[_n] = float(_val)
                     if _w:
+                        # §13.547: тот же фильтр военного, что и в ветви «его выбор». Без него
+                        # город качался Coinage -> Barracks -> Coinage и не производил ничего:
+                        # одна ветвь казармы убирала, другая ставила обратно.
+                        if os.environ.get("DOF_NO_MIL_MENU", "1") != "0":
+                            try:
+                                _milf = set(_military_type_names(env_getter()) or set()) | {"Barracks"}
+                            except Exception:  # noqa: BLE001
+                                _milf = {"Barracks"}
+                            _w2 = {k: v for k, v in _w.items() if str(k) not in _milf}
+                            if _w2:
+                                _w = _w2
                         _best2 = max(_w, key=_w.get)
                         print(f"  [заказ] его хотелки города {cid}: " +
                             ', '.join(f'{k}={v:.3f}' for k, v in sorted(_w.items(), key=lambda kv: -kv[1])[:5]), flush=True)
