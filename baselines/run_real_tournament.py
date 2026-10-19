@@ -5517,6 +5517,10 @@ def _to_wire_action(action: tuple[str, str, str], avail: dict) -> tuple | None:
     unit_actions = as_dict(as_dict(avail).get("unit"))
     city_actions = as_dict(as_dict(avail).get("city"))
     tech_actions = as_dict(as_dict(avail).get("tech"))
+    if os.environ.get("DOF_TECH_DEBUG") == "1":
+        # §13.542: мир вообще не предлагает смену исследования? Печатаем РАЗДЕЛЫ и размер.
+        print("  [исследование] разделы мира: " + str(sorted((avail or {}).keys()))
+              + ", tech-действий: " + str(len(tech_actions)), flush=True)
 
     def offered_actor(pool: dict, entity_id: str) -> tuple[object, dict] | None:
         bare = entity_id.split("_", 1)[1] if "_" in entity_id else entity_id
