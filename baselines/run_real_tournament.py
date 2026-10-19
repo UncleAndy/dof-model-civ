@@ -2811,7 +2811,8 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
             _pv = rec.get("production_value")
             built = str(_names.get(int(_pv)) if isinstance(_pv, (int, float)) else _pv or "")
             st["tried"] += 1
-            if _ctx is not None and getattr(_ctx, 'production_of', None) and len(ours) >= 6:
+            if _ctx is not None and getattr(_ctx, 'production_of', None) and len(ours) >= int(
+                    os.environ.get("DOF_HIS_CHOICE_MIN", "1")):
                 try:
                     _po = _ctx.production_of
                     _keys = [f'city_{cid}', f"city_{rec.get('id')}", str(cid)]  # только строки: у него ключ города — текст
