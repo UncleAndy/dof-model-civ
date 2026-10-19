@@ -2861,7 +2861,8 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
                 #       основывал 3-й, 4-й, 5-й каждые ~10 ходов);
                 #   (2) `daicity.c:560` — избыток еды должен покрывать содержание поселенца.
                 if (_sz1 is not None and (_sz1 <= 1.0 or (_sur1 is not None and _sur1 < 1.0))
-                        and _current_build_of(rec) in (None, "Settlers")
+                        and (os.environ.get("DOF_NO_HOLD_ALT") == "1"
+                             or _current_build_of(rec) in (None, "Settlers"))
                         and os.environ.get("DOF_NO_SIZE_RULE") != "1"):
                     # §13.427: правило СНОВА ВКЛЮЧЕНО. Замер середины партии (сейв 60-го хода)
                     # снял противоречие §13.420: у его сторон города размера 1 строят City Walls
@@ -2963,7 +2964,8 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
             # §13.434: см. пояснение выше — его ДВА условия вместе (размер больше содержания И
             # избыток еды покрывает содержание поселенца).
             if (_sz2 is not None and (_sz2 <= 1.0 or (_sur2 is not None and _sur2 < 1.0))
-                    and _current_build_of(rec) in (None, "Settlers")
+                    and (os.environ.get("DOF_NO_HOLD_ALT") == "1"
+                             or _current_build_of(rec) in (None, "Settlers"))
                     and os.environ.get("DOF_NO_SIZE_RULE") != "1"):
                 # §13.427: см. пояснение выше — правило снова включено по умолчанию
                 # (`DOF_NO_SIZE_RULE=1` выключает для честного A/B).
