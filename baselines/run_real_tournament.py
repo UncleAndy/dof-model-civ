@@ -2828,7 +2828,7 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
                         # в меню из 3-4 постановок это единственный «не монета». Военное из МЕНЮ
                         # убираем, когда войны нет: у встроенного ИИ защитник идёт от опасности,
                         # а не от скудости предложения.
-                        if os.environ.get("DOF_NO_MIL_MENU", "1") != "0":
+                        if os.environ.get("DOF_NO_MIL_MENU", "0") != "0":
                             try:
                                 _mil = _military_type_names(env_getter()) or set()
                             except Exception:  # noqa: BLE001
@@ -2879,7 +2879,7 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
                         # §13.547: тот же фильтр военного, что и в ветви «его выбор». Без него
                         # город качался Coinage -> Barracks -> Coinage и не производил ничего:
                         # одна ветвь казармы убирала, другая ставила обратно.
-                        if os.environ.get("DOF_NO_MIL_MENU", "1") != "0":
+                        if os.environ.get("DOF_NO_MIL_MENU", "0") != "0":
                             try:
                                 _milf = set(_military_type_names(env_getter()) or set()) | {"Barracks", "Coinage"}
                             except Exception:  # noqa: BLE001
