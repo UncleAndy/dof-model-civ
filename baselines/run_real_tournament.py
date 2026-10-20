@@ -3937,6 +3937,33 @@ def _is_action_wedged(ctrl: str, name: str, position) -> bool:
         return False
 
 
+_UNWORK_SENT: dict = {}
+
+
+def _drop_repeated_unwork(cands: list, info: dict | None) -> list:
+    """§13.571: одно и то же снятие работы с клетки уходило 29-45 раз подряд.
+
+    Прибор вскрыл, что `city_unwork` — это 40-45 % ВСЕХ отправок, а один и тот же кандидат
+    (`city_unwork_20_2_1`) подавался 45 раз. В реестре сторожей (`wedged_actions.json`) семейства
+    `city/city_unwork` нет, поэтому штатный `_drop_wedged_candidates` его не ловит.
+
+    Под флагом `DOF_NO_UNWORK_REPEAT=1` не берём кандидата, если ровно он же уходил на прошлом
+    ходу. По умолчанию поведение прежнее — старое остаётся контрольной рукой A/B.
+    """
+    if os.environ.get("DOF_NO_UNWORK_REPEAT") != "1":
+        return cands
+    turn = info.get("turn") if isinstance(info, dict) else None
+    out = []
+    for c in cands:
+        nm = str(c.get("action_name") or "")
+        if nm.startswith("city_unwork"):
+            key = (str(c.get("actor_id")), nm)
+            if _UNWORK_SENT.get(key) == turn:
+                continue
+        out.append(c)
+    return out
+
+
 def _drop_wedged_candidates(cands: list, dof_state) -> list:
     """Выкинуть кандидатов, о которых известно, что стенд на них заклинивает.
 
@@ -6178,6 +6205,8 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                     # §13.274: клин — ИЗМЕРЕННЫЙ факт, и он обязан отсекать действие
                     # ЛЮБОГО рода. Без этого `unit/plant` ставился снова и залипал.
                     descore = _drop_wedged_candidates(descore, dof.state)
+                    # §13.571: повтор того же снятия работы с клетки (40-45 % отправок, до 45 раз).
+                    descore = _drop_repeated_unwork(descore, info)
                     # ── ПРАВИЛО F НА ПУТИ БЕЗ DoF (§13.308) ──
                     # Измерено: собственный отчёт правила говорил «решений проверено 0», а на
                     # этом пути оно стояло НИЖЕ выбора и другого списка. Следствие: `join_city`
@@ -7133,6 +7162,15 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
 
                 step_action_context = _action_position_context(action, obs)
                 stepped = True  # from here a hang belongs to the chosen action
+                # §13.571: запомнить ОТПРАВЛЕННОЕ снятие работы с клетки — фильтр повторов
+                # (_drop_repeated_unwork) читает эту запись на следующем ходу.
+                try:
+                    if (os.environ.get("DOF_NO_UNWORK_REPEAT") == "1" and action is not None
+                            and str(action[0]) == "city"
+                            and str(action[2]).startswith("city_unwork")):
+                        _UNWORK_SENT[(str(action[1]), str(action[2]))] = turns_played + 1
+                except Exception:  # noqa: BLE001
+                    pass
                 if os.environ.get("DOF_TRACE_UNITS") == "1" and action is not None:
                     # §13.452: прибор ИМЕННО на отправку действия. Прежний канал `[прогноз]`
                     # в этих партиях не печатает ни строки, поэтому судить о работах по нему
