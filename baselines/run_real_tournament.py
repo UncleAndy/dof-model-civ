@@ -1417,6 +1417,20 @@ def _founder_step(obs: dict, avail: dict, mindist: int | None = None, env_getter
                       flush=True)
             continue                      # лучше, но не настолько: дорога съедает выигрыш
         ranked = [c for c in ranked_all if (int(c[0]), int(c[1])) != tuple(pos)]
+        # §13.581: прибор. Показывает ТОП-3 площадки по рангу (с расстоянием) и 3 САМЫЕ БЛИЖНИЕ.
+        # Вопрос опровержимый: есть ли законная площадка ближе 4 клеток, которую агент игнорирует.
+        # Под флагом, поведение по умолчанию не трогает.
+        if os.environ.get("DOF_FOUND_DEBUG") == "1" and ranked:
+            try:
+                _d = lambda c: max(abs(int(c[0]) - int(pos[0])), abs(int(c[1]) - int(pos[1])))
+                _r3 = ranked[:3]
+                _n3 = sorted(ranked, key=_d)[:3]
+                print(f"  [площадки] unit/{uid} в {tuple(pos)}: "
+                      f"ранг {[(int(c[0]), int(c[1])) for c in _r3]} близость {[_d(c) for c in _r3]} | "
+                      f"ближайшие {[(int(c[0]), int(c[1])) for c in _n3]} близость {[_d(c) for c in _n3]} | "
+                      f"всего {len(ranked)}", flush=True)
+            except Exception:  # noqa: BLE001
+                pass
         gotos = [str(n) for n, params in offered.items()
                  if str(n).startswith("goto_") and truthy(params)]
         # ── §13.348: ДЕРЖИМ цель, как его миссия (`daisettler.c:1029-1054`): пока цель годна,
