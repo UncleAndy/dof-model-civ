@@ -2823,6 +2823,31 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
                             _opt = _one
                             break
                     if _opt:
+                        # §13.559: КАРКАС выбора производства вместо нашего разбора списка.
+                        # `_opt` — это ровно `[(имя, желание, срок)]` из `production_of`, то есть
+                        # ЕГО шкала по каждому имени; адаптер раскладывает её по трём ведомствам
+                        # (`advisor_adapter.split_options`), а `choose_build` решает порядком
+                        # `daicity.c:250` и своими шкалами (`want_scales`). Старый разбор ниже
+                        # остаётся контрольной рукой: он включается, когда флаг выключен.
+                        if os.environ.get("DOF_CHOOSE_BUILD", "0") == "1":
+                            try:
+                                from brain.ai_default.advisor_adapter import (
+                                    choose_from_options as _cfo)
+                                _mil_cb = _military_type_names(env_getter()) or ()
+                                _nm_cb, _want_cb = _cfo(_opt, rec, military_names=_mil_cb)
+                                _first_cb = (_opt[0][0]
+                                             if isinstance(_opt[0], (list, tuple)) else _opt[0])
+                                if _nm_cb and _nm_cb != built:
+                                    print(f"  [каркас] город {cid}: {_nm_cb!r} "
+                                          f"желание {_want_cb:.3f}; старая ветвь взяла бы "
+                                          f"{str(_first_cb)!r}", flush=True)
+                                    return ('city', cid, f'produce_{_nm_cb}')
+                                print(f"  [каркас] город {cid}: {_nm_cb!r} = {built!r} "
+                                      f"(желание {_want_cb:.3f}) — очередь держим", flush=True)
+                                return None
+                            except Exception as _exc:  # noqa: BLE001
+                                print(f"  [каркас] не посчитался, падаю на старую ветвь: "
+                                      f"{type(_exc).__name__}: {_exc}", flush=True)
                         # §13.553: T12 оба города копили в Barracks (15 и 24 щита), а он город НЕ
                         # защищает — потом смена на поселенца рубила запас вдвое (24 -> 14).
                         # Казармы и монета выкидываются ВСЕГДА, независимо от защитников.
@@ -3440,6 +3465,11 @@ def _production_candidate(obs: dict, info: dict, dof_state, extractor,
                   f"предметов: {names_sorted[:14]}", flush=True)
         best: tuple[float, str, int] | None = None
         scored: list[tuple[float, str, int]] = []
+        # §13.559: строки для КАРКАСА выбора постановки (`advisor_adapter` → `choose_build`).
+        # Сырое желание по имени собирается ДО всякой меры: каркас раскладывает его по трём
+        # ведомствам и применяет свои шкалы. Ветвь ниже остаётся контрольной рукой A/B.
+        _cb_on = os.environ.get("DOF_CHOOSE_BUILD", "0") == "1"
+        _cb_rows: list[tuple[str, "float | None", int]] = []
         for name in sorted(allowed):
             action_name = f"produce_{name}"
             # Фильтр «есть ли в предложении стенда» здесь БОЛЕЕ НЕ применяется: измерено, что
@@ -3484,7 +3514,11 @@ def _production_candidate(obs: dict, info: dict, dof_state, extractor,
             # (`ai/default/daidomestic.c:489-620`) сравнивает ХОТЕЛКИ своих советников и берёт
             # максимум (`adv_better_choice`), а наша мера (`type_price`) сравнивала ценность за щит —
             # из-за этого воин (4.5625, 10 щитов) перебивал поселенца (3.8125, 40 щитов) (§13.360).
-            if os.environ.get("DOF_HIS_PRODUCTION") == "1":
+            # §13.559: под флагом каркаса сырое желание по имени нужно ВСЕГДА — оно и есть вход
+            # трёх советников (`advisor_adapter.split_options`). Старая мера (`type_price`) не
+            # выбрасывается: она остаётся контрольной рукой, когда флаг выключен.
+            _his = None
+            if _cb_on or os.environ.get("DOF_HIS_PRODUCTION") == "1":
                 _his = _his_production_want(str(name), rec, ctx, _his_danger(obs, extractor))
                 if _his is not None:
                     if _filters_trace():
@@ -3492,6 +3526,13 @@ def _production_candidate(obs: dict, info: dict, dof_state, extractor,
                             f" (наша мера была {value:.4f} за {turns} ход.)", flush=True)
                     value = float(_his)
             scored.append((value, str(name), turns))
+            # §13.559: КАРКАСУ нужна хотелка ПО ИМЕНИ до дисконта — это `options` из цены типа
+            # (`type_price_of`), ЕГО шкала опций. Она есть у ВСЕХ имён (поселенец/рабочий — через
+            # свои формулы желания, постройки — через `improvement_value`), тогда как
+            # `_his_production_want` покрывает лишь три рода. Прежде здесь стоял `_his`, и у
+            # внутреннего ведомства не было ни одного имени — каркас всякий раз падал на ветвь A/B
+            # (измерено: 18 строк «его желаний нет ни по одному имени»).
+            _cb_rows.append((str(name), float(options), turns))
             if best is None or value > best[0]:
                 best = (value, str(name), turns)
         if best is None:
@@ -3499,6 +3540,37 @@ def _production_candidate(obs: dict, info: dict, dof_state, extractor,
                 print(f"  [постановка] город {cid}: маски дали {len(allowed)} типов, "
                       f"ни один не оценён — постановку не меняем", flush=True)
             continue
+        # §13.559: КАРКАС выбора производства (`brain/ai_default/build_choice.py`, порядок
+        # `daicity.c:250`) вместо нашей меры. Ветвь выше — контрольная рука A/B: она уже
+        # выбрала `best` своей мерой (`type_price`), и мы её не выбрасываем, а лишь
+        # перекрываем решением каркаса, когда он есть чем решать.
+        if _cb_on and _cb_rows:
+            try:
+                from brain.ai_default.advisor_adapter import choose_from_options as _cfo
+                # Советникам нужны ТОЛЬКО имена с его желанием: строка без желания (None) —
+                # это «его числа нет», и подставлять туда 0.0 значило бы выдумать за него.
+                _cb_use = [(n, w, t) for n, w, t in _cb_rows if w is not None]
+                if _cb_use:
+                    _mil_names = _military_type_names(env_getter()) or ()
+                    _nm_cb, _want_cb = _cfo(_cb_use, rec, military_names=_mil_names)
+                    # Предохранитель: каркас обязан вернуть имя ИЗ ЗАКОННЫХ (`allowed`), иначе
+                    # приказ по имени, которого мир не принимает, вешает контроллер (§13.367).
+                    if _nm_cb and _nm_cb in allowed:
+                        if _filters_trace():
+                            print(f"  [каркас] город {cid}: {_nm_cb!r} желание {_want_cb:.4f}; "
+                                  f"наша мера взяла бы {best[1]!r} ({best[0]:.4f})", flush=True)
+                        _t_cb = next((t for n, w, t in _cb_rows if n == _nm_cb), best[2])
+                        best = (float(_want_cb), str(_nm_cb), _t_cb)
+                    elif _filters_trace():
+                        print(f"  [каркас] город {cid}: имя {_nm_cb!r} не из законных — "
+                              f"оставляю ветвь A/B ({best[1]!r})", flush=True)
+                elif _filters_trace():
+                    print(f"  [каркас] город {cid}: его желаний нет ни по одному имени — "
+                          f"оставляю ветвь A/B ({best[1]!r})", flush=True)
+            except Exception as _exc:  # noqa: BLE001
+                if _filters_trace():
+                    print(f"  [каркас] город {cid}: не посчитался ({type(_exc).__name__}: "
+                          f"{_exc}) — оставляю ветвь A/B ({best[1]!r})", flush=True)
         if _filters_trace():
             # §13.335: сырые числа очереди — чтобы отличить «приказ не применён» от
             # «имя предмета прочитано неверно». `production_kind/value` — то, что
