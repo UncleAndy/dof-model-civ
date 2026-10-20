@@ -3013,7 +3013,13 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
                     # поселенцев не строит — поселенцы у него были только в самой первой
                     # очереди. Наши же два города размера 1 к 60-му ходу всё ещё строят
                     # поселенцев и потому не растут (у него размеры 2-3, у нас 1).
-                    _alt2 = _first_legal_build(info, cid, avoid=("Settlers",), size=_sz1)
+                    # §13.565: эта ветка берёт ПЕРВУЮ законную постановку, а ею у города размера <=1
+                    # оказывается Barracks — 30 щитов, то есть ~15 ходов при 2 щитах/ход. По
+                    # траектории §13.563 именно тут теряются ходы 1-30. Под флагом убираем Barracks
+                    # из кандидатов; по умолчанию поведение прежнее, старое — контроль A/B.
+                    _av2 = (("Settlers", "Barracks") if os.environ.get("DOF_NO_BARRACKS_SZ1") == "1"
+                            else ("Settlers",))
+                    _alt2 = _first_legal_build(info, cid, avoid=_av2, size=_sz1)
                     if _alt2:
                         _ord_mem[str(cid)] = _alt2
                         print(f"  [заказ] город {cid} размера {_sz1:g} не может строить поселенца "
@@ -3114,7 +3120,9 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
                 # (`DOF_NO_SIZE_RULE=1` выключает для честного A/B).
                 # §13.419: то же правило и для НАШЕЙ постановки — городу размера 1 поселенца не
                 # заказываем (он не может отдать население: `daicity.c:788`).
-                _alt3 = _first_legal_build(info, cid, avoid=("Settlers",), size=_sz2)
+                _av3 = (("Settlers", "Barracks") if os.environ.get("DOF_NO_BARRACKS_SZ1") == "1"
+                        else ("Settlers",))
+                _alt3 = _first_legal_build(info, cid, avoid=_av3, size=_sz2)
                 if _alt3:
                     _ord_mem[str(cid)] = _alt3
                     print(f"  [заказ] город {cid} размера {_sz2:g} не может строить поселенца "
