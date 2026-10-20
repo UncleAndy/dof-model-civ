@@ -2847,6 +2847,19 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
                                 _opt = _civ
                             elif _coin:
                                 _opt = _coin
+                        # §13.552: поселенец съедает жителя и роняет город до размера 1 — на T60 три
+                        # наших города стояли на размере 1 с запасом еды 13-19, то есть крутили
+                        # поселенцев вместо роста (у него города 2-3). До размера 3 поселенца не берём,
+                        # если есть альтернатива: сначала город должен подрасти.
+                        try:
+                            _szc = float(rec.get("size")) if rec.get("size") is not None else None
+                        except (TypeError, ValueError):
+                            _szc = None
+                        if _szc is not None and _szc <= 2.0:
+                            _grow = [o for o in _opt
+                                     if str(o[0] if isinstance(o, (list, tuple)) else o) != "Settlers"]
+                            if _grow:
+                                _opt = _grow
                         _first = _opt[0]
                         _nm = str(_first[0] if isinstance(_first, (list, tuple)) else _first)
                         print(f"  [заказ] его выбор города {cid}: {_nm!r} (первые 3: {str(_opt[:3])[:120]})", flush=True)
