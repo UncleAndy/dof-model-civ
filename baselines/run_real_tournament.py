@@ -3954,6 +3954,7 @@ def _drop_repeated_unwork(cands: list, info: dict | None) -> list:
         return cands
     turn = info.get("turn") if isinstance(info, dict) else None
     out = []
+    _dropped = 0
     for c in cands:
         nm = str(c.get("action_name") or "")
         if nm.startswith("city_unwork"):
@@ -3966,8 +3967,14 @@ def _drop_repeated_unwork(cands: list, info: dict | None) -> list:
             # Считаем повтором подачу на этом или на ПРОШЛОМ ходу; допуск в один ход закрывает
             # и возможную ошибку на единицу между `info["turn"]` и номером при отправке.
             if _prev is not None and (turn is None or _prev >= turn - 1):
+                _dropped += 1
                 continue
         out.append(c)
+    # §13.574: прибор ДОКЛАДЫВАЕТ, что точка правки вообще исполняется. Три захода подряд
+    # правки стояли на неисполняемых путях; без этой строки «фильтр не сработал» и «фильтр
+    # не вызывался» снова неразличимы. Убрать, когда версия закроется.
+    print(f"  [фильтр unwork] ход {turn}: кандидатов {len(cands)}, повторов снято {_dropped}",
+          flush=True)
     return out
 
 
@@ -6318,6 +6325,21 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                     if _founder is not None:
                         return _founder
                     _tile_pick = _city_tile_candidate(obs, avail)
+                    # §13.575: этот путь возвращает действие НАПРЯМУЮ, минуя `descore`, — поэтому
+                    # фильтр повторов §13.572 его не видел, и оттуда шли повторные `city_unwork`
+                    # (одно и то же действие до 45 раз за партию). Прибор §13.574 подтвердил, что
+                    # фильтр на `descore` исполняется (187 вызовов) и повторы там снимает —
+                    # значит остаток шёл именно здесь.
+                    if (os.environ.get("DOF_NO_UNWORK_REPEAT") == "1"
+                            and _tile_pick is not None
+                            and str(_tile_pick[2]).startswith("city_unwork")):
+                        _k = (str(_tile_pick[1]), str(_tile_pick[2]))
+                        _prev_u = _UNWORK_SENT.get(_k)
+                        _now_turn = int((info or {}).get("turn") or 0) if isinstance(info, dict) else 0
+                        if _prev_u is not None and _prev_u >= _now_turn - 1:
+                            print(f"  [фильтр unwork] ход {_now_turn}: снят повтор "
+                                  f"{_tile_pick[2]} (последний раз ход {_prev_u})", flush=True)
+                            _tile_pick = None
                     if _tile_pick is not None:
                         return _tile_pick
                     _prod = _production_candidate(
