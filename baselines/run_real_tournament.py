@@ -3958,7 +3958,14 @@ def _drop_repeated_unwork(cands: list, info: dict | None) -> list:
         nm = str(c.get("action_name") or "")
         if nm.startswith("city_unwork"):
             key = (str(c.get("actor_id")), nm)
-            if _UNWORK_SENT.get(key) == turn:
+            _prev = _UNWORK_SENT.get(key)
+            # §13.572-правка: повтор идёт ЧЕРЕЗ ХОД, а не внутри хода. Первая версия сравнивала
+            # номер хода на равенство (`== turn`) и потому не могла сработать ни разу: внутри
+            # одного хода тот же кандидат не подаётся дважды. Серия nu это подтвердила — доля
+            # `city_unwork` осталась 44 % (была 40-45 %), повторы до 44 раз на партию.
+            # Считаем повтором подачу на этом или на ПРОШЛОМ ходу; допуск в один ход закрывает
+            # и возможную ошибку на единицу между `info["turn"]` и номером при отправке.
+            if _prev is not None and (turn is None or _prev >= turn - 1):
                 continue
         out.append(c)
     return out
