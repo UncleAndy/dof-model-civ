@@ -2869,6 +2869,14 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
                                      if str(o[0] if isinstance(o, (list, tuple)) else o) != "Settlers"]
                             if _grow:
                                 _opt = _grow
+                        # §13.555: город размера 1 НЕ МОЖЕТ выпустить поселенца (некого отдавать),
+                        # а заказ остаётся с прошлого размера: в замере он накопил 68 щитов при цене 40.
+                        # Снимаем принудительно, даже если альтернативы в ранжированном списке нет.
+                        if _szc is not None and _szc <= 1.0 and str(built) == "Settlers":
+                            _coin = [o for o in _opt
+                                     if str(o[0] if isinstance(o, (list, tuple)) else o) == "Coinage"]
+                            if _coin:
+                                _opt = _coin
                         _first = _opt[0]
                         _nm = str(_first[0] if isinstance(_first, (list, tuple)) else _first)
                         print(f"  [заказ] его выбор города {cid}: {_nm!r} (первые 3: {str(_opt[:3])[:120]})", flush=True)
