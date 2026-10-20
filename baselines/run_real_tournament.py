@@ -1417,6 +1417,31 @@ def _founder_step(obs: dict, avail: dict, mindist: int | None = None, env_getter
                       flush=True)
             continue                      # лучше, но не настолько: дорога съедает выигрыш
         ranked = [c for c in ranked_all if (int(c[0]), int(c[1])) != tuple(pos)]
+        # §13.583: ЕГО `city_desirability` (`daisettler.c:701`) площадку, занятую другим поселенцем,
+        # ОТБРАСЫВАЕТ (`citymap_is_reserved`, `citymap.c:184`). У нас `_cmap.reserve_city_spot`
+        # ставится (строка 1664), но `is_reserved` в этом пути НЕ ЗОВЁТСЯ ни разу — только в
+        # `brain/ai_default/founder_destination.py:264` и в тестах. Исключение при отборе — `_black`,
+        # а он ПО ЮНИТУ (`_FOUND_BLACK.get(str(uid))`), чужие брони в него не попадают. Отсюда замер
+        # §13.582: unit/104 и unit/117 в одном ходу взяли одну площадку (29,12).
+        # Свою цель юнит НЕ теряет: клетка с `raw == -свой id` остаётся, иначе сломалось бы
+        # удержание цели (§13.348).
+        if os.environ.get("DOF_NO_DOUBLE_SITE") == "1" and ranked:
+            try:
+                from brain.ai_default.citymap import _owner_id as _oid
+                _me = -_oid(uid)
+                _keep = [c for c in ranked
+                         if _cmap.raw(int(c[0]), int(c[1])) >= 0
+                         or _cmap.raw(int(c[0]), int(c[1])) == _me]
+                if os.environ.get("DOF_FOUND_DEBUG") == "1":
+                    _nz = sum(1 for _v in getattr(_cmap, "_map", {}).values() if _v < 0)
+                    print(f"  [дубль-площадка] unit/{uid}: кандидатов {len(ranked)}, "
+                          f"занято чужим поселенцем {len(ranked) - len(_keep)}, "
+                          f"занятых клеток в карте всего {_nz}, "
+                          f"raw первой {_cmap.raw(int(ranked[0][0]), int(ranked[0][1]))}", flush=True)
+                if _keep:
+                    ranked = _keep
+            except Exception:  # noqa: BLE001
+                pass
         # §13.581: прибор. Показывает ТОП-3 площадки по рангу (с расстоянием) и 3 САМЫЕ БЛИЖНИЕ.
         # Вопрос опровержимый: есть ли законная площадка ближе 4 клеток, которую агент игнорирует.
         # Под флагом, поведение по умолчанию не трогает.
