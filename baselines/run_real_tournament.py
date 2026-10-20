@@ -2823,6 +2823,15 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
                             _opt = _one
                             break
                     if _opt:
+                        # §13.553: T12 оба города копили в Barracks (15 и 24 щита), а он город НЕ
+                        # защищает — потом смена на поселенца рубила запас вдвое (24 -> 14).
+                        # Казармы и монета выкидываются ВСЕГДА, независимо от защитников.
+                        if os.environ.get("DOF_NO_MIL_SOFT", "1") != "0":
+                            _soft = [o for o in _opt
+                                     if str(o[0] if isinstance(o, (list, tuple)) else o)
+                                     not in ("Barracks", "Coinage")]
+                            if _soft:
+                                _opt = _soft
                         # §13.538: у противников НОЛЬ военных юнитов, а `danger` за 100 ходов ни разу
                         # не поднимался выше нуля — а города строили Barracks просто потому, что
                         # в меню из 3-4 постановок это единственный «не монета». Военное из МЕНЮ
