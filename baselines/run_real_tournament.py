@@ -2894,12 +2894,7 @@ def _order_city_production(env_getter, username, obs=None, info=None, dof_state=
                             _szc = float(rec.get("size")) if rec.get("size") is not None else None
                         except (TypeError, ValueError):
                             _szc = None
-                        try:
-                            _g2 = float(os.environ.get("DOF_SIZE2_SETTLER", "0") or 0)
-                        except (TypeError, ValueError):
-                            _g2 = 0.0
-                        _szc_limit = 1.0 if _g2 == 1.0 else 2.0
-                        if _szc is not None and _szc <= _szc_limit:
+                        if _szc is not None and _szc <= 2.0:
                             _grow = [o for o in _opt
                                      if str(o[0] if isinstance(o, (list, tuple)) else o) != "Settlers"]
                             if _grow:
