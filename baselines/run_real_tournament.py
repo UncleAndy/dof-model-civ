@@ -6681,9 +6681,14 @@ def _turn_phase(action, used_actors: set, decisions_this_turn: int,
 
     Returns ``("act", key)`` or ``("end_turn", None)``.
     """
+    _tet = os.environ.get("DOF_TURN_END_TRACE") == "1"
     if action is None:
+        if _tet:
+            print(f"  [конец-хода-причина] None (решений {decisions_this_turn})", flush=True)
         return "end_turn", None
     if decisions_this_turn >= max_decisions:
+        if _tet:
+            print(f"  [конец-хода-причина] потолок max_decisions={max_decisions}", flush=True)
         return "end_turn", None
 
     key = (action[0], action[1])
@@ -6691,6 +6696,13 @@ def _turn_phase(action, used_actors: set, decisions_this_turn: int,
         # One decision per actor per turn (civrealm's own convention): without
         # this, a reversible action with a positive-looking projection is
         # repeated forever inside a single turn.
+        # §13.611: эта ветвь — подозреваемый №1 в пределе «2 решения за ход».
+        # Прибор печатает и ЧИСЛО уже занятых актёров: если оно 2 при 4 городах,
+        # значит решатель выбирает первый город по своему порядку и ход гаснет,
+        # не дойдя до остальных.
+        if _tet:
+            print(f"  [конец-хода-причина] ПОВТОР АКТЁРА {key} "
+                  f"(решений {decisions_this_turn}, занято актёров {len(used_actors)})", flush=True)
         return "end_turn", None
     return "act", key
 
