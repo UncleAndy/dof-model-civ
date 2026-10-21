@@ -5314,6 +5314,11 @@ def _publish_improvement_names(extractor, env) -> int:
     предел, о котором формулы не знают.
     """
     names = _improvement_names(env)
+    # §13.601: печать карты «номер -> имя постройки». Нужна, чтобы расшифровать битовую маску
+    # `improvements` в сейве (биты 7, 12, 21, 37). Под флагом, поведение по умолчанию не трогает.
+    if os.environ.get("DOF_IMPROV_MAP") == "1":
+        print("  [карта-построек] " + " | ".join(f"{i}={n}" for i, n in sorted(names.items())),
+              flush=True)
     for iid, name in sorted(names.items()):
         extractor.model.observe(f'improvement.{iid}.name', name, 0,
                                 source=Provenance.RULESET,
