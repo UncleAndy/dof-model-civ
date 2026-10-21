@@ -7142,7 +7142,29 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
                               f"(в наблюдении ключ available_actions: "
                               f"{'available_actions' in (obs or {})})", flush=True)
                 _USED_ACTORS[:] = [set(used_actors)]   # ДО решения: прогноз смотрит
-                action = agent.act(obs, info)
+                # §13.609: прибор — какая ВЕТВЬ решателя закрывает ход. Ход кончается на `None`
+                # (строка ниже), и медиана «2 решения за ход» — следствие того, что решатель
+                # возвращает None раньше, чем обошёл города. Прибор запоминает строку возврата
+                # внутри `act`; под флагом, по умолчанию поведение не трогает.
+                if os.environ.get("DOF_NONE_TRACE") == "1":
+                    import sys as _sys
+                    _ret_lines: list[int] = []
+
+                    def _tr(frame, event, arg, _r=_ret_lines):
+                        if event == "return" and frame.f_code.co_name == "act":
+                            _r.append(frame.f_lineno)
+                        return _tr
+
+                    _sys.settrace(_tr)
+                    try:
+                        action = agent.act(obs, info)
+                    finally:
+                        _sys.settrace(None)
+                    if action is None and _ret_lines:
+                        print(f"  [конец-хода] ход {turns_played + 1}: act вернул None "
+                              f"на строке {_ret_lines[-1]}", flush=True)
+                else:
+                    action = agent.act(obs, info)
                 phase, key = _turn_phase(action, used_actors, decisions_this_turn,
                                          max_decisions_per_turn)
 
