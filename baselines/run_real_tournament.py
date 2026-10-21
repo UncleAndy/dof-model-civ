@@ -353,6 +353,11 @@ def _hold_production_candidates(cands: list, obs: dict, type_names: dict | None)
         if action and str(action[0]) == "city" and str(action[2]).startswith("produce_"):
             offered_now.add(f"{action[1]}|{str(action[2])[len('produce_'):]}")
     held = {f"{cid}|{name}" for cid, name in now.items()}
+    if os.environ.get("DOF_HOLD_DEBUG") == "1":
+        # §13.655: печатаем, ЧТО правило видело. Без этого «отброшено 0» не отличает
+        # «нечего фильтровать» от «предложение дошло пустым» (§13.618).
+        print(f"  [удержание] держат {len(now)}, предложено смен {len(offered_now)}, "
+              f"пар {len(held)}", flush=True)
     keep: list = []
     for c in cands:
         action = _to_action(c)
@@ -6457,7 +6462,7 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                             if os.environ.get("DOF_ORDER_TRACE") == "1":
                                 _prev_com = _LAST_PROD.get(str(_prod.get("actor_id")))
                                 _flip = bool(_prev_com and str(_prev_com[0]) != str(_com[0]))
-                                print(f"  [смена-заказа] город {_prod.get('actor_id')}: "
+                                print(f"  [смена-заказа] ход {info.get('turn')} город {_prod.get('actor_id')}: "
                                       f"было {(_prev_com[0] if _prev_com else None)!r} стало {_com[0]!r} "
                                       f"щиты {_com[1] if len(_com) > 1 else '?'} смена={_flip} "
                                       f"в_очереди {_prod.get('current_name')!r}", flush=True)
