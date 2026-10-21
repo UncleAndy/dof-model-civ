@@ -7151,8 +7151,8 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
                     _ret_lines: list[int] = []
 
                     def _tr(frame, event, arg, _r=_ret_lines):
-                        if event == "return" and frame.f_code.co_name == "act":
-                            _r.append(frame.f_lineno)
+                        if event == "return":
+                            _r.append(f"{frame.f_code.co_name}@{frame.f_code.co_filename.split('/')[-1]}:{frame.f_lineno}")
                         return _tr
 
                     _sys.settrace(_tr)
@@ -7161,8 +7161,8 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
                     finally:
                         _sys.settrace(None)
                     if action is None and _ret_lines:
-                        print(f"  [конец-хода] ход {turns_played + 1}: act вернул None "
-                              f"на строке {_ret_lines[-1]}", flush=True)
+                        print(f"  [конец-хода] ход {turns_played + 1}: act вернул None, "
+                              f"последние кадры {_ret_lines[-3:]}", flush=True)
                 else:
                     action = agent.act(obs, info)
                 phase, key = _turn_phase(action, used_actors, decisions_this_turn,
