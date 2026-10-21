@@ -1939,17 +1939,36 @@ def _city_tile_candidate(obs: dict, avail: dict):
     # предложенных действиях были только `city_unwork_*`, а правило F запрещало любое снятие у
     # города с нулевым избытком еды (замер §13.431: города размера 1 работали Forest с едой 1,
     # имея рядом свою же Grassland с едой 2, и потому не росли вовсе).
+    def _city_used(_x):
+        """§13.635: город этого действия уже отдал заказ в этом ходу?"""
+        if os.environ.get("DOF_NO_ACTOR_REPEAT") != "1" or not _USED_ACTORS:
+            return False
+        return ((str("city"), str(_x).split("_")[-1]) in
+                {(str(_c).split("_")[0], str(_a).split("_")[-1])
+                 for _c, _a in (_USED_ACTORS[0] or ())})
+
     if os.environ.get("DOF_NO_WORKER_MANAGER") != "1":
         _mgr = _city_tile_his_manager(obs, avail)
         if _mgr is not None:
             _LAST_TILE_ACTION[str(_mgr[1])] = _mgr[2]
-            return _mgr
+            # §13.635: эти два ранних возврата стоят ДО отбора (закрыт в §13.632) и минуют его
+            # целиком. Если город уже действовал, возвращаем управление дальше, а не отдаём ход
+            # ему же повторно (иначе `_turn_phase` закрывает ход, §13.612-13.634).
+            if _city_used(_mgr[1]):
+                print(f"        [§13.635] город {_mgr[1]} (упр. жителями) уже действовал — "
+                      f"ищем другого", flush=True)
+            else:
+                return _mgr
     # Сперва — спасение голодающего города: годность ПЕРЕД выгодой (его порядок).
     # Только если спасать нечего, переходим к выбору по выигрышу.
     _rescue = _city_tile_rescue(obs, avail)
     if _rescue is not None:
         _LAST_TILE_ACTION[str(_rescue[1])] = _rescue[2]
-        return _rescue
+        if _city_used(_rescue[1]):
+            print(f"        [§13.635] город {_rescue[1]} (спасение) уже действовал — "
+                  f"ищем другого", flush=True)
+        else:
+            return _rescue
     city_actions = as_dict(as_dict(avail).get("city")) or {}
     best = None
     for cid, actions in city_actions.items():
