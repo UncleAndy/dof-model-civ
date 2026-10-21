@@ -6376,11 +6376,15 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                         # город, уже действовавший в этом ходу, выбирается снова, `_turn_phase`
                         # видит повтор актёра и закрывает ход — остальные города заказов не получают.
                         # Тот же класс, что §13.575 (`_city_tile_candidate` мимо `descore`).
+                        # §13.617: сравнение нормализует ИМЯ КОНТРОЛЛЕРА до префикса — у внутреннего
+                        # кандидата ctrl это `city_work`/`city_unwork`, а ключ повтора в проводе
+                        # `('city', 142)`. Именно на этом защита молчала в §13.616 (0 срабатываний).
+                        _pk = (str(_tile_pick[0]).split("_")[0], str(_tile_pick[1]).split("_")[-1])
                         if (os.environ.get("DOF_NO_ACTOR_REPEAT") == "1" and _USED_ACTORS
-                                and (str(_tile_pick[0]), str(_tile_pick[1])) in
-                                {(str(_c), str(_a)) for _c, _a in (_USED_ACTORS[0] or ())}):
-                            print(f"        [§13.615] актёр {_tile_pick[0]}/{_tile_pick[1]} уже "
-                                  f"действовал в этом ходу -> ищем другого", flush=True)
+                                and _pk in {(str(_c).split("_")[0], str(_a).split("_")[-1])
+                                            for _c, _a in (_USED_ACTORS[0] or ())}):
+                            print(f"        [§13.615] актёр {_pk} уже действовал в этом ходу "
+                                  f"-> ищем другого", flush=True)
                             _tile_pick = None
                         else:
                             return _tile_pick
