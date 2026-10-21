@@ -3424,6 +3424,14 @@ def _production_candidate(obs: dict, info: dict, dof_state, extractor,
                     "current_name": str(current) if current else None,
                     "_committed": (str(_force), float(stock))}
         _prev = _LAST_PROD.get(str(cid))
+        if os.environ.get("DOF_HOLD_TRACE") == "1":
+            # §13.639: прибор печатает ВСЕ условия удержания, а не только когда оно сработало.
+            # Иначе «правило не держит» неотличимо от «условия не совпали».
+            print(f"  [держание] город {cid}: строит={current!r} "
+                  f"помним={(str(_prev[0]) if _prev else None)!r} "
+                  f"щиты={stock:.0f} помним_щиты={(float(_prev[1]) if _prev else -1):.0f} "
+                  f"в_маске={(str(current) in {str(a) for a in allowed}) if current else None}",
+                  flush=True)
         if (current and _prev and str(_prev[0]) == str(current) and stock >= float(_prev[1])
                 and any(str(current) == str(a) for a in allowed)):
             if _filters_trace():
