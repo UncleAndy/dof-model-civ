@@ -4201,6 +4201,39 @@ def _count_kinds(cands: list, where: str) -> None:
           f"city_work {work}, city_unwork {unwork}", flush=True)
 
 
+def _hold_busy_city(cands: list, obs: dict | None) -> list:
+    """§13.658: у города, где постановка УЖЕ идёт, альтернатив не предлагаем.
+
+    Признак наблюдаемый и уже используется на этом пути: непустой `turns_to_prod_complete`
+    значит «мир считает производство идущим». Действующее правило удержания требует, чтобы
+    текущий предмет был среди предложенных (измерено §13.656: «предложено смен 0»), поэтому
+    не срабатывает; здесь сравнение имён не нужно вовсе. Решение владельца §13.196.
+    """
+    if os.environ.get("DOF_HOLD_BUSY") != "1":
+        return cands
+    cities = (obs or {}).get("city") if isinstance(obs, dict) else None
+    if not isinstance(cities, dict) or not cities:
+        return cands
+    busy = set()
+    for cid, rec in cities.items():
+        if isinstance(rec, dict) and rec.get("turns_to_prod_complete") is not None:
+            busy.add(str(rec.get("id", cid)))
+    out = []
+    dropped = 0
+    for c in cands:
+        a = _to_action(c)
+        if (a and str(a[0]) == "city" and str(a[2]).startswith("produce_")
+                and str(a[1]) in busy):
+            dropped += 1
+            continue
+        out.append(c)
+    # Печать ЧТО посмотрел, а не только когда сработало (§13.618).
+    if os.environ.get("DOF_HOLD_BUSY_DEBUG") == "1":
+        print(f"  [занятость] в работе {len(busy)}, снято {dropped}, "
+              f"было {len(cands)}, стало {len(out)}", flush=True)
+    return out
+
+
 def _apply_common_rules(cands: list, obs: dict, extractor, env_getter,
                         avail=None) -> list:
     """ОБЩИЕ правила, обязательные для любого решателя (§13.206–13.208).
@@ -4220,6 +4253,7 @@ def _apply_common_rules(cands: list, obs: dict, extractor, env_getter,
         return cands
     before = len(cands)
     held = _hold_production_candidates(cands, obs, type_names)
+    held = _hold_busy_city(held, obs)
     try:
         military = _military_type_names(env_getter())
     except Exception:  # noqa: BLE001
