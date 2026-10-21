@@ -3583,6 +3583,19 @@ def _production_candidate(obs: dict, info: dict, dof_state, extractor,
             # внутреннего ведомства не было ни одного имени — каркас всякий раз падал на ветвь A/B
             # (измерено: 18 строк «его желаний нет ни по одному имени»).
             _cb_rows.append((str(name), float(options), turns))
+            # §13.633: город, УЖЕ отдавший заказ в этом ходу, не получает второй. После исключения
+            # в `_city_tile_candidate` (§13.632: 169 срабатываний) повтор не исчез — значит заказ
+            # городу отдаёт ещё и эта ветвь. Проверка через `locals()`: имя города в этой области
+            # видимости не подтверждено чтением, и падать на NameError в прогоне нельзя.
+            _cid_now = locals().get("cid")
+            if (os.environ.get("DOF_NO_ACTOR_REPEAT") == "1" and _USED_ACTORS
+                    and _cid_now is not None
+                    and (str("city"), str(_cid_now).split("_")[-1]) in
+                    {(str(_c).split("_")[0], str(_a).split("_")[-1])
+                     for _c, _a in (_USED_ACTORS[0] or ())}):
+                print(f"        [§13.633] город {_cid_now} уже отдал заказ — производства не даём",
+                      flush=True)
+                continue
             if best is None or value > best[0]:
                 best = (value, str(name), turns)
         if best is None:
