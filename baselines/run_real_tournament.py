@@ -6353,7 +6353,26 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                                              mindist=_world_citymindist(env_getter()),
                                              env_getter=env_getter)
                     if _founder is not None:
-                        return _founder
+                        # §13.614: измерено прибором — приказ юниту отдаётся ЗДЕСЬ (70 раз за партию),
+                        # и это же место отдаёт ПОВТОРЯЮЩЕГОСЯ юнита. Поселенец шагает, решатель
+                        # зовётся снова, ветвь видит того же поселенца, `_turn_phase` видит повтор
+                        # актёра и закрывает ход — города заказов не получают. Фильтр `excluded`
+                        # (brain/forecast/options.py:352) сюда не доходит: этот возврат идёт мимо
+                        # отбора кандидатов (тот же класс, что §13.575).
+                        # Правим ЗДЕСЬ, на самом возврате, а не на общем пути.
+                        if os.environ.get("DOF_NO_FOUNDER_REPEAT") == "1" and _USED_ACTORS:
+                            _fk = (str(_founder[0]), str(_founder[1]).split("_")[-1])
+                            _fk_raw = (str(_founder[0]), str(_founder[1]))
+                            _used_now = {(str(_c), str(_a).split("_")[-1])
+                                         for _c, _a in (_USED_ACTORS[0] or ())}
+                            _used_raw = {(str(_c), str(_a)) for _c, _a in (_USED_ACTORS[0] or ())}
+                            if _fk in _used_now or _fk_raw in _used_raw:
+                                print(f"        [§13.614] поселенец {_fk} уже шагнул в этом ходу "
+                                      f"-> ход отдаём дальше, не ему", flush=True)
+                            else:
+                                return _founder
+                        else:
+                            return _founder
                     _tile_pick = _city_tile_candidate(obs, avail)
                     # §13.575: этот путь возвращает действие НАПРЯМУЮ, минуя `descore`, — поэтому
                     # фильтр повторов §13.572 его не видел, и оттуда шли повторные `city_unwork`
