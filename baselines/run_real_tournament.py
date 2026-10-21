@@ -6353,26 +6353,7 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                                              mindist=_world_citymindist(env_getter()),
                                              env_getter=env_getter)
                     if _founder is not None:
-                        # §13.614: измерено прибором — приказ юниту отдаётся ЗДЕСЬ (70 раз за партию),
-                        # и это же место отдаёт ПОВТОРЯЮЩЕГОСЯ юнита. Поселенец шагает, решатель
-                        # зовётся снова, ветвь видит того же поселенца, `_turn_phase` видит повтор
-                        # актёра и закрывает ход — города заказов не получают. Фильтр `excluded`
-                        # (brain/forecast/options.py:352) сюда не доходит: этот возврат идёт мимо
-                        # отбора кандидатов (тот же класс, что §13.575).
-                        # Правим ЗДЕСЬ, на самом возврате, а не на общем пути.
-                        if os.environ.get("DOF_NO_FOUNDER_REPEAT") == "1" and _USED_ACTORS:
-                            _fk = (str(_founder[0]), str(_founder[1]).split("_")[-1])
-                            _fk_raw = (str(_founder[0]), str(_founder[1]))
-                            _used_now = {(str(_c), str(_a).split("_")[-1])
-                                         for _c, _a in (_USED_ACTORS[0] or ())}
-                            _used_raw = {(str(_c), str(_a)) for _c, _a in (_USED_ACTORS[0] or ())}
-                            if _fk in _used_now or _fk_raw in _used_raw:
-                                print(f"        [§13.614] поселенец {_fk} уже шагнул в этом ходу "
-                                      f"-> ход отдаём дальше, не ему", flush=True)
-                            else:
-                                return _founder
-                        else:
-                            return _founder
+                        return _founder
                     _tile_pick = _city_tile_candidate(obs, avail)
                     # §13.575: этот путь возвращает действие НАПРЯМУЮ, минуя `descore`, — поэтому
                     # фильтр повторов §13.572 его не видел, и оттуда шли повторные `city_unwork`
@@ -6390,7 +6371,19 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                                   f"{_tile_pick[2]} (последний раз ход {_prev_u})", flush=True)
                             _tile_pick = None
                     if _tile_pick is not None:
-                        return _tile_pick
+                        # §13.615: измерено — главная ветвь ПОВТОРА (25 из 54), актёры city 122/128.
+                        # Возврат идёт НАПРЯМУЮ, мимо `offered`/`excluded` (options.py:352), поэтому
+                        # город, уже действовавший в этом ходу, выбирается снова, `_turn_phase`
+                        # видит повтор актёра и закрывает ход — остальные города заказов не получают.
+                        # Тот же класс, что §13.575 (`_city_tile_candidate` мимо `descore`).
+                        if (os.environ.get("DOF_NO_ACTOR_REPEAT") == "1" and _USED_ACTORS
+                                and (str(_tile_pick[0]), str(_tile_pick[1])) in
+                                {(str(_c), str(_a)) for _c, _a in (_USED_ACTORS[0] or ())}):
+                            print(f"        [§13.615] актёр {_tile_pick[0]}/{_tile_pick[1]} уже "
+                                  f"действовал в этом ходу -> ищем другого", flush=True)
+                            _tile_pick = None
+                        else:
+                            return _tile_pick
                     _prod = _production_candidate(
                         obs, info, dof.state, extractor,
                         _production_names(env_getter())
