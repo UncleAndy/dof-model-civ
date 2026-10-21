@@ -7172,9 +7172,10 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
                         action = agent.act(obs, info)
                     finally:
                         _sys.settrace(None)
-                    if action is None and _ret_lines:
-                        print(f"  [конец-хода] ход {turns_played + 1}: act вернул None, "
-                              f"последние кадры {_ret_lines[-3:]}", flush=True)
+                    if _ret_lines:
+                        print(f"  [ветвь-решения] ход {turns_played + 1}: "
+                              f"актёр={'None' if action is None else action[:2]} "
+                              f"последние кадры {_ret_lines[-2:]}", flush=True)
                 else:
                     action = agent.act(obs, info)
                 phase, key = _turn_phase(action, used_actors, decisions_this_turn,
