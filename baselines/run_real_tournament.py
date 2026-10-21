@@ -6453,6 +6453,14 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                         # 8 приказов подряд, 0 удержаний — память никто не заполнял).
                         _com = _prod.get("_committed")
                         if _com:
+                            # §13.644: прибор в САМОЙ точке рождения заказа — печатает и смену, и очередь.
+                            if os.environ.get("DOF_ORDER_TRACE") == "1":
+                                _prev_com = _LAST_PROD.get(str(_prod.get("actor_id")))
+                                _flip = bool(_prev_com and str(_prev_com[0]) != str(_com[0]))
+                                print(f"  [смена-заказа] город {_prod.get('actor_id')}: "
+                                      f"было {(_prev_com[0] if _prev_com else None)!r} стало {_com[0]!r} "
+                                      f"щиты {_com[1] if len(_com) > 1 else '?'} смена={_flip} "
+                                      f"в_очереди {_prod.get('current_name')!r}", flush=True)
                             _LAST_PROD[str(_prod.get("actor_id"))] = _com
                         if os.environ.get("DOF_TRACE_FILTERS") == "1":
                             print(f"  [постановка] ход {info.get('turn')}: отправляю "
