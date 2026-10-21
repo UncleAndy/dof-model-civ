@@ -4180,6 +4180,27 @@ def _prefer_port_tech_choice(cands: list, obs: dict, extractor) -> list:
     return out
 
 
+def _count_kinds(cands: list, where: str) -> None:
+    """§13.657: печатает, ЧТО за кандидаты пришли, а не только когда правило сработало (§13.618).
+
+    Два счётчика: `produce_*` (заказы производства) и клеточные (`city_work`/`city_unwork`).
+    """
+    if os.environ.get("DOF_GEN_DEBUG") != "1":
+        return
+    names = []
+    for c in cands or ():
+        try:
+            a = _to_action(c)
+            names.append(str(a[2]) if a else "")
+        except Exception:
+            names.append("")
+    prod = sum(1 for n in names if n.startswith("produce_"))
+    work = sum(1 for n in names if n.startswith("city_work"))
+    unwork = sum(1 for n in names if n.startswith("city_unwork"))
+    print(f"  [генератор:{where}] всего {len(names)}, produce {prod}, "
+          f"city_work {work}, city_unwork {unwork}", flush=True)
+
+
 def _apply_common_rules(cands: list, obs: dict, extractor, env_getter,
                         avail=None) -> list:
     """ОБЩИЕ правила, обязательные для любого решателя (§13.206–13.208).
@@ -4209,6 +4230,7 @@ def _apply_common_rules(cands: list, obs: dict, extractor, env_getter,
     # Стоит здесь, в теле общей функции, потому что её зовут оба пути: правило, живущее
     # только в одном, уже пять раз оказывалось неработающим (13.273/13.280/13.286/13.301/13.308).
     kept = _prefer_port_tech_choice(kept, obs, extractor)
+    _count_kinds(cands, "вход правил")
     if getattr(ARGS, "no_tile_actions", False):
         # Флаг обязан доходить и до ПРОГНОЗА: его кандидаты клеток строятся в
         # `brain/forecast/options.py`, мимо общего фильтра (измерено: с флагом в прогоне
@@ -6287,6 +6309,7 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                     # САМУ ИГРУ (основание городов, рост, производство) от наших
                     # надстроек: пока игра не идёт не хуже его, индекс накладывать не на что.
                     _raw_cands = gen.generate_candidates(dof.state, avail)
+                    _count_kinds(_raw_cands, "выход генератора")
                     if os.environ.get("DOF_TILE_DEBUG") == "1":
                         # §13.292: где теряется постановка жителя. Считаем клеточные действия
                         # НА ВЫХОДЕ генератора (до наших правил): если их нет уже здесь, виноват
