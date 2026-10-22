@@ -752,6 +752,10 @@ def _my_units_classes(env_getter, my_id):
 #: §13.336: «что город строит и с каким запасом щитов» — по городам. Пока запас растёт,
 #: предмет держим и приказа не шлём (его правило), заново решаем только после завершения.
 _LAST_PROD: dict = {}
+#: §13.664 — ход, в который мы в последний раз отправили городу заказ производства.
+#: Нужен, чтобы не повторять заказ: повтор стенд считает сменой предмета и списывает
+#: накопленные щиты (§13.663 — город с 19 заказами не накопил ничего).
+_LAST_ORDER_TURN: dict = {}
 #: §13.348: ЦЕЛЬ поселенца — как его миссия `AIUNIT_BUILD_CITY` (`daisettler.c:1029-1054`):
 #: он ставит поселенцу задачу с клеткой-целью и ведёт его туда, пока цель годна, и только по
 #: прибытии основывает город. У нас цель пересчитывалась КАЖДЫЙ ход, а внутри цены площадки
@@ -3356,6 +3360,11 @@ def _production_candidate(obs: dict, info: dict, dof_state, extractor,
             pass
     wonder_city = _wonder_city_id(obs)
     for cid, rec in cities.items():
+        if _filters_trace() and isinstance(rec, dict):
+            print(f"  [§13.691 рост] город {cid}: size={rec.get('size')} "
+                  f"еда+={rec.get('surplus_food')} склад_еды={rec.get('food_stock')} "
+                  f"щиты={rec.get('shield_stock')} строит={str(rec.get('currently_building_name'))!r}",
+                  flush=True)
         if not isinstance(rec, dict):
             continue
         # §13.212 (указание 1): кандидаты берём из МАСОК САМОГО ГОРОДА, а не из предложения
@@ -3372,6 +3381,13 @@ def _production_candidate(obs: dict, info: dict, dof_state, extractor,
             if _filters_trace():
                 print(f"  [постановка] город {cid}: маска МИРА — {len(world)} предметов: "
                       f"{sorted(world)[:12]}", flush=True)
+                if isinstance(rec, dict):
+                    _grow = {k: rec.get(k) for k in ("size", "surplus_food", "food_stock",
+                                                     "prod_food", "prod_shield", "shield_stock",
+                                                     "ppl_unhappy", "ppl_content")}
+                    print(f"  [§13.691 рост] город {cid}: {_grow} | строит "
+                          f"{str(rec.get('currently_building_name'))!r} | клеток "
+                          f"{len(rec.get('worked') or ())}", flush=True)
             allowed = world
         else:
             # Маски мира нет — ЗАКАЗ НЕ ОТПРАВЛЯЕМ. Здесь «незнание ≠ запрет» уступает
@@ -3677,6 +3693,72 @@ def _production_candidate(obs: dict, info: dict, dof_state, extractor,
                   + ", ".join(f"{n} {v:.2f}/{t}х" for v, n, t in _top), flush=True)
         if current and best[1] == str(current):
             continue          # повода менять нет: запущенное идёт до конца (§13.196)
+        # §13.684: ВЫВОД ГОРОДА ИЗ ПРОСТОЯ — единственный рычаг, выведенный из картины захода.
+        # Измерено (§13.683): среда сама ставит и стирает предмет, и оставляет наши города в `Coinage`
+        # по 8 ходов подряд (T=52-60, два города). `Coinage` кассирует щиты в золото: щиты при нём равны
+        # 0 и НЕ копятся. Значит вмешательство именно в такой город НИЧЕГО не стоит (терять нечего) и
+        # выводит город из простоя. Правило: заказываем, ТОЛЬКО если город кассирует/пуст; чужой
+        # строящийся предмет не трогаем (его смена стоила бы накопленного).
+        if os.environ.get("DOF_UNIDLE") == "1":
+            _cur_u = str(current).strip() if current else None
+            _idling = _cur_u is None or _cur_u.lower() in ("coinage", "none", "")
+            if os.environ.get("DOF_UNIDLE_DEBUG") == "1":
+                _tv = None
+                for _src in (info, obs):
+                    if isinstance(_src, dict):
+                        for _k in ("turn", "game_turn", "turn_number", "step"):
+                            if _src.get(_k) is not None:
+                                _tv = _src.get(_k)
+                                break
+                    if _tv is not None:
+                        break
+                print(f"  [§13.684] ход {_tv if _tv is not None else '?'} город {cid}: "
+                      f"в городе {_cur_u!r} щиты {float(stock):.0f} -> "
+                      f"{'ЗАКАЗЫВАЮ (простой)' if _idling else 'не трогаю (среда строит)'}", flush=True)
+            if not _idling:
+                continue
+        # §13.679: НЕ ВМЕШИВАТЬСЯ В ЦИКЛ, КОТОРЫЙ ВЕДЁТ СРЕДА.
+        # Измерено: в городе в 45 % наблюдений стоит НЕ наш предмет (§13.673), и после завершения
+        # постройки предмет ставит среда (18 из 23 завершений, §13.677), а очередь навязать нельзя —
+        # в пространстве действий есть только смена предмета (§13.678). Значит наш заказ равносилен
+        # СМЕНЕ предмета среды, а смена списывает накопленные щиты (до 26, §13.654). Правило: если в
+        # городе НЕ наш предмет — не трогаем; свой предмет подтверждаем только после его завершения
+        # (когда щиты упали ниже памятного запаса).
+        if os.environ.get("DOF_HANDS_OFF") == "1":
+            _cur_h = str(current) if current else None
+            _mine_h = str(_prev[0]) if _prev is not None else None
+            if _cur_h is None or _cur_h != _mine_h:
+                if os.environ.get("DOF_HANDS_OFF_DEBUG") == "1":
+                    print(f"  [§13.679] город {cid}: в городе {_cur_h!r}, наш предмет {_mine_h!r} "
+                          f"— не вмешиваюсь (щиты {float(stock):.0f})", flush=True)
+                continue
+            if os.environ.get("DOF_HANDS_OFF_DEBUG") == "1":
+                print(f"  [§13.679] город {cid}: в городе наш предмет {_cur_h!r} — подтверждаю заказ "
+                      f"(щиты {float(stock):.0f}, помним_щиты {float(_prev[1]):.0f})", flush=True)
+        # §13.664: не повторять заказ тому же городу. Сравниваем со СВОЕЙ памятью, а не
+        # с очередью: очередь нашего предмета не удерживает (§13.646-13.648), поэтому
+        # правило выше не срабатывало ни разу, а повтор заказа обнуляет щиты (§13.663).
+        if os.environ.get("DOF_SKIP_SAME_ORDER") == "1" and _prev is not None:
+            _ord_turn = _LAST_ORDER_TURN.get(str(cid))
+            _turn_here = int(info.get("turn") or 0)
+            _same_item = str(_prev[0]) == str(best[1])
+            _accumulating = float(stock) >= float(_prev[1])
+            # §13.665: условие «заказ был В ПРОШЛОМ ходу» УБРАНО — измерено (cb21.log):
+            # совпадений 6, из них «недавно» всего 1. Наши повторные заказы идут с
+            # промежутком в 2+ хода (заказ в 6-м, повтор в 8-м), и такой повтор всё
+            # равно стирает накопленное: в §13.663 один заказ на 23-м ходу снёс 35 щитов.
+            if os.environ.get("DOF_SKIP_DEBUG") == "1":
+                print(f"  [§13.664] город {cid}: выбор {best[1]!r} помним {str(_prev[0])!r} "
+                      f"щиты {float(stock):.0f} помним_щиты {float(_prev[1]):.0f} "
+                      f"заказ_был_в_ходу {_ord_turn} ход {_turn_here} "
+                      f"тот_же={_same_item} копит={_accumulating}", flush=True)
+            if _same_item and _accumulating:
+                if os.environ.get("DOF_SKIP_DEBUG") == "1":
+                    print(f"  [§13.664] город {cid}: НЕ повторяю {best[1]!r} "
+                          f"(заказ ушёл в ходу {_ord_turn}, щиты растут) в_очереди {current!r}",
+                          flush=True)
+                _LAST_ORDER_TURN[str(cid)] = _turn_here
+                continue
         return {"ctrl_type": "city", "actor_id": cid,
                 "action_name": f"produce_{best[1]}",
                 "current_name": str(current) if current else None,
@@ -6524,6 +6606,8 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                                       f"щиты {_com[1] if len(_com) > 1 else '?'} смена={_flip} "
                                       f"в_очереди {_prod.get('current_name')!r}", flush=True)
                             _LAST_PROD[str(_prod.get("actor_id"))] = _com
+                            # §13.664: помним ХОД заказа — по нему решается, повтор это или смена.
+                            _LAST_ORDER_TURN[str(_prod.get("actor_id"))] = int(info.get("turn") or 0)
                         if os.environ.get("DOF_TRACE_FILTERS") == "1":
                             print(f"  [постановка] ход {info.get('turn')}: отправляю "
                                   f"{_prod['action_name']} городу {_prod['actor_id']} "
