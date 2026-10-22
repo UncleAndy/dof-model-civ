@@ -6004,7 +6004,11 @@ def _city_manager_params(size: int, food_surplus: int,
     return {
         "minimal_surplus": [(0 if granary_is_full else int(food_surplus)), 1, 0,
                             -2147483647, 0, 0],
-        "max_growth": False,
+        # §13.697: рост. Требование по еде трогать НЕЛЬЗЯ — мир при невыполнимом требовании
+        # отвергает параметр ЦЕЛИКОМ (§13.243: cma_enabled False 36/36 против True 25/26).
+        # `max_growth` — ДРУГОЕ поле и ровно про то, что нужно: с ним управляющий перестаёт
+        # держать минимальный излишек и работает на рост. По умолчанию выключено.
+        "max_growth": os.environ.get("DOF_CMA_MAX_GROWTH") == "1",
         "require_happy": False,
         "allow_disorder": False,
         "allow_specialists": True,
