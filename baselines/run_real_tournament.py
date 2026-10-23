@@ -5711,8 +5711,7 @@ def _forecast_decide(obs, info, dof, extractor, avail, *, type_names=None,
 
         _tile_first = None
         ctx = build_context(obs, info, dof, extractor,
-                            exclude_actors=set(_USED_ACTORS[0])
-                            if _USED_ACTORS else None,
+                            exclude_actors=_excl_actors(obs),
                             type_names=type_names,
                             military_names=military_names, gold=gold)
         if getattr(ARGS, "tile_every_turn", False):
@@ -6055,6 +6054,16 @@ def _send_city_manager(env_getter, obs, extractor) -> int:
             # работаем по памяти о размере и требовании.
             if cid is None:
                 continue
+            # §13.704: ОТКАЗ ОТ УПРАВЛЯЮЩЕГО. Измерено (§13.703): при размере 1 наши города дают
+            # 1.0 еды/ход (медиана), города ИИ — 2.0; единственное известное различие — у нас
+            # cma_enabled=TRUE, у ИИ FALSE. Флаг снимает параметр, и распределение горожан
+            # остаётся миру, как у ИИ. Отправляем снятие один раз на город.
+            if os.environ.get("DOF_CMA_OFF") == "1":
+                if _CMA_SENT.get(str(cid)) != ("off",):
+                    ws.send_request({"pid": _CMA_CLEAR_PID, "id": int(cid)})
+                    _CMA_SENT[str(cid)] = ("off",)
+                    sent += 1
+                continue
             said = _CMA_SENT.get(str(cid))
             if rec.get("cma_enabled") is False:
                 pass  # мир снял — возвращаем, даже если мы это уже говорили
@@ -6071,6 +6080,101 @@ def _send_city_manager(env_getter, obs, extractor) -> int:
         print(f"        [управляющий] сбой: {type(exc).__name__}: {exc}", flush=True)
         return 0
 
+_UNWORK_LAST: dict[str, int] = {}
+
+
+def _place_free_citizen(obs: dict, info: dict, extractor) -> tuple | None:
+    """§13.711: поставить СВОБОДНОГО горожанина на клетку с максимумом еды.
+
+    Измерено (§13.710): список из 19-20 `city_work_*` в предложении означает, что горожанин ни на чём
+    не стоит; в 25 % городо-ходов при размере 2 такой горожанин простаивал, и прирост еды падал до -1.0.
+    Обрабатываемая клетка и еда берутся проверенной цепочкой (§13.708-13.709): имя действия даёт смещение,
+    слой `output` — еду. Правило делает ОДНО действие за ход и не переносит стоящих горожан, поэтому
+    пинг-понга (§13.690) не создаёт.
+    """
+    try:
+        my_id = getattr(extractor, "my_player_id", None)
+        _turn_now = int((info or {}).get("turn") or 0)
+        # Слой output — СПИСОК списков (в §13.708 читался напрямую). as_dict() превращал его
+        # в словарь с ключами-номерами строк, и обращение по координате падало KeyError.
+        out_layer = (as_dict((obs or {}).get("map")) or {}).get("output")
+        if out_layer is None:
+            return None
+        acts_all = as_dict(as_dict((info or {}).get("available_actions")).get("city")) or {}
+        for cid, rec in sorted((as_dict((obs or {}).get("city")) or {}).items()):
+            rec = as_dict(rec) or {}
+            if my_id is not None and rec.get("owner") is not None \
+                    and str(rec.get("owner")) != str(my_id):
+                continue
+            acts = as_dict(acts_all.get(str(cid))) or as_dict(acts_all.get(cid)) or {}
+            work = sorted(str(n) for n, v in acts.items()
+                          if v and str(n).startswith("city_work_"))
+            if len(work) < 10:      # мало предложений = горожанин стоит, а не свободен
+                continue
+            try:
+                cx, cy = int(rec.get("x")), int(rec.get("y"))
+            except (TypeError, ValueError):
+                continue
+            best, best_f = None, -1
+            for name in work:
+                parts = name.split("_")
+                try:
+                    dx, dy = int(parts[-2]), int(parts[-1])
+                    raw = str(out_layer[cx + dx][cy + dy]).strip("[] ")
+                    food = int(raw.split()[0])
+                except (TypeError, ValueError, IndexError):
+                    continue
+                if food > best_f:
+                    best, best_f = name, food
+            # §13.714: ВТОРАЯ ПОЛОВИНА §13.710 — снять горожанина с ХУДШЕЙ клетки, чтобы на
+            # следующем ходу правило выше поставило его на лучшую (две действия за два хода).
+            # Защита: не повторять снятие у того же города чаще, чем раз в 4 хода (иначе мир
+            # возвращает горожанина на ту же клетку и получается пила §13.690).
+            if best is None or not work:
+                un = sorted(str(n) for n, v in acts.items()
+                            if v and str(n).startswith("city_unwork_"))
+                # §13.715: предложений снятия бывает НЕСКОЛЬКО (город размера 2+ работает две
+                # клетки). Прежнее условие `len(un) == 1` отсекало ровно такие города — потому
+                # ветка и не срабатывала ни разу при 62 постановках. Берём САМУЮ ХУДШУЮ по еде.
+                if un and _turn_now - _UNWORK_LAST.get(str(cid), -99) >= 4:
+                    bestf = -1
+                    for _dx in range(-2, 3):
+                        for _dy in range(-2, 3):
+                            if abs(_dx) + abs(_dy) > 2:
+                                continue
+                            try:
+                                bestf = max(bestf, int(str(out_layer[cx + _dx][cy + _dy])
+                                                       .strip("[] ").split()[0]))
+                            except (TypeError, ValueError, IndexError):
+                                continue
+                    worst, worst_f = None, None
+                    for _n in un:
+                        _p = _n.split("_")
+                        try:
+                            _dx, _dy = int(_p[-2]), int(_p[-1])
+                            _f = int(str(out_layer[cx + _dx][cy + _dy]).strip("[] ").split()[0])
+                        except (TypeError, ValueError, IndexError):
+                            continue
+                        if worst_f is None or _f < worst_f:
+                            worst, worst_f = _n, _f
+                    if worst is not None and worst_f is not None and bestf > worst_f:
+                        _UNWORK_LAST[str(cid)] = _turn_now
+                        try:
+                            return ("city", int(cid), worst)
+                        except (TypeError, ValueError):
+                            return ("city", cid, worst)
+            if best is not None:
+                # §13.712: актёр ЧИСЛОМ. Со строкой `KeyError: '122'` в turn_manager/base_action:
+                # ключи словаря действий контроллера — числовые идентификаторы городов.
+                try:
+                    return ("city", int(cid), best)
+                except (TypeError, ValueError):
+                    return ("city", cid, best)
+    except Exception as exc:  # noqa: BLE001
+        print(f"  [§13.711] сбой: {type(exc).__name__}: {exc}", flush=True)
+    return None
+
+
 _FORECAST_STATS: dict[str, int] = {"decisions": 0, "acted": 0, "declined": 0,
                                    "unmappable": 0, "probes": 0, "idle": 0}
 _FORECAST_ERRORS: list[str] = []
@@ -6085,7 +6189,139 @@ _PENDING_PROBE: list = []
 _PROBE_TARGET: list = []
 #: (ctrl, актёр) решения, уже принятые в ЭТОМ ходу — прогноз обязан их видеть,
 #: иначе предлагает ход тому, кто уже решил, и счётчики расходятся с проводом.
+_UNIT_TRAIL: dict[str, list[tuple[int, int]]] = {}
+_UNIT_VISITS: dict[str, dict[tuple[int, int], int]] = {}
+_UNIT_DIRS: dict[int, tuple[int, int]] = {}          # выучено: индекс goto_N -> смещение
+_UNIT_PENDING: dict[str, tuple[int, tuple[int, int]]] = {}   # юнит -> (N, клетка до шага)
+
+
+def _learn_unit_dirs(obs: dict) -> None:
+    """§13.721: выучить смещение направления по факту — позиция ДО шага против позиции ПОСЛЕ.
+
+    Кодировку `goto_0..7` не угадываем: одно неверное предположение о порядке направлений
+    превращает «уход от повторов» в «ход в стену».
+    """
+    if not _UNIT_PENDING:
+        return
+    units = as_dict((obs or {}).get("unit")) or {}
+    for uid, (idx, before) in list(_UNIT_PENDING.items()):
+        rec = as_dict(units.get(uid)) or as_dict(units.get(str(uid))) or {}
+        try:
+            now = (int(rec.get("x")), int(rec.get("y")))
+        except (TypeError, ValueError):
+            continue
+        dx, dy = now[0] - before[0], now[1] - before[1]
+        if (dx, dy) != (0, 0) and max(abs(dx), abs(dy)) == 1:
+            _UNIT_DIRS[idx] = (dx, dy)
+            if os.environ.get("DOF_TRACE_FILTERS") == "1":
+                print(f"  [§13.721 обучение] goto_{idx} -> смещение {(dx, dy)} "
+                      f"(выучено {len(_UNIT_DIRS)})", flush=True)
+            _UNIT_PENDING.pop(uid, None)
+
+
+def _visit_step(obs: dict, info: dict, extractor) -> tuple | None:
+    """§13.721: шаг в СОСЕДНЮЮ клетку с минимальным числом посещений этим юнитом.
+
+    Память — 5 последних клеток; счётчик посещений ведётся по ней же. Применяется только к
+    юнитам БЕЗ своей цели: поселенец исключён (у него площадка), как и юнит с целью блокировки
+    (у такого в предложении есть не только `goto_*`).
+    """
+    _learn_unit_dirs(obs)
+    my_id = getattr(extractor, "my_player_id", None)
+    units = as_dict((obs or {}).get("unit")) or {}
+    acts_all = as_dict(as_dict((info or {}).get("available_actions")).get("unit")) or {}
+    best = None
+    for uid, rec in sorted(units.items()):
+        rec = as_dict(rec) or {}
+        if my_id is not None and rec.get("owner") is not None \
+                and str(rec.get("owner")) != str(my_id):
+            continue
+        if str(rec.get("type_rule_name")) == "Settlers":
+            continue
+        try:
+            pos = (int(rec.get("x")), int(rec.get("y")))
+        except (TypeError, ValueError):
+            continue
+        trail = _UNIT_TRAIL.setdefault(str(uid), [])
+        if not trail or trail[-1] != pos:
+            trail.append(pos)
+            del trail[:-5]
+        acts = as_dict(acts_all.get(str(uid))) or as_dict(acts_all.get(uid)) or {}
+        names = [str(n) for n, v in acts.items() if v and str(n).startswith("goto_")]
+        if not names:
+            continue
+        # §13.721-проба: печатаем МЕНЮ, а не догадку о нём.
+        _PAS = ("done", "wait", "fortify", "sentry", "disband", "homecity",
+                "paradrop", "airlift", "keep", "nop")
+        others = [str(n) for n, v in acts.items()
+                  if v and not str(n).startswith("goto_")
+                  and not any(str(n).startswith(p) for p in _PAS)]
+        if os.environ.get("DOF_TRACE_FILTERS") == "1":
+            print(f"  [§13.721 проба] юнит {uid} {rec.get('type_rule_name')} "
+                  f"goto={len(names)} прочих_содержательных={others[:4]}", flush=True)
+        if others:          # у юнита есть содержательное действие — его дело не «гулять»
+            continue
+        visits = _UNIT_VISITS.setdefault(str(uid), {})
+        for c in trail:
+            visits[c] = visits.get(c, 0) + (1 if trail.count(c) > 1 else 0)
+        choice, choice_key = None, None
+        for n in names:
+            try:
+                idx = int(n.split("_")[-1])
+            except (TypeError, ValueError):
+                continue
+            off = _UNIT_DIRS.get(idx)
+            if off is None:
+                continue
+            tgt = (pos[0] + off[0], pos[1] + off[1])
+            cnt = visits.get(tgt, 0)
+            back = (len(trail) >= 2 and tgt == trail[-2])
+            key = (cnt, 1 if back else 0, idx)
+            if choice_key is None or key < choice_key:
+                choice, choice_key = n, key
+        # §13.721-фикс: тупик обучения. Смещения не выучены — их неоткуда взять, пока правило
+        # не сделает первый шаг. Делаем пробный шаг `goto_0` и УЧИМ смещение по результату.
+        if choice is None and not _UNIT_DIRS:
+            try:
+                _idx = int(names[0].split("_")[-1])
+                _UNIT_PENDING[str(uid)] = (_idx, pos)
+                return ("unit", int(uid), names[0])
+            except (TypeError, ValueError):
+                pass
+        if choice is not None and choice_key is not None and choice_key[0] < 1:
+            try:
+                idx = int(choice.split("_")[-1])
+                _UNIT_PENDING[str(uid)] = (idx, pos)
+                return ("unit", int(uid), choice)
+            except (TypeError, ValueError):
+                return ("unit", uid, choice)
+    return None
+
+
+def _excl_actors(obs: dict) -> set | None:
+    """§13.720: кого исключать из кандидатов. Города — всегда; юниты — только если очков движения
+    не осталось (`moves_left`), иначе юнит терял второй шаг в том же ходу."""
+    if not _USED_ACTORS:
+        return None
+    excl = set(_USED_ACTORS[0])
+    if os.environ.get("DOF_UNIT_REPEAT") != "1":
+        return excl or None
+    units = as_dict((obs or {}).get("unit")) or {}
+    for _k in list(excl):
+        try:
+            if str(_k[0]) != "unit":
+                continue
+            rec = as_dict(units.get(str(_k[1]))) or as_dict(units.get(_k[1])) or {}
+            mv = rec.get("moves_left")
+            if mv is not None and float(mv) > 0:
+                excl.discard(_k)
+        except Exception:  # noqa: BLE001
+            continue
+    return excl or None
+
+
 _USED_ACTORS: list = []
+_MULTI_SEEN: set = set()   # §13.717: действия, уже сделанные в этом ходу (актёр+имя)
 #: След науки: (ход, технология, стоимость, накоплено, наука городов) — для проверки
 #: ВЫВЕДЕННОГО срока технологии фактом. Проверка идёт в живом прогоне, а не отдельным
 #: скриптом: отдельный скрипт должен сам занимать державу, и без этого наблюдение
@@ -6381,6 +6617,15 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                 # после ветки `--no-dof`. Измерено: ветка `no_dof` возвращает ход изнутри
                 # себя, поэтому вызов ниже неё был мёртв на ВСЕХ приёмочных прогонах:
                 # `act` вызван 24 раза за 8 ходов, а вызов не сработал ни разу.
+                # §13.711: свободный горожанин на лучшую по еде клетку — ДО ветки --no-dof,
+                # которая возвращает ход изнутри себя (§13.329: так уже терялись требования управляющему).
+                if os.environ.get("DOF_FIX_WORK") == "1":
+                    _fw = _place_free_citizen(obs, info, extractor)
+                    if _fw is not None:
+                        if os.environ.get("DOF_TRACE_FILTERS") == "1":
+                            print(f"  [§13.711 горожанин] ход {info.get('turn')}: ставлю {_fw[2]} "
+                                  f"городу {_fw[1]}", flush=True)
+                        return _fw
                 if getattr(ARGS, "city_manager", False):
                     _sent_cm = _send_city_manager(env_getter, obs, extractor)
                     if os.environ.get("DOF_CM_DEBUG") == "1":
@@ -6399,6 +6644,94 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                               f"kind={_r.get('production_kind')}, "
                               f"value={_r.get('production_value')}, "
                               f"stock={_r.get('shield_stock')}", flush=True)
+                        # §13.699: рост и управляющий — на КАЖДЫЙ ход по каждому городу
+                        # (эта ветвь плотная: 537 строк за партию). cma_enabled — контроль опыта,
+                        # surplus_food и size — мера роста.
+                        # §13.707: СЛОЙ КАРТЫ "worked" — ПРОВЕРКА ПРИБОРА НА ИЗВЕСТНОМ ОТВЕТЕ.
+                        # Ответ известен: у города 121 предложено city_unwork_9_-2_0, значит
+                        # на клетке со смещением (-2,0) от центра должен быть признак работы.
+                        if os.environ.get("DOF_WORK_PROBE") == "1":
+                            try:
+                                _m = as_dict((obs or {}).get("map")) or {}
+                                _w = _m.get("worked")
+                                # §13.708: до слоя "worked" (его нет) проверяем "status"/"output"
+                                # на данных с ИЗВЕСТНЫМ ответом: у города 121 горожанин стоит на
+                                # смещении (-2,0). Только первые 3 хода — иначе лог распухает.
+                                if int(str(info.get("turn") or 0)) <= 3:
+                                    for _lk in ("status", "output"):
+                                        _L = _m.get(_lk)
+                                        _cx0, _cy0 = _r.get("x"), _r.get("y")
+                                        _v2 = []
+                                        for _dx, _dy in ((0, 0), (-2, 0), (1, 0), (0, 1), (1, 1), (-1, -1)):
+                                            try:
+                                                _v2.append(((_dx, _dy), str(_L[int(_cx0) + _dx][int(_cy0) + _dy])[:26]))
+                                            except Exception:
+                                                _v2.append(((_dx, _dy), '?'))
+                                        print(f"  [§13.708 слой {_lk}] ход {info.get('turn')} город {_cid} "
+                                              f"центр ({_cx0},{_cy0}): {_v2}", flush=True)
+                                if not getattr(_send_city_manager, "_map_probe", False):
+                                    _send_city_manager._map_probe = True
+                                    print(f"  [§13.707 карта] слои: {sorted(_m.keys())}", flush=True)
+                                    print(f"  [§13.707 карта] тип worked: {type(_w).__name__}, "
+                                          f"значение: {str(_w)[:300]!r}", flush=True)
+                                _cx, _cy = _r.get("x"), _r.get("y")
+                                if _cx is not None and _cy is not None and isinstance(_w, (list, tuple)):
+                                    _vals = []
+                                    for _dx, _dy in ((0,0),(-2,0),(1,0),(0,1),(1,1),(-1,-1)):
+                                        try: _vals.append(((_dx,_dy), _w[int(_cx)+_dx][int(_cy)+_dy]))
+                                        except Exception: _vals.append(((_dx,_dy), '?'))
+                                    print(f"  [§13.707 карта] ход {info.get('turn')} город {_cid} "
+                                          f"центр ({_cx},{_cy}) worked по смещениям: {_vals}", flush=True)
+                            except Exception as _e:  # noqa: BLE001
+                                print(f"  [§13.707] сбой: {type(_e).__name__}: {_e}", flush=True)
+                        # §13.706: ПРЕДЛОЖЕНИЕ ПО КЛЕТКАМ. Если мир не предлагает `city_work_*`
+                        # вовсе, то «горожане не расставлены» объясняется без всякого опыта с клетками.
+                        if os.environ.get("DOF_WORK_PROBE") == "1":
+                            try:
+                                _ca = as_dict(as_dict((info or {}).get("available_actions")).get("city")) or {}
+                                _mine = as_dict(_ca.get(str(_cid))) or as_dict(_ca.get(_cid)) or {}
+                                _names = sorted(str(k) for k, v in _mine.items() if v)
+                                # §13.709: РАЗНИЦА «ОБРАБАТЫВАЕМАЯ ПРОТИВ ЛУЧШЕЙ». Обрабатываемая
+                                # клетка берётся из имени предложения city_unwork_<id>_<dx>_<dy>,
+                                # еда — из слоя output (проверен §13.708 на известном ответе).
+                                try:
+                                    _m2 = as_dict((obs or {}).get("map")) or {}
+                                    _L = _m2.get("output")
+                                    _cx0, _cy0 = _r.get("x"), _r.get("y")   # §13.709: свои, не из блока хода<=3
+                                    _un = [n for n in _names if n.startswith("city_unwork_")]
+                                    if _L is not None and _un:
+                                        _p = _un[0].split("_")
+                                        _wdx, _wdy = int(_p[-2]), int(_p[-1])
+                                        def _food(_dx, _dy):
+                                            _v = _L[int(_cx0) + _dx][int(_cy0) + _dy]
+                                            return int(str(_v).strip("[] ").split()[0])
+                                        _wf = _food(_wdx, _wdy)
+                                        _best, _bo = -1, None
+                                        for _dx in range(-2, 3):
+                                            for _dy in range(-2, 3):
+                                                if abs(_dx) + abs(_dy) > 2:
+                                                    continue
+                                                try:
+                                                    _f = _food(_dx, _dy)
+                                                except Exception:
+                                                    continue
+                                                if _f > _best:
+                                                    _best, _bo = _f, (_dx, _dy)
+                                        print(f"  [§13.709 еда-клетка] ход {info.get('turn')} город {_cid}: "
+                                              f"работает {(_wdx,_wdy)} еда={_wf} | лучшая {_bo} еда={_best} | "
+                                              f"потеря={_best - _wf}", flush=True)
+                                except Exception as _e2:  # noqa: BLE001
+                                    print(f"  [§13.709] сбой: {type(_e2).__name__}: {_e2}", flush=True)
+                                _work = [n for n in _names if "work" in n]
+                                print(f"  [§13.706 клетки-предложение] ход {info.get('turn')} город {_cid}: "
+                                      f"всего {len(_names)}, из них по клеткам {len(_work)}: {_work[:8]}",
+                                      flush=True)
+                            except Exception as _e:  # noqa: BLE001
+                                print(f"  [§13.706] сбой: {type(_e).__name__}: {_e}", flush=True)
+                        print(f"  [§13.699 рост-ход] ход {info.get('turn')} город {_cid}: "
+                              f"упр={_r.get('cma_enabled')} еда+={_r.get('surplus_food')} "
+                              f"склад_еды={_r.get('food_stock')} size={_r.get('size')} "
+                              f"строит={_r.get('currently_building_name')!r}", flush=True)
 
                 if not getattr(self, "_impr_published", False) and env_getter is not None:
                     try:
@@ -6570,6 +6903,21 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                             print(f"  [фильтр unwork] ход {_now_turn}: снят повтор "
                                   f"{_tile_pick[2]} (последний раз ход {_prev_u})", flush=True)
                             _tile_pick = None
+                    # §13.702: СТРУКТУРНАЯ причина бесплодности 13 версий выбора производства
+                    # (§13.691): решатель постановки стоял ПОСЛЕ клетки, а клетка делает return
+                    # раньше — решатель вызывался 5 раз за партию. Под флагом считаем производство
+                    # ПЕРВЫМ: если кандидат есть, клетка уступает ход ему.
+                    _prod = None
+                    if os.environ.get("DOF_PRODUCE_FIRST") == "1":
+                        _prod = _production_candidate(
+                            obs, info, dof.state, extractor,
+                            _production_names(env_getter())
+                            if env_getter is not None else None,
+                            _military_type_names(env_getter())
+                            if env_getter is not None else None,
+                            _gold_of(obs, extractor), avail, env_getter)
+                        if _prod is not None:
+                            _tile_pick = None
                     if _tile_pick is not None:
                         # §13.615: измерено — главная ветвь ПОВТОРА (25 из 54), актёры city 122/128.
                         # Возврат идёт НАПРЯМУЮ, мимо `offered`/`excluded` (options.py:352), поэтому
@@ -6588,13 +6936,14 @@ def build_agent(agent_type: str, extractor: GameStateExtractor,
                             _tile_pick = None
                         else:
                             return _tile_pick
-                    _prod = _production_candidate(
-                        obs, info, dof.state, extractor,
-                        _production_names(env_getter())
-                        if env_getter is not None else None,
-                        _military_type_names(env_getter())
-                        if env_getter is not None else None,
-                        _gold_of(obs, extractor), avail, env_getter)
+                    if _prod is None:   # §13.702: не пересчитывать, если уже посчитано раньше клетки
+                        _prod = _production_candidate(
+                            obs, info, dof.state, extractor,
+                            _production_names(env_getter())
+                            if env_getter is not None else None,
+                            _military_type_names(env_getter())
+                            if env_getter is not None else None,
+                            _gold_of(obs, extractor), avail, env_getter)
                     if _prod is not None:
                         # §13.336: отправка заказа — это и есть наше решение. Помним его,
                         # иначе правило «держать начатое» не срабатывает НИ РАЗУ (измерено:
@@ -6917,8 +7266,48 @@ def _turn_phase(action, used_actors: set, decisions_this_turn: int,
             print(f"  [конец-хода-причина] потолок max_decisions={max_decisions}", flush=True)
         return "end_turn", None
 
+    # §13.717: ИЗМЕРЕНО (партия te1, 60 из 60 ходов): ход закрывался ПОВТОРОМ АКТЁРА при медиане
+    # 3 решения, хотя среда позволяет до max_decisions=20 и у юнитов остаются очки движения
+    # (`movesleft`), а у города — несколько действий. Правило «одно решение на актёра» резало
+    # законные действия. Под флагом запрещаем повтор ТОГО ЖЕ ДЕЙСТВИЯ того же актёра, а не любое
+    # второе действие: именно повтор обратимого действия и был причиной зависания.
     key = (action[0], action[1])
-    if key in used_actors:
+    if os.environ.get("DOF_MULTI_ACT") == "1":
+        # §13.717: запрещаем ПОВТОР ТОГО ЖЕ ДЕЙСТВИЯ, а не любое второе действие актёра.
+        # Ключ `used_actors` оставлен двухэлементным: его читают ещё в пяти местах с
+        # распаковкой на два элемента — тройка там сломала бы исключение актёров.
+        _ak = (action[0], action[1], action[2])
+        if _ak in _MULTI_SEEN:
+            if _tet:
+                print(f"  [конец-хода-причина] ПОВТОР ДЕЙСТВИЯ {_ak} "
+                      f"(решений {decisions_this_turn})", flush=True)
+            return "end_turn", None
+        _MULTI_SEEN.add(_ak)
+    # §13.718: БЕЗОПАСНОЕ РАСШИРЕНИЕ. Повтор актёра разрешаем ТОЛЬКО для необратимых действий
+    # (ход юнита `goto`/`move` с остатком очков движения, заказ производства) и НЕ разрешаем для
+    # обратимых (`city_work`/`city_unwork`): именно на них стенд завис в `ma1`
+    # (`wedged on city_work_5_-1_-1`), и защита от 2-цикла там несущая.
+    if os.environ.get("DOF_MULTI_SAFE") == "1":
+        _nm = str(action[2])
+        _ak = (action[0], action[1], _nm)
+        if _ak in _MULTI_SEEN:
+            if _tet:
+                print(f"  [конец-хода-причина] ПОВТОР ДЕЙСТВИЯ {_ak} (решений {decisions_this_turn})",
+                      flush=True)
+            return "end_turn", None
+        _MULTI_SEEN.add(_ak)
+        _rev = ("work" in _nm)
+        if _rev and key in used_actors:
+            if _tet:
+                print(f"  [конец-хода-причина] ОБРАТИМОЕ ПОВТОРНО у {key} (решений {decisions_this_turn})",
+                      flush=True)
+            return "end_turn", None
+        return "act", key
+    # §13.720: повтор актёра разрешаем ТОЛЬКО юнитам (ход нельзя отменить — 2-цикла не будет),
+    # города остаются под запретом: именно на city_work стенд зависал (§13.717).
+    if os.environ.get("DOF_UNIT_REPEAT") == "1" and str(key[0]) == "unit":
+        return "act", key
+    if key in used_actors and os.environ.get("DOF_MULTI_ACT") != "1":
         # One decision per actor per turn (civrealm's own convention): without
         # this, a reversible action with a positive-looking projection is
         # repeated forever inside a single turn.
@@ -7477,9 +7866,26 @@ def run_match(agent_type: str, turns: int = 30, port: int = 6001,
                         print(f"  [решений-за-ход] ход {turns_played + 1}: "
                               f"{decisions_this_turn} (актёров задействовано "
                               f"{len(used_actors)})", flush=True)
-                    action = None  # stepping None is what ends the turn
+                    # §13.721: если содержательного действия не нашлось — шаг в клетку с
+                    # наименьшим числом посещений (юнит с очками движения не должен стоять).
+                    # ВАЖНО: сброс обязателен. Без него в `action` оставалось действие ПРОШЛОГО
+                    # хода, оно отправлялось повторно, ход не закрывался — партия сыграла 0 ходов.
+                    action = None
+                    if os.environ.get("DOF_VISIT_MOVE") == "1":
+                        try:
+                            _vm = _visit_step(obs, info, extractor)
+                        except Exception as _e:  # noqa: BLE001
+                            _vm = None
+                            print(f"  [§13.721] сбой: {type(_e).__name__}: {_e}", flush=True)
+                        if _vm is not None:
+                            if os.environ.get("DOF_TRACE_FILTERS") == "1":
+                                print(f"  [§13.721 шаг] ход {turns_played + 1}: {_vm[2]} юниту {_vm[1]}",
+                                      flush=True)
+                            action = _vm
+                    # action уже установлен выше (None либо шаг по посещениям)
                     decisions_this_turn = 0
                     used_actors = set()
+                    _MULTI_SEEN.clear()   # §13.717
 
                 step_action_context = _action_position_context(action, obs)
                 stepped = True  # from here a hang belongs to the chosen action
