@@ -6191,7 +6191,16 @@ _PROBE_TARGET: list = []
 #: иначе предлагает ход тому, кто уже решил, и счётчики расходятся с проводом.
 _UNIT_TRAIL: dict[str, list[tuple[int, int]]] = {}
 _UNIT_VISITS: dict[str, dict[tuple[int, int], int]] = {}
-_UNIT_DIRS: dict[int, tuple[int, int]] = {}          # выучено: индекс goto_N -> смещение
+# §13.721: смещения берём из КОДА СРЕДЫ, не угадываем и не выучиваем на ходу:
+#   civrealm/freeciv/map/map_const.py:60  DIR_DX = [-1,0,1,-1,1,-1,0,1]
+#                                        DIR_DY = [-1,-1,-1,0,0,1,1,1]
+#   DIR8_ORDER = [NW, N, NE, W, E, SW, S, SE] = [0..7], а `goto_N` (config.py:516, 8 действий)
+#   индексируется по DIR8_ORDER, то есть goto_N -> направление N.
+# Обучение ниже оставлено как СВЕРКА: расхождение с таблицей печатается (дефект прибора).
+_UNIT_DIRS: dict[int, tuple[int, int]] = {
+    0: (-1, -1), 1: (0, -1), 2: (1, -1), 3: (-1, 0),
+    4: (1, 0), 5: (-1, 1), 6: (0, 1), 7: (1, 1),
+}
 _UNIT_PENDING: dict[str, tuple[int, tuple[int, int]]] = {}   # юнит -> (N, клетка до шага)
 
 
@@ -6212,10 +6221,12 @@ def _learn_unit_dirs(obs: dict) -> None:
             continue
         dx, dy = now[0] - before[0], now[1] - before[1]
         if (dx, dy) != (0, 0) and max(abs(dx), abs(dy)) == 1:
-            _UNIT_DIRS[idx] = (dx, dy)
-            if os.environ.get("DOF_TRACE_FILTERS") == "1":
-                print(f"  [§13.721 обучение] goto_{idx} -> смещение {(dx, dy)} "
-                      f"(выучено {len(_UNIT_DIRS)})", flush=True)
+            _tbl = _UNIT_DIRS.get(idx)
+            if _tbl is not None and _tbl != (dx, dy):
+                print(f"  [§13.721 СВЕРКА] goto_{idx}: таблица {_tbl}, факт {(dx, dy)} — "
+                      f"таблица направлений НЕВЕРНА, правило надо выключать", flush=True)
+            elif os.environ.get("DOF_TRACE_FILTERS") == "1":
+                print(f"  [§13.721 сверка] goto_{idx} -> {(dx, dy)} совпало с таблицей", flush=True)
             _UNIT_PENDING.pop(uid, None)
 
 
@@ -6261,9 +6272,12 @@ def _visit_step(obs: dict, info: dict, extractor) -> tuple | None:
                   f"goto={len(names)} прочих_содержательных={others[:4]}", flush=True)
         if others:          # у юнита есть содержательное действие — его дело не «гулять»
             continue
-        visits = _UNIT_VISITS.setdefault(str(uid), {})
-        for c in trail:
-            visits[c] = visits.get(c, 0) + (1 if trail.count(c) > 1 else 0)
+        # §13.721-фикс: счёт — по ОКНУ из 5 последних шагов, заново каждый раз.
+        # Прежний вариант прибавлял 1 только клеткам, встречающимся дважды, и копился между
+        # вызовами: клетка с одним приходом не отличалась от непосещённой, минимум всегда
+        # оказывался у первого направления — все шаги шли `goto_0`.
+        visits = {c: trail.count(c) for c in set(trail)}
+        _UNIT_VISITS[str(uid)] = visits
         choice, choice_key = None, None
         for n in names:
             try:
@@ -6281,14 +6295,16 @@ def _visit_step(obs: dict, info: dict, extractor) -> tuple | None:
                 choice, choice_key = n, key
         # §13.721-фикс: тупик обучения. Смещения не выучены — их неоткуда взять, пока правило
         # не сделает первый шаг. Делаем пробный шаг `goto_0` и УЧИМ смещение по результату.
-        if choice is None and not _UNIT_DIRS:
+        if choice is None and False:
             try:
                 _idx = int(names[0].split("_")[-1])
                 _UNIT_PENDING[str(uid)] = (_idx, pos)
                 return ("unit", int(uid), names[0])
             except (TypeError, ValueError):
                 pass
-        if choice is not None and choice_key is not None and choice_key[0] < 1:
+        # берём ВСЕГДА минимум посещений (раньше требовался ровно 0 — при полностью
+        # исхоженных соседях правило не срабатывало вовсе)
+        if choice is not None:
             try:
                 idx = int(choice.split("_")[-1])
                 _UNIT_PENDING[str(uid)] = (idx, pos)
