@@ -1,0 +1,65 @@
+arm,game,seat,nation,leader,alive,score,ncities,population_real,nunits,techs,bulbs_last_turn,science_rate,units_killed,units_lost,gold
+classic4,0,classic,Turkish,Kılıçarslan,True,149,18,56,39,36,73,80,20,50,123
+classic4,0,classic,Chinese,Wang Guangmei,True,113,7,19,19,35,6,50,45,30,39
+classic4,0,classic,German,Otto von Bismarck,True,190,16,58,45,43,506,80,28,20,1781
+classic4,0,classic,Ethiopian,Tewodros II,True,165,19,52,44,40,0,70,33,52,123
+classic4,0,classic,Indonesian,Sukarno,True,163,18,57,29,42,201,90,19,44,405
+classic4,0,classic,American,John F. Kennedy,True,200,30,76,53,42,182,90,59,25,172
+classic4,0,classic,Japanese,Jimmu,True,160,18,53,48,38,0,90,19,30,181
+classic4,0,classic,Swedish,Per Albin Hansson,True,105,6,29,18,29,2,70,13,51,480
+classic4,1,classic,Zulu,Solomon kaDinizulu,True,163,15,56,45,41,40,70,23,29,88
+classic4,1,classic,Russian,Ivan III,True,142,10,32,36,40,187,90,28,52,255
+classic4,1,classic,Persian,Khshayarsha I,True,148,14,52,36,39,131,90,6,22,155
+classic4,1,classic,Mongol,Tokhtamysh,True,149,18,52,47,38,0,80,25,43,106
+classic4,1,classic,Korean,Chumong,True,286,35,106,59,55,438,80,48,14,1223
+classic4,1,classic,Sumerian,En-Mer-Kar,True,180,19,73,44,41,234,90,20,44,409
+classic4,1,classic,Arab,Harun al-Rashid,True,152,16,52,41,37,171,70,14,25,109
+classic4,1,classic,Japanese,Hirohito,True,193,33,84,74,38,137,90,29,32,273
+classic4,2,classic,Apache,Dos-Teh-Seh,True,228,29,92,69,48,449,90,17,11,203
+classic4,2,classic,Hunnic,Octar,True,160,15,51,29,35,0,90,68,76,616
+classic4,2,classic,Sumerian,Shulgi,True,125,10,37,21,34,130,90,36,24,751
+classic4,2,classic,Babylonian,Sharru-Kin II,True,162,13,40,25,45,214,90,30,38,1011
+classic4,2,classic,Mayan,Pakal,True,183,29,73,65,42,79,90,24,38,884
+classic4,2,classic,Persian,Kurush II,True,172,21,70,54,36,113,80,26,54,143
+classic4,2,classic,Korean,Tangun,True,184,11,39,33,48,380,90,46,40,941
+classic4,2,classic,Egyptian,Akhenaten,True,164,17,58,33,41,262,80,11,14,1840
+classic4,3,classic,Arab,Fatimah,True,230,25,92,51,46,0,0,75,71,322
+classic4,3,classic,Aztec,Itzcoatl,True,85,3,15,13,25,21,80,20,63,219
+classic4,3,classic,Inca,Pachakuti Inka Yupanki,True,253,32,83,63,50,347,90,60,26,812
+classic4,3,classic,Japanese,Jimmu,True,214,24,81,48,45,0,90,37,72,350
+classic4,3,classic,Swedish,Gustav Vasa,True,118,7,33,36,35,48,40,0,0,61
+classic4,3,classic,Mayan,Tekun Umam,True,172,20,65,54,40,0,90,15,50,919
+classic4,3,classic,English,Oliver Cromwell,True,272,24,104,67,53,504,90,92,52,2801
+classic4,3,classic,Zulu,Ndaba kaMageba,True,183,18,56,31,44,203,100,26,54,288
+dof4,0,dof,Turkish,Kılıçarslan,True,168,18,72,41,42,294,90,5,17,3239
+dof4,0,dof,Chinese,Wang Guangmei,True,117,12,34,31,36,143,90,14,16,2749
+dof4,0,dof,German,Otto von Bismarck,True,275,20,87,55,63,996,90,16,22,3100
+dof4,0,dof,Ethiopian,Tewodros II,True,160,19,45,44,42,0,60,32,48,183
+dof4,0,dof,Indonesian,Sukarno,True,206,27,77,59,52,580,80,29,31,333
+dof4,0,dof,American,John F. Kennedy,True,171,16,55,29,49,383,90,14,22,1930
+dof4,0,dof,Japanese,Jimmu,True,157,18,58,37,39,0,70,1,17,3555
+dof4,0,dof,Swedish,Per Albin Hansson,True,190,14,48,36,53,0,90,22,28,1088
+dof4,1,dof,Zulu,Solomon kaDinizulu,True,220,21,87,64,52,6,0,20,11,516
+dof4,1,dof,Russian,Ivan III,True,149,16,50,44,39,0,80,1,3,2219
+dof4,1,dof,Persian,Khshayarsha I,True,151,18,55,40,36,68,90,8,13,2784
+dof4,1,dof,Mongol,Tokhtamysh,True,149,18,53,32,39,2,80,0,7,1598
+dof4,1,dof,Korean,Chumong,True,226,21,72,49,56,297,70,1,7,99
+dof4,1,dof,Sumerian,En-Mer-Kar,True,195,23,74,44,45,41,90,6,20,2851
+dof4,1,dof,Arab,Harun al-Rashid,True,149,17,53,46,39,142,80,0,5,1349
+dof4,1,dof,Japanese,Hirohito,True,186,26,81,70,40,145,90,1,7,1168
+dof4,2,dof,Apache,Dos-Teh-Seh,True,127,9,33,38,40,429,80,4,4,4595
+dof4,2,dof,Hunnic,Octar,True,178,21,53,34,48,0,80,0,4,3765
+dof4,2,dof,Sumerian,Shulgi,True,142,17,45,38,44,429,90,1,4,4235
+dof4,2,dof,Babylonian,Sharru-Kin II,True,166,17,51,44,47,512,80,0,1,3442
+dof4,2,dof,Mayan,Pakal,True,214,21,87,37,56,1212,90,0,1,6687
+dof4,2,dof,Persian,Kurush II,True,301,39,151,61,60,1365,90,0,9,4763
+dof4,2,dof,Korean,Tangun,True,232,29,101,41,51,440,90,0,3,3516
+dof4,2,dof,Egyptian,Akhenaten,True,180,12,47,37,56,701,90,3,7,3953
+dof4,3,dof,Arab,Fatimah,True,191,19,57,33,58,765,80,0,2,1517
+dof4,3,dof,Aztec,Itzcoatl,True,146,10,43,24,43,621,90,0,3,3692
+dof4,3,dof,Inca,Pachakuti Inka Yupanki,True,267,32,124,45,60,1314,80,0,3,3447
+dof4,3,dof,Japanese,Jimmu,True,277,32,99,52,68,1929,90,4,4,3111
+dof4,3,dof,Swedish,Gustav Vasa,True,106,7,32,53,34,101,50,0,0,11
+dof4,3,dof,Mayan,Tekun Umam,True,136,14,50,39,38,12,70,3,11,2893
+dof4,3,dof,English,Oliver Cromwell,True,255,22,108,44,59,1465,90,0,9,3509
+dof4,3,dof,Zulu,Ndaba kaMageba,True,199,17,67,36,53,904,80,0,2,2552
