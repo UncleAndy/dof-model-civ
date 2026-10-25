@@ -7,6 +7,8 @@
    **Исполнено (2026-10-25):** M0–M1 в движке контейнера, рабочий набор и замер — `deploy/freeciv-dof/`
    (`README.md`, `patches/`, `run_ab.py`, `logs/ab/series.jsonl`), итог — §13 плана. Переключатель:
    `/docker/freeciv/dof_policy.conf` (`none|all|even|odd|список`), по умолчанию `none` (стенд как раньше).
+   **Полное описание изменений в движке:** `drafts/DOF_ENGINE_CHANGES.md` (§1–§12: модуль `dofpolicy`, девять гейтов в `daidiplomacy.c`, отказ от принуждения в `daiactions.c`, `POTENTIALLY_HOSTILE_PLAYER`, переключатель, журнал, замеры трёх уровней, границы и расхождения).
+   **Внешних Python-агентов в проекте больше нет** (удалены коммитом `4c8618c`): играют только встроенный ИИ движка и его DOF-режим.
 
 1. Прочитать: `drafts/PORT_DAICITY_PLAN.md` — текущий этап и порядок шагов.
 2. Прочитать в журнале `drafts/DOF_CALIBRATION.md`: §13.523 (штраф за смену класса),
