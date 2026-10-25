@@ -1,0 +1,19 @@
+--- orig/meson.build	2024-01-04 04:46:54.000000000 +0100
++++ work/meson.build	2026-10-25 02:34:13.573027088 +0200
+@@ -990,7 +990,7 @@
+ 
+ server_inc = [common_inc, include_directories('server', 'server/advisors',
+               'server/scripting', 'server/generator', 'server/savegame',
+-              'ai', 'ai/classic')]
++              'ai', 'ai/classic', 'ai/default')]
+ 
+ client_inc = [common_inc, include_directories('client', 'client/include',
+               'client/luascript', 'client/agents')]
+@@ -1310,6 +1310,7 @@
+   'ai/default/daitech.c',
+   'ai/default/daitools.c',
+   'ai/default/daiunit.c',
++  'ai/default/dofpolicy.c',
+   sources: [verhdr],
+   include_directories: [server_inc, include_directories('ai/default')]
+   )

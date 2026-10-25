@@ -1,0 +1,23 @@
+--- orig/server_aiiface.c	2023-12-19 02:24:55.000000000 +0100
++++ work/aiiface.c	2026-10-25 02:34:19.026099342 +0200
+@@ -30,6 +30,9 @@
+ /* ai/classic */
+ #include "classicai.h"
+ 
++/* ai/default */
++#include "dofpolicy.h"
++
+ #include "aiiface.h"
+ 
+ #ifdef AI_MOD_STATIC_THREADED
+@@ -236,6 +239,10 @@
+                    const struct action *paction,
+                    struct player *violator, struct player *victim)
+ {
++  /* DOF (M0): a global, player-independent knowledge ledger. Classic AI
++   * behaviour is not affected - the ledger only records and journals. */
++  dof_ledger_note((int) type, paction, violator, victim);
++
+   if (scope == CBR_VICTIM_ONLY) {
+     CALL_PLR_AI_FUNC(incident, victim,
+                      type, scope, paction, victim, violator, victim);

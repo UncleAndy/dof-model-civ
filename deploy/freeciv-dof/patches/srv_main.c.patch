@@ -1,0 +1,29 @@
+--- orig/srv_main.c	2024-01-04 04:46:54.000000000 +0100
++++ work/srv_main.c	2026-10-25 02:51:19.677731244 +0200
+@@ -2303,8 +2303,25 @@
+     }
+   } players_iterate_alive_end;
+ 
++  /* DOF (M0): a headless all-AI game (server type "autogame", no browser
++   * client attached) must advance without a connected human, otherwise every
++   * measurement run stops at turn 1 waiting for a client that never comes.
++   * A game with zero human players has nothing to wait for: if every AI has
++   * finished its phase, the turn is done. Games with a human player keep the
++   * stock behaviour untouched. */
+   if (!connected) {
+-    return;
++    bool any_human = FALSE;
++
++    players_iterate_alive(pplayer) {
++      if (is_human(pplayer)) {
++        any_human = TRUE;
++        break;
++      }
++    } players_iterate_alive_end;
++
++    if (any_human) {
++      return;
++    }
+   }
+ 
+   phase_players_iterate(pplayer) {

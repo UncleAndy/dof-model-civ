@@ -1,0 +1,30 @@
+--- orig/daiactions.c	2023-12-19 02:24:54.000000000 +0100
++++ work/daiactions.c	2026-10-25 02:28:58.087309419 +0100
+@@ -33,6 +33,8 @@
+ #include "aihand.h"
+ 
+ 
++#include "dofpolicy.h"
++
+ #include "daiactions.h"
+ 
+ 
+@@ -117,6 +119,18 @@
+   fc_assert_ret_val(action_get_actor_kind(paction) == AAK_UNIT, 0);
+   fc_assert_ret_val(action_get_target_kind(paction) == ATK_CITY, 0);
+ 
++  /* DOF (M2): bribery, sabotage, theft of technology or gold, poison, plague
++   * and a spy-delivered nuclear strike are an attack by another name. A DOF
++   * seat performs them only against a collapse source and only in a war of
++   * its own. Embassies and other peaceful presence stay free. */
++  if (dof_enabled(actor_player)
++      && !dof_is_source(actor_player, target_player)
++      && !pplayers_at_war(actor_player, target_player)
++      && !action_has_result(paction, ACTRES_ESTABLISH_EMBASSY)) {
++    dof_journal_rule(actor_player, target_player, "coercion_refused");
++    return 0;
++  }
++
+   utility = 0;
+ 
+   /* If tech theft is impossible when expected. */

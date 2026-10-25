@@ -1,0 +1,29 @@
+--- orig/daiunit.h	2024-01-04 04:46:54.000000000 +0100
++++ work/daiunit.h	2026-10-25 02:53:45.402945413 +0200
+@@ -19,6 +19,9 @@
+ #include "terrain.h"
+ #include "unittype.h"
+ 
++/* ai/default */
++#include "dofpolicy.h"
++
+ struct pf_map;
+ struct pf_path;
+ 
+@@ -70,9 +73,14 @@
+  (ptype->attack_strength * ptype->hp * ptype->firepower)
+ #define IS_ATTACKER(ptype) \
+   (ptype->attack_strength > ptype->transport_capacity)
++/* DOF (M1): for a DOF seat a stranger is not a target. Potential hostility
++ * means a war already under way, or a player observed attacking somebody.
++ * The classic arm keeps the stock rule (unmet players are targets). */
+ #define POTENTIALLY_HOSTILE_PLAYER(ait, pplayer, aplayer)               \
+-  (WAR(pplayer, aplayer) || NEVER_MET(pplayer, aplayer)                 \
+-   || dai_diplomacy_get(ait, pplayer, aplayer)->countdown >= 0)
++  (dof_enabled(pplayer)                                                 \
++   ? (WAR(pplayer, aplayer) || dof_is_source(pplayer, aplayer))         \
++   : (WAR(pplayer, aplayer) || NEVER_MET(pplayer, aplayer)              \
++      || dai_diplomacy_get(ait, pplayer, aplayer)->countdown >= 0))
+ #define UNITTYPE_COSTS(ut)						\
+   (ut->pop_cost * 3 + ut->happy_cost					\
+    + ut->upkeep[O_SHIELD] + ut->upkeep[O_FOOD] + ut->upkeep[O_GOLD])

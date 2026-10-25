@@ -1,0 +1,159 @@
+--- orig/ai_default_daidiplomacy.c	2026-10-25 01:40:00.000000000 +0200
++++ work/daidiplomacy.c	2026-10-25 02:28:47.970094364 +0100
+@@ -70,6 +70,8 @@
+ #include "daiplayer.h"
+ #include "daiunit.h"
+ 
++#include "dofpolicy.h"
++
+ #include "daidiplomacy.h"
+ 
+ #define LOG_DIPL LOG_DEBUG
+@@ -834,6 +836,16 @@
+   int want = 0, fear = 0, distance = 0, settlers = 0, cities = 0;
+   struct player_spaceship *ship = &target->spaceship;
+ 
++  /* DOF (M1): a peaceful neighbour is an option, not a prize. A DOF seat has
++   * no war desire against anyone it is not already fighting and that has not
++   * been observed attacking somebody. Everything below is the stock "profit
++   * from war" calculation and stays untouched for the classic arm. */
++  if (dof_enabled(pplayer) && !WAR(pplayer, target)
++      && !dof_is_source(pplayer, target)) {
++    dof_count_suppressed(pplayer, target);
++    return 0;
++  }
++
+   city_list_iterate(target->cities, pcity) {
+     want += 100; /* base city want */
+     want += city_size_get(pcity) * 20;
+@@ -992,6 +1004,10 @@
+ {
+   bool wants_ceasefire = FALSE;
+ 
++  /* DOF (M0): the first contact is journalled; a stranger is MET, not
++   * hostile. The love randomisation below stays untouched (classic arm). */
++  dof_journal_contact(pplayer, aplayer);
++
+   /* Randomize initial love */
+   pplayer->ai_common.love[player_index(aplayer)] += 2 - fc_rand(5);
+ 
+@@ -1342,6 +1358,14 @@
+   fc_assert_ret(pplayer != target);
+   fc_assert_ret(target->is_alive);
+ 
++  /* DOF (M1): last line of defence. Whatever path led here, a DOF seat does
++   * not open a war against a player that has not been observed attacking. */
++  if (dof_enabled(pplayer) && !dof_is_source(pplayer, target)) {
++    dof_journal_blocked(pplayer, target, "declare_war");
++    adip->countdown = -1;
++    return;
++  }
++
+   switch (reason) {
+   case DAI_WR_SPACE:
+     dai_diplo_notify(target, _("*%s (AI)* Space will never be yours."),
+@@ -1422,6 +1446,10 @@
+     }
+   }
+ 
++  /* DOF (M1) instrument: every AI declaration is journalled with the arm
++   * flag, so that "no wars" can be told apart from "wars started by others". */
++  dof_journal_declare(pplayer, target, (int) reason);
++
+   /* This will take us straight to war. */
+   while (player_diplstate_get(pplayer, target)->type != DS_WAR) {
+     if (pplayer_can_cancel_treaty(pplayer, target) != DIPL_OK) {
+@@ -1630,6 +1658,10 @@
+           || pplayers_at_war(pplayer, aplayer)) {
+         continue;
+       }
++      /* DOF (M1): stopping a space race by war is still an unprovoked attack. */
++      if (dof_enabled(pplayer) && !dof_is_source(pplayer, aplayer)) {
++        continue;
++      }
+ 
+       /* A spaceship victory is always one single player's or team's victory */
+       if (aplayer->spaceship.state == SSHIP_LAUNCHED
+@@ -1679,6 +1711,12 @@
+     if (NEVER_MET(pplayer, aplayer)) {
+       continue;
+     }
++    /* DOF (M1): "we are out of targets, so what?" is exactly the behaviour
++     * the policy removes. A DOF seat never picks a victim among players that
++     * have not been observed attacking anybody. */
++    if (dof_enabled(pplayer) && !dof_is_source(pplayer, aplayer)) {
++      continue;
++    }
+     turns = game.info.turn;
+     turns -= player_diplstate_get(pplayer, aplayer)->first_contact_turn;
+     if (WAR(pplayer, aplayer)) {
+@@ -1717,6 +1755,27 @@
+     war_countdown(ait, pplayer, target, 4 + map_size_checked(), war_reason);
+   }
+ 
++  /*** DOF (M3): an observed attacker is answered by war ***/
++
++  if (dof_enabled(pplayer)) {
++    players_iterate_alive(aplayer) {
++      struct ai_dip_intel *adip = dai_diplomacy_get(ait, pplayer, aplayer);
++
++      if (aplayer == pplayer
++          || adip->countdown >= 0
++          || WAR(pplayer, aplayer)
++          || NEVER_MET(pplayer, aplayer)) {
++        continue;
++      }
++      if (dof_is_source(pplayer, aplayer)) {
++        /* No profit calculation and no hatred: the source is answered. */
++        dof_journal_rule(pplayer, aplayer, "war_on_source");
++        war_countdown(ait, pplayer, aplayer, 2 + map_size_checked(),
++                      DAI_WR_BEHAVIOUR);
++      }
++    } players_iterate_alive_end;
++  }
++
+   /*** Declare war - against enemies of allies ***/
+ 
+   players_iterate_alive(aplayer) {
+@@ -1726,6 +1785,9 @@
+         && adip->countdown == -1
+         && !adip->is_allied_with_ally
+         && !pplayers_at_war(pplayer, aplayer)
++        /* DOF (M1): joining a war against a third party is still opening a
++         * war. Only a collapse source is a legitimate target. */
++        && (!dof_enabled(pplayer) || dof_is_source(pplayer, aplayer))
+         && (player_diplstate_get(pplayer, aplayer)->type != DS_CEASEFIRE
+             || fc_rand(5) < 1)) {
+       DIPLO_LOG(ait, LOG_DEBUG, pplayer, aplayer, "plans war to help ally %s",
+@@ -1789,7 +1851,9 @@
+       /* No peace to enemies of our allies... or pointless peace. */
+       if (is_barbarian(aplayer)
+           || aplayer == pplayer
+-          || aplayer == target     /* no mercy */
++          /* DOF (M1): "no mercy" turns a war into a permanent state. A DOF
++           * seat keeps offering peace to everyone, including its target. */
++          || (aplayer == target && !dof_enabled(pplayer))
+           || adip->countdown >= 0
+           || !could_meet_with_player(pplayer, aplayer)) {
+         continue;
+@@ -1927,6 +1991,20 @@
+       case DS_NO_CONTACT: /* but we do have embassy! weird. */
+       case DS_WAR:
+         clause.type = CLAUSE_CEASEFIRE;
++        /* DOF (M3): peace is not bought. Once the source flag has expired the
++         * war has no object left, so the ceasefire is offered regardless of
++         * how much this opponent is disliked. */
++        if (dof_enabled(pplayer) && !dof_is_source(pplayer, aplayer)) {
++          dof_journal_rule(pplayer, aplayer, "ceasefire_offer");
++          clear_old_treaty(pplayer, aplayer);
++          dai_diplomacy_suggest(pplayer, aplayer, CLAUSE_CEASEFIRE, FALSE, 0);
++          adip->asked_about_ceasefire = is_human(aplayer) ? 9 : 0;
++          dai_diplo_notify(aplayer,
++                           _("*%s (AI)* We have no quarrel left with you. "
++                             "Let the killing stop."),
++                           player_name(pplayer));
++          break;
++        }
+         if ((is_human(aplayer) && adip->asked_about_ceasefire > 0)
+             || dai_goldequiv_clause(ait, pplayer, aplayer, &clause,
+                                     FALSE, DS_CEASEFIRE) < 0) {

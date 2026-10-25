@@ -1,0 +1,20 @@
+--- orig/ai_classic_classicai.c	2024-01-04 04:46:54.000000000 +0100
++++ work/classicai.c	2026-10-25 02:34:23.136345834 +0200
+@@ -37,6 +37,8 @@
+ #include "daitools.h"
+ #include "daiunit.h"
+ 
++#include "dofpolicy.h"
++
+ #include "classicai.h"
+ 
+ /* This function is only needed as symbol in module. Nevertheless
+@@ -702,6 +704,8 @@
+   ai->funcs.treaty_evaluate = cai_treaty_evaluate;
+   ai->funcs.treaty_accepted = cai_treaty_accepted;
+   ai->funcs.first_contact = cai_diplomacy_first_contact;
++  /* DOF: per-seat console ("/aicmd <player> dof on|off|status"). */
++  ai->funcs.player_console = dof_player_console;
+   ai->funcs.incident = cai_incident;
+ 
+   ai->funcs.log_fragment_city = cai_city_log;

@@ -1,0 +1,28 @@
+--- orig/daisettler.c	2024-01-04 04:46:54.000000000 +0100
++++ work/daisettler.c	2026-10-25 02:01:06.263861450 +0100
+@@ -1144,7 +1144,11 @@
+     TIMING_LOG(AIT_SETTLERS, TIMER_START);
+     result = find_best_city_placement(ait, punit, TRUE, FALSE);
+     TIMING_LOG(AIT_SETTLERS, TIMER_STOP);
+-    log_normal("-------------best_impr---------- %f:%f", result->result, best_impr)
++    /* DOF: this debug print of the web fork dereferences a NULL cityresult
++     * (find_best_city_placement may legally return NULL), which segfaults
++     * every long game once the land saturates. */
++    log_normal("-------------best_impr---------- %f:%f",
++               result != NULL ? result->result : 0.0, best_impr)
+ 
+     if (result && result->result > best_impr) {
+       UNIT_LOG(LOG_DEBUG, punit, "city want " ADV_WANT_PRINTF, result->result);
+@@ -1618,7 +1622,11 @@
+     TIMING_LOG(AIT_SETTLERS, TIMER_START);
+     result = find_assistant_best_city_placement(ait, punit, TRUE, FALSE);
+     TIMING_LOG(AIT_SETTLERS, TIMER_STOP);
+-    log_normal("-------------best_impr---------- %f:%f", result->result, best_impr)
++    /* DOF: this debug print of the web fork dereferences a NULL cityresult
++     * (find_best_city_placement may legally return NULL), which segfaults
++     * every long game once the land saturates. */
++    log_normal("-------------best_impr---------- %f:%f",
++               result != NULL ? result->result : 0.0, best_impr)
+ 
+     if (result && result->result > best_impr) {
+       /* Go make a city! */
