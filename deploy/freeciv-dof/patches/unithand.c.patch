@@ -1,0 +1,50 @@
+--- orig/server_unithand.c
++++ work/unithand.c
+@@ -78,6 +78,9 @@
+ /* server/scripting */
+ #include "script_server.h"
+ 
++/* ai/default */
++#include "dofpolicy.h"
++
+ #include "unithand.h"
+ 
+ /* An explanation why an action isn't enabled. */
+@@ -3363,6 +3366,11 @@
+   struct unit *punit = NULL;
+   struct city *pcity = NULL;
+ 
++  /* DOF: remember the acting unit, so that an incident is attributed to the
++   * unit that performed the attack and not to its whole nation. The ledger
++   * accepts it only when the unit belongs to the reported offender. */
++  dof_set_acting_unit(actor_unit);
++
+   if (!action_id_exists(action_type)) {
+     /* Non existing action */
+     log_error("unit_perform_action() the action %d doesn't exist.",
+@@ -3423,6 +3431,25 @@
+     break;
+   }
+ 
++  /* DOF: record the attack by the acting unit itself. A war-time attack gives
++   * no casus belli and therefore no incident, but the ledger needs to know
++   * which unit keeps attacking, not which nation it belongs to. */
++  if (action_has_result(paction, ACTRES_ATTACK)
++      || action_has_result(paction, ACTRES_BOMBARD)) {
++    struct player *dof_victim = NULL;
++
++    if (action_get_target_kind(paction) == ATK_UNIT && punit != NULL) {
++      dof_victim = unit_owner(punit);
++    } else if (pcity != NULL) {
++      dof_victim = city_owner(pcity);
++    } else if (target_tile != NULL && tile_owner(target_tile) != NULL) {
++      dof_victim = tile_owner(target_tile);
++    }
++    if (dof_victim != NULL && dof_victim != pplayer) {
++      dof_note_unit_attack(actor_unit, dof_victim);
++    }
++  }
++
+   /* Server side sub target assignment */
+   if (paction->target_complexity == ACT_TGT_COMPL_FLEXIBLE
+       && sub_tgt_id_incoming == NO_TARGET) {

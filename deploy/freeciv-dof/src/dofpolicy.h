@@ -36,6 +36,7 @@ extern "C" {
 
 struct player;
 struct action;
+struct unit;
 
 /* Turns during which an observed attacker keeps the collapse-source flag. */
 #define DOF_SOURCE_HORIZON 20
@@ -57,6 +58,24 @@ bool dof_is_source(const struct player *pplayer,
  * journal. */
 bool dof_source_is_third_party(const struct player *pplayer,
                                const struct player *other);
+
+/* Is THIS unit a collapse source for "pplayer"? The unit itself performed an
+ * attack on somebody "pplayer" knows and is still alive: the source of
+ * collapse is the unit, not the nation. */
+bool dof_unit_is_source(const struct player *pplayer,
+                        const struct unit *punit);
+
+/* How many living marked units of "owner" does "pplayer" know about? */
+int dof_source_unit_count(const struct player *pplayer,
+                          const struct player *owner);
+
+/* Remember the unit that performs the current action (server/unithand.c). */
+void dof_set_acting_unit(const struct unit *punit);
+
+/* An attack performed by a unit on a player, recorded with the unit itself.
+ * War-time attacks carry no casus belli, so this is the only way the ledger
+ * learns which units keep attacking. */
+void dof_note_unit_attack(const struct unit *punit, struct player *victim);
 
 /* Journal: first contact with a stranger. */
 void dof_journal_contact(struct player *pplayer, struct player *other);

@@ -1,0 +1,25 @@
+--- orig/ai_default_daiunit.c
++++ work/daiunit.c
+@@ -81,6 +81,9 @@
+ #include "daiplayer.h"
+ #include "daitools.h"
+ 
++/* ai/default */
++#include "dofpolicy.h"
++
+ #include "daiunit.h"
+ 
+ 
+@@ -485,6 +488,12 @@
+       double chance = unit_win_chance(nmap, punit, pdef, NULL);
+       int desire = avg_benefit(benefit, loss, chance);
+ 
++      /* DOF: the collapse source is a unit, not a nation. A unit that was
++       * observed attacking somebody this seat knows is hunted first. */
++      if (dof_enabled(pplayer) && dof_unit_is_source(pplayer, pdef)) {
++        desire *= 3;
++      }
++
+       /* No need to amortize, our operation takes one turn. */
+       UNIT_LOG(LOG_DEBUG, punit, "Rampage: Desire %d to kill %s(%d,%d)",
+                desire,

@@ -42,6 +42,8 @@
 #include "ai.h"
 #include "game.h"
 #include "player.h"
+#include "unit.h"
+#include "unittype.h"
 
 #include "dofpolicy.h"
 
@@ -73,16 +75,41 @@ static struct {
 /* Turns on which a pair's war desire was zeroed by the policy. */
 static unsigned short dof_suppressed[MAX_NUM_PLAYERS][MAX_NUM_PLAYERS];
 
-/* Collapse-source ledger: source_until[attacker][victim] = turn of expiry. */
-static int dof_source_until[MAX_NUM_PLAYERS][MAX_NUM_PLAYERS];
+/* Collapse-source ledger, one entry per attacking UNIT. The source of collapse
+ * is the unit that performed the attack, not the nation it belongs to: the
+ * response is aimed at those units and ends when they are gone. */
+#define DOF_MAX_INCIDENTS 512
+
+struct dof_incident {
+  int unit_id;    /* 0 when the incident names no unit (fallback) */
+  int owner;      /* player index of the attacker */
+  int victim;     /* player index of the victim */
+  int turn;       /* turn of the attack */
+  bool used;
+  bool gone_logged;
+};
+
+static struct dof_incident dof_incidents[DOF_MAX_INCIDENTS];
+static int dof_incident_next = 0;
+
+/* Who started the current conflict between two players: the side that attacked
+ * first. A counter-attack by the victim is defence and never makes a source,
+ * otherwise every war would criminalise both sides. */
+static int dof_pair_aggressor[MAX_NUM_PLAYERS][MAX_NUM_PLAYERS];
+static int dof_pair_turn[MAX_NUM_PLAYERS][MAX_NUM_PLAYERS];
+static bool dof_pair_init = FALSE;
 static bool dof_ledger_reset = FALSE;
 
-/* Derived view, rebuilt once per turn: known_source[me][attacker] is TRUE when
- * "attacker" has a live flag against somebody "me" knows. This is the
- * solidarity reading: an agent that can tell the aggressor from the defender
- * treats the aggressor as a collapse source even when it was not the victim. */
+/* Unit performing an action right now, set by server/unithand.c. */
+static int dof_acting_unit_id = 0;
+
+/* Live subset of the ledger for this turn, plus the derived per-seat view
+ * known_source[me][attacker]: the attacker still has a living marked unit
+ * against somebody "me" knows, so "me" can tell the aggressor from the victim
+ * and acts against the aggressor (solidarity). */
+static struct dof_incident dof_live[DOF_MAX_INCIDENTS];
+static int dof_live_count = -1;
 static bool dof_known_source[MAX_NUM_PLAYERS][MAX_NUM_PLAYERS];
-static int dof_known_source_turn = -1;
 
 /**********************************************************************//**
   A policy file that appeared later than the last read is re-parsed.
@@ -214,17 +241,26 @@ void dof_policy_reload(void)
   /* Новая партия в том же процессе (движок живёт с --keep, номер хода
    * пошёл назад): источники прошлой игры не должны переехать в новую. */
   if (game.info.turn < dof_last_turn) {
-    memset(dof_source_until, 0, sizeof(dof_source_until));
+    memset(dof_incidents, 0, sizeof(dof_incidents));
+    memset(dof_live, 0, sizeof(dof_live));
     memset(dof_suppressed, 0, sizeof(dof_suppressed));
     memset(dof_known_source, 0, sizeof(dof_known_source));
-    dof_known_source_turn = -1;
+    memset(dof_pair_aggressor, 0, sizeof(dof_pair_aggressor));
+    memset(dof_pair_turn, 0, sizeof(dof_pair_turn));
+    dof_pair_init = FALSE;
+    dof_incident_next = 0;
+    dof_live_count = -1;
+    dof_acting_unit_id = 0;
     dof_policy.loaded = FALSE;
     dof_checked_turn = -1;
   }
   dof_last_turn = game.info.turn;
 
   if (!dof_ledger_reset) {
-    memset(dof_source_until, 0, sizeof(dof_source_until));
+    memset(dof_incidents, 0, sizeof(dof_incidents));
+    memset(dof_live, 0, sizeof(dof_live));
+    dof_incident_next = 0;
+    dof_live_count = -1;
     dof_ledger_reset = TRUE;
   }
 
@@ -331,24 +367,78 @@ bool dof_enabled(const struct player *pplayer)
 }
 
 /**********************************************************************//**
-  Rebuild the derived view for this turn: who is a collapse source from the
-  point of view of each seat. A seat becomes a source for "me" when it has
-  attacked somebody "me" knows, and "me" is not the only such somebody.
-  Solidarity: the agent that can tell the aggressor from the defender acts
-  against the aggressor even when it was not the victim itself.
+  Is this recorded incident still a live source? The unit must still exist and
+  belong to the recorded attacker: the source of collapse is the unit, so the
+  response ends when the unit is gone.
 **************************************************************************/
-static void dof_known_source_refresh(void)
+static bool dof_incident_live(const struct dof_incident *inc)
 {
-  if (dof_known_source_turn == game.info.turn) {
+  struct unit *punit;
+
+  if (!inc->used || inc->owner < 0 || inc->owner >= MAX_NUM_PLAYERS
+      || inc->victim < 0 || inc->victim >= MAX_NUM_PLAYERS) {
+    return FALSE;
+  }
+
+  /* Hard cap, so that a unit hidden forever cannot keep a war alive. */
+  if (inc->turn + DOF_SOURCE_HORIZON * 3 <= game.info.turn) {
+    return FALSE;
+  }
+
+  if (inc->unit_id > 0) {
+    punit = game_unit_by_number(inc->unit_id);
+    if (punit == NULL || player_index(unit_owner(punit)) != inc->owner) {
+      return FALSE;
+    }
+  } else if (inc->turn + DOF_SOURCE_HORIZON <= game.info.turn) {
+    /* Incident that names no unit: the plain time window applies. */
+    return FALSE;
+  }
+
+  return TRUE;
+}
+
+/**********************************************************************//**
+  Rebuild the live subset once per turn and derive, for every seat, which
+  players still hold a living marked unit against somebody that seat knows.
+**************************************************************************/
+static void dof_live_refresh(void)
+{
+  int i;
+
+  if (dof_live_count >= 0) {
     return;
   }
-  dof_known_source_turn = game.info.turn;
+
+  dof_live_count = 0;
   memset(dof_known_source, 0, sizeof(dof_known_source));
 
-  players_iterate(attacker) {
-    const int atk = player_index(attacker);
+  for (i = 0; i < DOF_MAX_INCIDENTS; i++) {
+    struct dof_incident *inc = &dof_incidents[i];
+    struct player *attacker;
+    struct player *sufferer;
 
-    if (atk < 0 || atk >= MAX_NUM_PLAYERS) {
+    if (!inc->used) {
+      continue;
+    }
+
+    attacker = player_by_number(inc->owner);
+    sufferer = player_by_number(inc->victim);
+
+    if (!dof_incident_live(inc)) {
+      if (!inc->gone_logged && inc->unit_id > 0) {
+        inc->gone_logged = TRUE;
+        dof_log("unit_gone turn=%d unit=%d owner=%s victim=%s",
+                game.info.turn, inc->unit_id,
+                attacker != NULL ? player_name(attacker) : "?",
+                sufferer != NULL ? player_name(sufferer) : "?");
+      }
+      continue;
+    }
+
+    dof_live[dof_live_count++] = *inc;
+
+    if (attacker == NULL) {
       continue;
     }
 
@@ -358,30 +448,19 @@ static void dof_known_source_refresh(void)
       if (rcv < 0 || rcv >= MAX_NUM_PLAYERS || receiver == attacker) {
         continue;
       }
-      /* Unknown is not a judgement: without contact the seat cannot tell
-       * the aggressor from the defender, so nothing is concluded. */
       if (dof_never_met(receiver, attacker)) {
         continue;
       }
-
-      players_iterate(victim) {
-        const int vic = player_index(victim);
-
-        if (vic < 0 || vic >= MAX_NUM_PLAYERS || victim == attacker) {
-          continue;
-        }
-        if (dof_source_until[atk][vic] > game.info.turn
-            && !dof_never_met(receiver, victim)) {
-          dof_known_source[rcv][atk] = TRUE;
-          break;
-        }
-      } players_iterate_end;
+      if (sufferer != NULL && !dof_never_met(receiver, sufferer)) {
+        dof_known_source[rcv][inc->owner] = TRUE;
+      }
     } players_iterate_end;
-  } players_iterate_end;
+  }
 }
 
 /**********************************************************************//**
-  Is "other" a collapse source for "pplayer"?
+  Is "other" a collapse source for "pplayer"? TRUE while at least one unit of
+  "other" that attacked somebody "pplayer" knows is still alive.
 **************************************************************************/
 bool dof_is_source(const struct player *pplayer,
                    const struct player *other)
@@ -399,20 +478,120 @@ bool dof_is_source(const struct player *pplayer,
     return FALSE;
   }
 
-  dof_known_source_refresh();
+  dof_live_refresh();
 
   return dof_known_source[me][him];
 }
 
 /**********************************************************************//**
-  Is "other" a source for "pplayer" because of an attack on a THIRD party,
-  not on "pplayer" itself? Lets the journal separate a war of solidarity
-  from a war of self-defence.
+  Is THIS unit a collapse source for "pplayer"? The unit itself performed an
+  attack on somebody "pplayer" knows and is still alive.
+**************************************************************************/
+bool dof_unit_is_source(const struct player *pplayer,
+                        const struct unit *punit)
+{
+  int i, me;
+  const struct player *owner;
+
+  if (pplayer == NULL || punit == NULL) {
+    return FALSE;
+  }
+
+  owner = unit_owner(punit);
+  if (owner == NULL || owner == pplayer) {
+    return FALSE;
+  }
+
+  me = player_index(pplayer);
+  if (me < 0 || me >= MAX_NUM_PLAYERS) {
+    return FALSE;
+  }
+  if (dof_never_met(pplayer, owner)) {
+    return FALSE;
+  }
+
+  dof_live_refresh();
+
+  for (i = 0; i < dof_live_count; i++) {
+    const struct dof_incident *inc = &dof_live[i];
+    const struct player *victim;
+
+    if (inc->unit_id != punit->id || inc->owner != player_index(owner)) {
+      continue;
+    }
+    victim = player_by_number(inc->victim);
+    if (victim == pplayer
+        || (victim != NULL && !dof_never_met(pplayer, victim))) {
+      return TRUE;
+    }
+  }
+
+  return FALSE;
+}
+
+/**********************************************************************//**
+  How many living marked units of "owner" does "pplayer" know about?
+**************************************************************************/
+int dof_source_unit_count(const struct player *pplayer,
+                          const struct player *owner)
+{
+  int i, k, me, him;
+  int seen[DOF_MAX_INCIDENTS];
+  int n = 0;
+
+  if (pplayer == NULL || owner == NULL) {
+    return 0;
+  }
+
+  me = player_index(pplayer);
+  him = player_index(owner);
+
+  if (me < 0 || him < 0 || me >= MAX_NUM_PLAYERS || him >= MAX_NUM_PLAYERS) {
+    return 0;
+  }
+  if (dof_never_met(pplayer, owner)) {
+    return 0;
+  }
+
+  dof_live_refresh();
+
+  for (i = 0; i < dof_live_count; i++) {
+    const struct dof_incident *inc = &dof_live[i];
+    const struct player *victim;
+    bool dup = FALSE;
+
+    if (inc->owner != him) {
+      continue;
+    }
+    victim = player_by_number(inc->victim);
+    if (victim == NULL) {
+      continue;
+    }
+    if (victim != pplayer && dof_never_met(pplayer, victim)) {
+      continue;
+    }
+    for (k = 0; k < n; k++) {
+      if (seen[k] == inc->unit_id) {
+        dup = TRUE;
+        break;
+      }
+    }
+    if (!dup) {
+      seen[n++] = inc->unit_id;
+    }
+  }
+
+  return n;
+}
+
+/**********************************************************************//**
+  Is "other" a source for "pplayer" only because of attacks on THIRD parties?
 **************************************************************************/
 bool dof_source_is_third_party(const struct player *pplayer,
                                const struct player *other)
 {
-  int me, him;
+  int i, me, him;
+  bool by_third = FALSE;
 
   if (pplayer == NULL || other == NULL || pplayer == other) {
     return FALSE;
@@ -425,25 +604,145 @@ bool dof_source_is_third_party(const struct player *pplayer,
     return FALSE;
   }
 
-  if (dof_source_until[him][me] > game.info.turn) {
-    return FALSE; /* attacked us: that is self-defence, not solidarity */
+  dof_live_refresh();
+
+  for (i = 0; i < dof_live_count; i++) {
+    const struct dof_incident *inc = &dof_live[i];
+    const struct player *victim;
+
+    if (inc->owner != him) {
+      continue;
+    }
+    if (inc->victim == me) {
+      return FALSE; /* attacked us: self-defence, not solidarity */
+    }
+    victim = player_by_number(inc->victim);
+    if (victim != NULL && !dof_never_met(pplayer, victim)) {
+      by_third = TRUE;
+    }
   }
 
-  {
-    players_iterate(victim) {
-      const int vic = player_index(victim);
+  return by_third;
+}
 
-      if (vic < 0 || vic >= MAX_NUM_PLAYERS || victim == other || victim == pplayer) {
-        continue;
+/**********************************************************************//**
+  Is "owner" the side that started this conflict with "victim"? Only the side
+  that attacked first is a collapse source: a counter-attack is defence, and
+  telling the aggressor from the defender is exactly what the agent must do.
+**************************************************************************/
+static bool dof_pair_is_initiator(int owner, int victim)
+{
+  if (!dof_pair_init) {
+    int i, k;
+
+    for (i = 0; i < MAX_NUM_PLAYERS; i++) {
+      for (k = 0; k < MAX_NUM_PLAYERS; k++) {
+        dof_pair_aggressor[i][k] = -1;
       }
-      if (dof_source_until[him][vic] > game.info.turn
-          && !dof_never_met(pplayer, victim)) {
-        return TRUE;
-      }
-    } players_iterate_end;
+    }
+    dof_pair_init = TRUE;
   }
 
-  return FALSE;
+  /* An old conflict is forgotten: a fresh attack starts a fresh one. */
+  if (dof_pair_turn[owner][victim] + DOF_SOURCE_HORIZON * 3
+      <= game.info.turn) {
+    dof_pair_aggressor[owner][victim] = -1;
+  }
+  if (dof_pair_turn[victim][owner] + DOF_SOURCE_HORIZON * 3
+      <= game.info.turn) {
+    dof_pair_aggressor[victim][owner] = -1;
+  }
+
+  if (dof_pair_aggressor[victim][owner] == victim) {
+    /* The other side attacked first: this is a counter-attack. */
+    dof_pair_turn[owner][victim] = game.info.turn;
+    return FALSE;
+  }
+
+  dof_pair_aggressor[owner][victim] = owner;
+  dof_pair_turn[owner][victim] = game.info.turn;
+
+  return TRUE;
+}
+
+/**********************************************************************//**
+  Record one attacking unit in the ledger and journal it. An attack performed
+  by the same unit on the same victim in the same turn is recorded once.
+**************************************************************************/
+static void dof_incident_add(int unit_id, int owner, int victim)
+{
+  struct dof_incident *inc = &dof_incidents[dof_incident_next];
+  struct player *attacker = player_by_number(owner);
+  struct player *sufferer = player_by_number(victim);
+  struct unit *punit = unit_id > 0 ? game_unit_by_number(unit_id) : NULL;
+  int i;
+
+  for (i = 0; i < DOF_MAX_INCIDENTS; i++) {
+    const struct dof_incident *old = &dof_incidents[i];
+
+    if (old->used && old->unit_id == unit_id && old->owner == owner
+        && old->victim == victim && old->turn == game.info.turn) {
+      return; /* already known: one entry per unit, victim and turn */
+    }
+  }
+
+  if (!dof_pair_is_initiator(owner, victim)) {
+    /* A counter-attack by the defending side: not a source of collapse. */
+    return;
+  }
+
+  inc->unit_id = unit_id;
+  inc->owner = owner;
+  inc->victim = victim;
+  inc->turn = game.info.turn;
+  inc->used = TRUE;
+  inc->gone_logged = FALSE;
+
+  dof_incident_next = (dof_incident_next + 1) % DOF_MAX_INCIDENTS;
+  dof_live_count = -1;
+
+  dof_log("unit_source turn=%d unit=%d utype=%s owner=%s victim=%s",
+          game.info.turn, unit_id,
+          punit != NULL ? unit_rule_name(punit) : "?",
+          attacker != NULL ? player_name(attacker) : "?",
+          sufferer != NULL ? player_name(sufferer) : "?");
+}
+
+/**********************************************************************//**
+  Remember which unit is performing an action (called from server/unithand.c).
+**************************************************************************/
+void dof_set_acting_unit(const struct unit *punit)
+{
+  dof_acting_unit_id = punit != NULL ? punit->id : 0;
+}
+
+/**********************************************************************//**
+  An attack performed by a unit on a player: record the unit itself. Called
+  directly from server/unithand.c, because a war-time attack carries no casus
+  belli and therefore never reaches call_incident().
+**************************************************************************/
+void dof_note_unit_attack(const struct unit *punit, struct player *victim)
+{
+  const struct player *owner;
+  int vi, wi;
+
+  if (punit == NULL || victim == NULL) {
+    return;
+  }
+
+  owner = unit_owner(punit);
+  if (owner == NULL || owner == victim) {
+    return;
+  }
+
+  vi = player_index(owner);
+  wi = player_index(victim);
+
+  if (vi < 0 || wi < 0 || vi >= MAX_NUM_PLAYERS || wi >= MAX_NUM_PLAYERS) {
+    return;
+  }
+
+  dof_incident_add(punit->id, vi, wi);
 }
 
 /**********************************************************************//**
@@ -599,8 +898,19 @@ void dof_ledger_note(int type, const struct action *paction,
 
   if (is_attack && vi >= 0 && vi < MAX_NUM_PLAYERS
       && wi >= 0 && wi < MAX_NUM_PLAYERS) {
-    dof_source_until[vi][wi] = game.info.turn + DOF_SOURCE_HORIZON;
-    dof_known_source_turn = -1; /* knowledge changed inside the turn */
+    /* The source is the unit that performed the act, when we know it, and the
+     * player as a fallback otherwise. */
+    if (dof_acting_unit_id > 0) {
+      struct unit *punit = game_unit_by_number(dof_acting_unit_id);
+
+      if (punit != NULL && player_index(unit_owner(punit)) == vi) {
+        dof_incident_add(dof_acting_unit_id, vi, wi);
+      } else {
+        dof_incident_add(0, vi, wi);
+      }
+    } else {
+      dof_incident_add(0, vi, wi);
+    }
   }
 
   /* Unconditional record: without it a "peaceful" run cannot be told apart
