@@ -1768,8 +1768,12 @@ void dai_diplomacy_actions(struct ai_type *ait, struct player *pplayer)
         continue;
       }
       if (dof_is_source(pplayer, aplayer)) {
-        /* No profit calculation and no hatred: the source is answered. */
-        dof_journal_rule(pplayer, aplayer, "war_on_source");
+        /* No profit calculation and no hatred: the source is answered.
+         * Solidarity: an attack on a third party the seat knows both sides of
+         * is answered the same way, and the journal keeps the two apart. */
+        dof_journal_rule(pplayer, aplayer,
+                         dof_source_is_third_party(pplayer, aplayer)
+                         ? "war_on_source_third" : "war_on_source");
         war_countdown(ait, pplayer, aplayer, 2 + map_size_checked(),
                       DAI_WR_BEHAVIOUR);
       }

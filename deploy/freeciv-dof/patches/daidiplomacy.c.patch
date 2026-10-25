@@ -1,5 +1,5 @@
---- orig/ai_default_daidiplomacy.c	2026-10-25 01:40:00.000000000 +0200
-+++ work/daidiplomacy.c	2026-10-25 02:28:47.970094364 +0100
+--- orig/ai_default_daidiplomacy.c
++++ work/daidiplomacy.c
 @@ -70,6 +70,8 @@
  #include "daiplayer.h"
  #include "daiunit.h"
@@ -87,7 +87,7 @@
      turns = game.info.turn;
      turns -= player_diplstate_get(pplayer, aplayer)->first_contact_turn;
      if (WAR(pplayer, aplayer)) {
-@@ -1717,6 +1755,27 @@
+@@ -1717,6 +1755,31 @@
      war_countdown(ait, pplayer, target, 4 + map_size_checked(), war_reason);
    }
  
@@ -104,8 +104,12 @@
 +        continue;
 +      }
 +      if (dof_is_source(pplayer, aplayer)) {
-+        /* No profit calculation and no hatred: the source is answered. */
-+        dof_journal_rule(pplayer, aplayer, "war_on_source");
++        /* No profit calculation and no hatred: the source is answered.
++         * Solidarity: an attack on a third party the seat knows both sides of
++         * is answered the same way, and the journal keeps the two apart. */
++        dof_journal_rule(pplayer, aplayer,
++                         dof_source_is_third_party(pplayer, aplayer)
++                         ? "war_on_source_third" : "war_on_source");
 +        war_countdown(ait, pplayer, aplayer, 2 + map_size_checked(),
 +                      DAI_WR_BEHAVIOUR);
 +      }
@@ -115,7 +119,7 @@
    /*** Declare war - against enemies of allies ***/
  
    players_iterate_alive(aplayer) {
-@@ -1726,6 +1785,9 @@
+@@ -1726,6 +1789,9 @@
          && adip->countdown == -1
          && !adip->is_allied_with_ally
          && !pplayers_at_war(pplayer, aplayer)
@@ -125,7 +129,7 @@
          && (player_diplstate_get(pplayer, aplayer)->type != DS_CEASEFIRE
              || fc_rand(5) < 1)) {
        DIPLO_LOG(ait, LOG_DEBUG, pplayer, aplayer, "plans war to help ally %s",
-@@ -1789,7 +1851,9 @@
+@@ -1789,7 +1855,9 @@
        /* No peace to enemies of our allies... or pointless peace. */
        if (is_barbarian(aplayer)
            || aplayer == pplayer
@@ -136,7 +140,7 @@
            || adip->countdown >= 0
            || !could_meet_with_player(pplayer, aplayer)) {
          continue;
-@@ -1927,6 +1991,20 @@
+@@ -1927,6 +1995,20 @@
        case DS_NO_CONTACT: /* but we do have embassy! weird. */
        case DS_WAR:
          clause.type = CLAUSE_CEASEFIRE;

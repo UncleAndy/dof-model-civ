@@ -1,8 +1,13 @@
 /***********************************************************************
  DOF-Core policy layer for the built-in freeciv AI (contact with strangers).
 
- Stage M0: knowledge ledger + journal + per-seat policy switch.
- Decision behaviour is NOT changed in this stage.
+ Principle: DOF-Core, https://github.com/UncleAndy/dof-core
+ Description of every engine change: DOF-AGENT.md / drafts/DOF_ENGINE_CHANGES.md
+
+ Stages: M0 knowledge ledger + journal + per-seat policy switch; M1 no war
+ without an observed attack; M2 coercion refused; M3 war of response and a
+ peace offer when the source flag expires; M4 solidarity (an attack on a
+ third party the seat knows both sides of is answered the same way).
 
  Policy switch is a file, read (and re-read on change) by the running server:
      /docker/freeciv/dof_policy.conf     (env DOF_POLICY_FILE overrides)
@@ -71,6 +76,13 @@ static unsigned short dof_suppressed[MAX_NUM_PLAYERS][MAX_NUM_PLAYERS];
 /* Collapse-source ledger: source_until[attacker][victim] = turn of expiry. */
 static int dof_source_until[MAX_NUM_PLAYERS][MAX_NUM_PLAYERS];
 static bool dof_ledger_reset = FALSE;
+
+/* Derived view, rebuilt once per turn: known_source[me][attacker] is TRUE when
+ * "attacker" has a live flag against somebody "me" knows. This is the
+ * solidarity reading: an agent that can tell the aggressor from the defender
+ * treats the aggressor as a collapse source even when it was not the victim. */
+static bool dof_known_source[MAX_NUM_PLAYERS][MAX_NUM_PLAYERS];
+static int dof_known_source_turn = -1;
 
 /**********************************************************************//**
   A policy file that appeared later than the last read is re-parsed.
@@ -204,6 +216,8 @@ void dof_policy_reload(void)
   if (game.info.turn < dof_last_turn) {
     memset(dof_source_until, 0, sizeof(dof_source_until));
     memset(dof_suppressed, 0, sizeof(dof_suppressed));
+    memset(dof_known_source, 0, sizeof(dof_known_source));
+    dof_known_source_turn = -1;
     dof_policy.loaded = FALSE;
     dof_checked_turn = -1;
   }
@@ -317,6 +331,56 @@ bool dof_enabled(const struct player *pplayer)
 }
 
 /**********************************************************************//**
+  Rebuild the derived view for this turn: who is a collapse source from the
+  point of view of each seat. A seat becomes a source for "me" when it has
+  attacked somebody "me" knows, and "me" is not the only such somebody.
+  Solidarity: the agent that can tell the aggressor from the defender acts
+  against the aggressor even when it was not the victim itself.
+**************************************************************************/
+static void dof_known_source_refresh(void)
+{
+  if (dof_known_source_turn == game.info.turn) {
+    return;
+  }
+  dof_known_source_turn = game.info.turn;
+  memset(dof_known_source, 0, sizeof(dof_known_source));
+
+  players_iterate(attacker) {
+    const int atk = player_index(attacker);
+
+    if (atk < 0 || atk >= MAX_NUM_PLAYERS) {
+      continue;
+    }
+
+    players_iterate(receiver) {
+      const int rcv = player_index(receiver);
+
+      if (rcv < 0 || rcv >= MAX_NUM_PLAYERS || receiver == attacker) {
+        continue;
+      }
+      /* Unknown is not a judgement: without contact the seat cannot tell
+       * the aggressor from the defender, so nothing is concluded. */
+      if (dof_never_met(receiver, attacker)) {
+        continue;
+      }
+
+      players_iterate(victim) {
+        const int vic = player_index(victim);
+
+        if (vic < 0 || vic >= MAX_NUM_PLAYERS || victim == attacker) {
+          continue;
+        }
+        if (dof_source_until[atk][vic] > game.info.turn
+            && !dof_never_met(receiver, victim)) {
+          dof_known_source[rcv][atk] = TRUE;
+          break;
+        }
+      } players_iterate_end;
+    } players_iterate_end;
+  } players_iterate_end;
+}
+
+/**********************************************************************//**
   Is "other" a collapse source for "pplayer"?
 **************************************************************************/
 bool dof_is_source(const struct player *pplayer,
@@ -335,7 +399,51 @@ bool dof_is_source(const struct player *pplayer,
     return FALSE;
   }
 
-  return dof_source_until[him][me] > game.info.turn;
+  dof_known_source_refresh();
+
+  return dof_known_source[me][him];
+}
+
+/**********************************************************************//**
+  Is "other" a source for "pplayer" because of an attack on a THIRD party,
+  not on "pplayer" itself? Lets the journal separate a war of solidarity
+  from a war of self-defence.
+**************************************************************************/
+bool dof_source_is_third_party(const struct player *pplayer,
+                               const struct player *other)
+{
+  int me, him;
+
+  if (pplayer == NULL || other == NULL || pplayer == other) {
+    return FALSE;
+  }
+
+  me = player_index(pplayer);
+  him = player_index(other);
+
+  if (me < 0 || him < 0 || me >= MAX_NUM_PLAYERS || him >= MAX_NUM_PLAYERS) {
+    return FALSE;
+  }
+
+  if (dof_source_until[him][me] > game.info.turn) {
+    return FALSE; /* attacked us: that is self-defence, not solidarity */
+  }
+
+  {
+    players_iterate(victim) {
+      const int vic = player_index(victim);
+
+      if (vic < 0 || vic >= MAX_NUM_PLAYERS || victim == other || victim == pplayer) {
+        continue;
+      }
+      if (dof_source_until[him][vic] > game.info.turn
+          && !dof_never_met(pplayer, victim)) {
+        return TRUE;
+      }
+    } players_iterate_end;
+  }
+
+  return FALSE;
 }
 
 /**********************************************************************//**
@@ -492,6 +600,7 @@ void dof_ledger_note(int type, const struct action *paction,
   if (is_attack && vi >= 0 && vi < MAX_NUM_PLAYERS
       && wi >= 0 && wi < MAX_NUM_PLAYERS) {
     dof_source_until[vi][wi] = game.info.turn + DOF_SOURCE_HORIZON;
+    dof_known_source_turn = -1; /* knowledge changed inside the turn */
   }
 
   /* Unconditional record: without it a "peaceful" run cannot be told apart
