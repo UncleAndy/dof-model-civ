@@ -1,5 +1,0 @@
-{"kind": "sample", "turn": 1, "unit": 101, "x": 31, "y": 8, "terrain": "Grassland", "extras": [], "output": [2, 0, 0], "valid_work": ["build_road", "irrigation", "plant"], "goto": [8, 7]}
-{"kind": "roam", "turn": 1, "unit": 101, "x": 31, "y": 8, "action": "goto_1"}
-{"kind": "sample", "turn": 2, "unit": 101, "x": 31, "y": 8, "terrain": "Grassland", "extras": [], "output": [2, 0, 0], "valid_work": ["build_road", "irrigation", "plant"], "goto": [8, 7]}
-{"kind": "roam", "turn": 2, "unit": 101, "x": 31, "y": 8, "action": "goto_2"}
-{"kind": "sample", "turn": 3, "unit": 101, "x": 32, "y": 7, "terrain": "Swamp", "extras": [], "output": [1, 0, 0], "valid_work": ["build_road", "cultivate", "plant"], "goto": [8, 7]}
