@@ -65,7 +65,9 @@ SCORE_KEYS = {
 
 RX = {
     "policy": re.compile(r"\[DOF\] policy=(\S+) turn=(\d+)"),
-    "roster": re.compile(r"\[DOF\] roster ai_seats=\[(.*)\]"),
+    # Строка состава может быть обрезана буфером лога при >12 местах, поэтому
+    # закрывающую скобку не требуем.
+    "roster": re.compile(r"\[DOF\] roster ai_seats=\[(.*)"),
     "declare": re.compile(r"\[DOF\] declare turn=(\d+) declarer=(.+?) target=(.+?) "
                           r"declarer_dof=(\d) reason=(\d)"),
     "news": re.compile(r"\[DOF\] news turn=(\d+) violator=(.+?) victim=(.+?) "
@@ -222,7 +224,7 @@ def parse_log(path):
     text = sh(f"grep -a -h -E '\\[DOF\\]|Removing player' "
               f"{d}/stdout.txt {d}/game.log 2>/dev/null").stdout
     info = {"roster": None, "policy": None, "declares": [], "news": [],
-            "blocked": 0, "suppressed": 0, "removed": []}
+            "blocked": 0, "suppressed": 0, "removed": [], "seats": {}}
     for line in text.splitlines():
         if m := re.search(r"Removing player (\S+)\.", line):
             info["removed"].append(m.group(1))
@@ -276,17 +278,29 @@ def run_game(tag, idx, args, lock, fh):
     if log["roster"]:
         for item in log["roster"].split(","):
             roster_names.add(item.split(":")[0].strip())
-    free = [n for n in nations if n.get("name") in roster_names]
+    # Состав берём из сейва: там перечислены все места партии, и он не
+    # обрезается буфером лога при большом числе игроков. Журнальный roster
+    # оставляем как есть в поле dof_roster — он может быть усечён.
+    free = [n for n in nations
+            if not n.get("is_barbarian") and n.get("name") != "Unassigned"]
+    # Варвары (пираты и сухопутные варвары) в состязании не участвуют, но их
+    # потери — это убитые варварские юниты. Считаем отдельно: без этого
+    # «убито/партию» нельзя разделить на варваров и обычные юниты.
+    barbs = [n for n in nations if n.get("is_barbarian")]
     alive_free = [n for n in free if n.get("is_alive")]
     row = {
         "tag": tag, "game": idx, "port": port, "secs": secs,
         "turns": args.turns, "aifill": args.aifill, "size": args.size,
         "policy": args.policy, "save": os.path.basename(save),
-        "players": len(roster_names) or len(free),
+        "players": len(free),
         "alive": len(alive_free),
-        "eliminated": max(0, (len(roster_names) or len(free)) - len(alive_free)),
+        "eliminated": max(0, len(free) - len(alive_free)),
         "units_killed": sum(n.get("units_killed", 0) for n in free),
         "units_lost": sum(n.get("units_lost", 0) for n in free),
+        "barb_units_lost": sum(n.get("units_lost", 0) for n in barbs),
+        "barb_units_killed": sum(n.get("units_killed", 0) for n in barbs),
+        "barb_players": len(barbs),
+        "barb_nations": [n.get("nation") for n in barbs],
         "dof_roster": log["roster"],
         "dof_declares": len(log["declares"]),
         "dof_declares_dof_seats": sum(1 for d in log["declares"] if d[3] == 1),

@@ -1,0 +1,601 @@
+arm,game,seat,nation,leader,alive,score,ncities,population_real,nunits,techs,bulbs_last_turn,science_rate,units_killed,units_lost,gold
+big_none,0,classic,Turkish,Kılıçarslan,False,1,0,0,0,0,0,60,3,5,50
+big_none,0,classic,Chinese,Wang Guangmei,True,54,2,11,20,17,5,80,11,23,123
+big_none,0,classic,German,Otto von Bismarck,True,53,2,5,10,14,3,40,49,26,110
+big_none,0,classic,Ethiopian,Tewodros II,False,0,0,0,0,0,0,60,1,5,75
+big_none,0,classic,Indonesian,Sukarno,False,0,0,0,0,0,0,60,0,5,50
+big_none,0,classic,American,John F. Kennedy,True,79,3,10,19,19,17,70,64,78,72
+big_none,0,classic,Japanese,Jimmu,True,27,1,1,8,4,0,40,41,51,151
+big_none,0,classic,Swedish,Per Albin Hansson,False,1,0,0,0,0,0,60,5,5,50
+big_none,0,classic,Russian,Aleksandr Nevsky,True,89,2,7,4,26,29,80,69,44,223
+big_none,0,classic,French,Charles Martel,True,86,4,16,24,28,13,70,27,15,549
+big_none,0,classic,Spanish,Rafael del Riego,True,56,1,1,7,20,0,40,26,46,189
+big_none,0,classic,Thai,Maha Mongkut,True,0,0,0,1,0,0,60,1,4,50
+big_none,0,classic,Iroquois,Kateri Tekakwitha,True,47,2,4,6,16,8,80,18,34,105
+big_none,0,classic,Dutch,Willem V,True,54,2,5,5,17,7,80,35,33,44
+big_none,0,classic,Arab,Al-Hakim,True,63,2,5,7,14,8,80,70,60,109
+big_none,0,classic,Austrian,Rudolf II,True,62,2,8,6,26,0,70,4,8,380
+big_none,0,classic,English,Edward Longshanks,False,1,0,0,0,0,0,60,4,5,50
+big_none,0,classic,Byzantine,Heraclius,False,14,0,0,0,3,1,60,22,19,146
+big_none,0,classic,Danish,Knud den Store,True,88,3,10,10,29,0,60,45,15,21
+big_none,0,classic,Persian,Ardashir I,True,68,2,12,8,16,13,80,56,55,32
+big_none,0,classic,Polish,Jan III Sobieski,True,79,2,13,12,26,29,70,29,25,511
+big_none,0,classic,Mongol,Börte,True,72,2,5,8,21,3,60,49,79,47
+big_none,0,classic,Khmer,Ishanavarman,False,1,0,0,0,0,0,60,4,5,50
+big_none,0,classic,Italian,Marco Minghetti,True,94,3,12,12,28,18,80,55,27,44
+big_none,0,classic,Korean,Wang Kon,True,0,0,0,1,0,0,60,1,4,50
+big_none,0,classic,Songhai,Sunni Silman Dandi,False,0,0,0,0,0,0,60,1,5,50
+big_none,0,classic,Mayan,Sac K'uk',False,1,0,0,0,0,0,60,3,5,50
+big_none,0,classic,Aztec,Ixtlilxochitl,True,0,0,0,1,0,0,60,1,4,75
+big_none,0,classic,Celtic,Keretrios,True,65,3,10,12,18,10,70,41,31,265
+big_none,0,classic,Brazilian,Juscelino Kubitscheck,False,0,0,0,0,0,0,60,1,5,50
+big_none,0,classic,Portuguese,João IV,False,1,0,0,0,0,0,60,3,5,50
+big_none,0,classic,Mali,Gao,True,27,2,5,14,5,1,40,22,49,201
+big_none,0,classic,Babylonian,Burnaburish II,True,65,4,10,18,21,12,60,19,26,217
+big_none,0,classic,Sumerian,Urukagina,False,1,0,0,0,0,0,60,3,5,50
+big_none,0,classic,Sioux,Red Cloud,True,93,4,19,20,32,40,60,14,13,11
+big_none,0,classic,Zulu,Mdlani,False,0,0,0,0,0,0,60,0,5,50
+big_none,0,classic,Indian,Subhas Chandra Bose,True,55,2,8,10,19,16,70,15,31,290
+big_none,0,classic,Inca,Thupa Inka Yupanki,True,68,1,6,6,15,0,60,76,70,302
+big_none,0,classic,Hittite,Kanis,False,0,0,0,0,0,0,60,0,5,50
+big_none,0,classic,Carthaginian,Hasdrubal Barca,True,71,2,6,19,19,0,70,60,35,264
+big_none,0,classic,Egyptian,Akhenaten,True,60,1,6,4,19,0,20,38,28,153
+big_none,0,classic,Taino,Canobaná,True,1,0,0,1,0,0,60,3,4,50
+big_none,0,classic,Polynesian,Kamehameha,True,49,2,7,16,14,6,70,18,46,199
+big_none,0,classic,Tupi,Konyan Bebe,True,54,1,7,9,14,4,60,40,50,41
+big_none,0,classic,Apache,Alchesay,False,1,0,0,0,0,0,60,4,5,50
+big_none,0,classic,Cherokee,Wilma Mankiller,True,74,4,10,16,23,20,80,35,29,456
+big_none,0,classic,Greek,Leonidas,True,25,2,5,17,5,1,40,18,35,543
+big_none,0,classic,Roman,Constantinus I,True,47,2,7,12,11,2,40,36,59,346
+big_none,0,classic,Hunnic,Bleda,False,37,0,0,0,12,2,80,27,40,325
+big_none,0,classic,Viking,Gormr Gamli,True,95,4,17,7,27,34,70,58,32,241
+big_none,1,classic,Zulu,Solomon kaDinizulu,True,37,2,5,12,9,2,60,21,61,188
+big_none,1,classic,Russian,Ivan III,False,9,0,0,0,1,0,60,16,28,321
+big_none,1,classic,Persian,Khshayarsha I,True,37,1,2,10,9,1,40,34,55,180
+big_none,1,classic,Mongol,Tokhtamysh,False,0,0,0,0,0,0,60,2,5,50
+big_none,1,classic,Korean,Chumong,True,65,2,6,9,27,20,80,8,14,168
+big_none,1,classic,Sumerian,En-Mer-Kar,True,123,5,18,19,28,0,90,38,44,323
+big_none,1,classic,Arab,Harun al-Rashid,False,0,0,0,0,0,0,60,0,5,50
+big_none,1,classic,Japanese,Hirohito,True,58,2,6,17,18,5,40,34,19,108
+big_none,1,classic,Portuguese,José,True,59,3,6,19,21,2,40,16,34,12
+big_none,1,classic,Khmer,Jayavarman VII,True,13,1,1,4,6,1,40,2,8,275
+big_none,1,classic,American,Franklin D. Roosevelt,True,113,4,20,8,28,25,80,83,74,349
+big_none,1,classic,Inca,Pachakuti Inka Yupanki,True,67,4,12,11,20,21,80,34,26,841
+big_none,1,classic,English,William the Conqueror,True,81,4,20,31,19,17,80,39,36,64
+big_none,1,classic,Viking,Gormr Gamli,False,0,0,0,0,0,0,60,1,5,75
+big_none,1,classic,Italian,Benito Mussolini,True,56,1,5,5,13,0,70,51,72,380
+big_none,1,classic,Aztec,Ahuitzotl,False,0,0,0,0,0,0,60,2,5,50
+big_none,1,classic,Byzantine,Theodora,True,2,0,0,1,0,0,60,6,4,50
+big_none,1,classic,Mayan,Sac K'uk',False,1,0,0,0,0,0,60,3,5,50
+big_none,1,classic,Brazilian,Tancredo Neves,True,66,3,11,19,21,5,80,17,31,103
+big_none,1,classic,Polish,Tadeusz Kościuszko,True,58,1,8,6,16,11,80,39,32,514
+big_none,1,classic,Iroquois,Kaintwakon,True,58,2,7,4,23,0,70,8,14,433
+big_none,1,classic,Carthaginian,Hasdrubal Barca,True,33,1,5,5,12,10,80,7,9,275
+big_none,1,classic,Thai,Pibul Songgram,False,0,0,0,0,0,0,60,1,5,50
+big_none,1,classic,Austrian,Matthias,True,24,1,2,9,7,0,40,15,25,118
+big_none,1,classic,Mali,Gao,True,68,1,6,4,21,0,70,48,28,448
+big_none,1,classic,Songhai,Askia Ishaq I,True,90,3,12,16,27,30,80,40,35,24
+big_none,1,classic,French,Richelieu,True,164,17,49,57,36,31,90,11,66,99
+big_none,1,classic,Spanish,Gáspar Melchor de Jovellanos,True,54,1,5,4,18,22,80,33,13,15
+big_none,1,classic,German,Arminius,True,96,4,15,23,21,12,70,84,46,206
+big_none,1,classic,Indian,Indira Gandhi,True,63,2,8,13,21,5,60,21,37,16
+big_none,1,classic,Sioux,Crow Dog,True,82,3,9,11,20,8,70,79,33,60
+big_none,1,classic,Dutch,Johan van Oldenbarnevelt,True,24,1,3,10,6,1,40,19,28,430
+big_none,1,classic,Egyptian,Nefertiti,True,95,3,11,20,22,16,80,98,52,111
+big_none,1,classic,Ethiopian,Tewodros II,False,0,0,0,0,0,0,60,0,5,50
+big_none,1,classic,Chinese,Wang Guangmei,False,0,0,0,0,0,0,60,1,5,50
+big_none,1,classic,Celtic,Bolgios,False,1,0,0,0,0,0,60,3,5,75
+big_none,1,classic,Turkish,Süleyman Demirel,False,13,0,0,0,1,0,60,27,24,63
+big_none,1,classic,Indonesian,Megawati Sukarnoputri,True,62,3,9,16,22,10,80,10,16,221
+big_none,1,classic,Babylonian,Hammurabi,False,0,0,0,0,0,0,60,2,5,50
+big_none,1,classic,Hittite,Hattusilis,False,13,0,0,0,4,1,60,9,26,221
+big_none,1,classic,Tupi,Konyan Bebe,True,105,6,29,22,30,43,80,26,29,74
+big_none,1,classic,Taino,Canobaná,True,58,3,12,8,21,17,80,6,6,533
+big_none,1,classic,Cherokee,Atakullakulla,True,54,2,11,10,17,14,80,18,18,59
+big_none,1,classic,Polynesian,Solomon Mamaloni,False,0,0,0,0,0,0,60,2,5,100
+big_none,1,classic,Apache,K'uu-ch'ish,True,33,2,4,6,9,7,80,19,43,178
+big_none,1,classic,Hunnic,Uldin,True,34,1,5,13,7,1,40,27,48,656
+big_none,1,classic,Swedish,Magnus Ladulås,True,76,3,8,18,20,18,80,61,60,197
+big_none,1,classic,Roman,Publius Cornelius Scipio Africanus,False,0,0,0,0,0,0,60,1,5,50
+big_none,1,classic,Greek,Solon,True,54,4,7,15,8,1,40,79,43,60
+big_none,1,classic,Danish,Valdemar III,True,85,3,9,20,21,15,70,80,47,141
+big_none,2,classic,Apache,Dos-Teh-Seh,False,1,0,0,0,0,0,60,3,5,50
+big_none,2,classic,Hunnic,Octar,True,94,4,16,14,34,48,70,19,17,11
+big_none,2,classic,Sumerian,Shulgi,True,43,1,7,5,18,10,70,1,5,164
+big_none,2,classic,Babylonian,Sharru-Kin II,True,57,2,6,7,20,6,30,26,24,346
+big_none,2,classic,Mayan,Pakal,False,0,0,0,0,0,0,60,1,5,50
+big_none,2,classic,Persian,Kurush II,False,1,0,0,0,0,0,60,3,5,50
+big_none,2,classic,Korean,Tangun,False,0,0,0,0,0,0,60,1,5,50
+big_none,2,classic,Egyptian,Akhenaten,True,53,2,5,13,20,11,80,14,10,388
+big_none,2,classic,Mali,Sakura,False,0,0,0,0,0,0,60,2,5,50
+big_none,2,classic,Swedish,Magnus Ladulås,True,121,5,34,17,39,85,70,9,26,17
+big_none,2,classic,Byzantine,Theodora,False,0,0,0,0,0,0,60,1,5,50
+big_none,2,classic,American,John Adams,False,0,0,0,0,0,0,60,1,5,75
+big_none,2,classic,Danish,Erik Glipping,True,55,2,7,25,15,5,70,37,38,371
+big_none,2,classic,Polish,Bolesław Chrobry,False,1,0,0,0,0,0,60,4,5,50
+big_none,2,classic,Arab,Fatimah,False,0,0,0,0,0,0,60,2,5,50
+big_none,2,classic,Celtic,Arktorios,True,85,3,18,22,31,33,70,11,7,35
+big_none,2,classic,Aztec,Cuauhtemoc,True,23,1,4,17,6,1,60,13,22,197
+big_none,2,classic,Carthaginian,Hannibal Barca,False,0,0,0,0,0,0,60,2,5,50
+big_none,2,classic,Dutch,Herman Willem Daendels,True,44,1,5,7,16,0,20,11,17,159
+big_none,2,classic,Portuguese,Sancho I,True,74,3,13,16,21,0,70,30,18,199
+big_none,2,classic,Inca,Atawallpa,True,1,0,0,1,0,0,60,5,4,50
+big_none,2,classic,Mongol,Tolui,True,97,3,18,14,33,12,70,26,20,110
+big_none,2,classic,Iroquois,Kaintwakon,False,0,0,0,0,0,0,60,1,5,50
+big_none,2,classic,Songhai,Askia Mohammad Benkan,True,0,0,0,3,0,0,60,1,2,50
+big_none,2,classic,Thai,Rama Thibodi,False,1,0,0,0,0,0,60,5,5,50
+big_none,2,classic,Japanese,Jimmu,True,34,1,2,9,7,0,40,47,20,378
+big_none,2,classic,English,John Lackland,True,97,3,15,12,32,0,0,38,32,382
+big_none,2,classic,Khmer,Jayavarman VII,True,19,1,2,9,2,0,40,31,26,368
+big_none,2,classic,Turkish,İsmail Enver,False,0,0,0,0,0,0,60,1,5,50
+big_none,2,classic,Brazilian,Getúlio Vargas,True,110,9,32,28,29,85,90,32,31,355
+big_none,2,classic,Austrian,Rudolf II,True,61,2,9,9,17,0,70,39,39,282
+big_none,2,classic,Hittite,Muwatallis,True,50,3,8,11,18,0,40,8,20,1352
+big_none,2,classic,Spanish,Rafael del Riego,True,74,3,12,7,27,25,80,18,17,132
+big_none,2,classic,French,Louis Philippe,True,55,2,5,10,16,11,80,40,34,273
+big_none,2,classic,Chinese,Wang Guangmei,True,85,3,14,23,24,22,80,36,72,177
+big_none,2,classic,Sioux,Waneta,True,75,3,11,18,19,13,80,55,60,172
+big_none,2,classic,Zulu,Ntombhela kaMalandela,True,16,1,3,14,4,1,60,10,11,241
+big_none,2,classic,Italian,Giuseppe Garibaldi,False,1,0,0,0,0,0,60,3,5,50
+big_none,2,classic,German,Alarich,False,0,0,0,0,0,0,60,1,5,50
+big_none,2,classic,Indonesian,Megawati Sukarnoputri,True,67,2,7,10,21,0,70,37,38,194
+big_none,2,classic,Ethiopian,Tewodros II,True,33,2,11,11,10,5,60,5,9,731
+big_none,2,classic,Indian,Shivaji,True,101,5,13,17,31,0,40,51,43,26
+big_none,2,classic,Polynesian,Solomon Mamaloni,True,79,4,9,16,20,18,80,66,41,126
+big_none,2,classic,Cherokee,Atakullakulla,True,65,1,1,8,18,1,40,64,58,242
+big_none,2,classic,Taino,Hayuya,True,65,2,9,8,21,18,80,31,35,609
+big_none,2,classic,Tupi,Jugasu,False,2,0,0,0,0,0,60,7,5,50
+big_none,2,classic,Russian,Vladimir Lenin,True,52,2,9,8,16,11,80,19,33,289
+big_none,2,classic,Greek,Leonidas,False,0,0,0,0,0,0,60,1,5,50
+big_none,2,classic,Roman,Septimius Severus,False,0,0,0,0,0,0,60,2,5,50
+big_none,2,classic,Viking,Gormr Gamli,True,69,3,7,17,10,1,30,93,101,1032
+big_none,3,classic,Arab,Fatimah,True,77,5,12,17,16,11,70,75,64,203
+big_none,3,classic,Aztec,Itzcoatl,False,45,0,0,0,17,0,70,22,26,151
+big_none,3,classic,Inca,Pachakuti Inka Yupanki,True,53,1,4,3,21,0,10,13,18,15
+big_none,3,classic,Japanese,Jimmu,True,64,3,12,11,19,9,60,28,46,122
+big_none,3,classic,Swedish,Gustav Vasa,True,52,1,4,5,17,0,60,27,40,332
+big_none,3,classic,Mayan,Tekun Umam,False,1,0,0,0,0,0,60,3,5,50
+big_none,3,classic,English,Oliver Cromwell,True,107,8,32,21,30,76,90,21,11,64
+big_none,3,classic,Zulu,Ndaba kaMageba,True,32,3,7,23,8,1,40,18,9,30
+big_none,3,classic,Mali,Sakura,True,142,5,19,21,34,0,70,87,65,458
+big_none,3,classic,Carthaginian,Hannibal Barca,True,48,2,8,26,10,4,40,34,73,632
+big_none,3,classic,French,François Mitterrand,False,2,0,0,0,0,0,60,6,5,50
+big_none,3,classic,Mongol,Sübeedei,True,46,2,7,11,12,0,60,26,41,410
+big_none,3,classic,Austrian,Maximilian II,True,36,1,4,10,12,3,70,13,38,325
+big_none,3,classic,Italian,Luigi Facta,False,0,0,0,0,0,0,60,2,5,50
+big_none,3,classic,Persian,Shapur I,True,1,0,0,1,0,0,60,3,4,50
+big_none,3,classic,Danish,Knud den Store,False,0,0,0,0,0,0,60,1,5,50
+big_none,3,classic,American,Franklin D. Roosevelt,False,0,0,0,0,0,0,60,1,5,50
+big_none,3,classic,Portuguese,António de Oliveira Salazar,False,1,0,0,0,0,0,60,4,5,50
+big_none,3,classic,Chinese,Chen Duxiu,False,15,0,0,0,6,1,60,5,13,148
+big_none,3,classic,Sioux,Red Cloud,False,0,0,0,0,0,0,60,1,5,50
+big_none,3,classic,Dutch,Willem I,False,0,0,0,0,0,0,60,1,5,50
+big_none,3,classic,Ethiopian,Tewodros II,False,1,0,0,0,0,0,60,3,10,124
+big_none,3,classic,Turkish,Osman I,True,21,1,3,13,5,1,40,16,21,1163
+big_none,3,classic,Korean,Munmu,True,55,2,9,11,19,12,80,12,11,412
+big_none,3,classic,German,Willy Brandt,True,77,3,10,13,21,13,60,51,52,11
+big_none,3,classic,Polish,Kazimierz Wielki,False,1,0,0,0,0,0,60,3,5,50
+big_none,3,classic,Byzantine,Justinianus I,True,96,4,16,12,29,23,80,50,35,868
+big_none,3,classic,Khmer,Jayavedi,False,29,0,0,0,4,1,60,61,22,360
+big_none,3,classic,Iroquois,Hiawatha,True,83,6,25,32,23,29,70,20,25,31
+big_none,3,classic,Thai,Pibul Songgram,False,0,0,0,0,0,0,60,2,5,50
+big_none,3,classic,Indian,Jawaharlal Nehru,True,81,3,8,12,21,16,80,64,73,57
+big_none,3,classic,Indonesian,Megawati Sukarnoputri,True,51,2,6,10,13,11,80,37,56,452
+big_none,3,classic,Hunnic,Bleda,True,56,1,4,10,16,0,60,52,14,545
+big_none,3,classic,Babylonian,Burnaburish II,True,63,3,11,11,18,12,80,35,21,95
+big_none,3,classic,Spanish,Fernando VII,True,67,1,2,5,17,1,40,64,76,285
+big_none,3,classic,Egyptian,Akhenaten,True,19,1,1,7,6,1,60,16,14,958
+big_none,3,classic,Taino,Hayuya,True,62,2,6,19,18,3,40,40,35,195
+big_none,3,classic,Sumerian,Ibbi-Sin,False,0,0,0,0,0,0,60,2,5,75
+big_none,3,classic,Hittite,Suppiluliumas,True,34,3,8,17,6,1,40,25,46,607
+big_none,3,classic,Songhai,Askia Ishaq I,True,87,3,13,17,20,28,80,75,60,32
+big_none,3,classic,Celtic,Bolgios,True,121,3,32,13,40,0,60,23,8,48
+big_none,3,classic,Brazilian,Deodoro da Fonseca,False,1,0,0,0,0,0,60,4,5,50
+big_none,3,classic,Cherokee,Wilma Mankiller,False,0,0,0,0,0,0,60,2,5,50
+big_none,3,classic,Apache,Dos-Teh-Seh,False,1,0,0,0,0,0,60,3,5,50
+big_none,3,classic,Tupi,Konyan Bebe,False,0,0,0,0,0,0,60,2,5,50
+big_none,3,classic,Polynesian,Solomon Mamaloni,False,0,0,0,0,0,0,60,2,5,50
+big_none,3,classic,Greek,Alkibiades,True,73,3,11,9,23,18,80,35,43,237
+big_none,3,classic,Roman,Livia Drusilla,True,51,2,5,12,17,15,70,26,29,617
+big_none,3,classic,Viking,Eiríkr,True,50,1,7,10,19,10,70,8,8,163
+big_none,3,classic,Russian,Vladimir Monomakh,True,66,2,7,10,18,9,80,55,38,133
+big_none,4,classic,Aztec,Ixtlilxochitl,False,10,0,0,0,2,1,60,16,17,105
+big_none,4,classic,Persian,Kurush II,False,0,0,0,0,0,0,60,1,5,75
+big_none,4,classic,Korean,Munmu,True,25,1,3,7,5,1,40,27,35,88
+big_none,4,classic,Portuguese,Maria II,True,33,2,7,10,12,8,70,5,4,797
+big_none,4,classic,Arab,Umar,True,77,1,5,10,19,3,60,83,50,221
+big_none,4,classic,Inca,Manqo Qhapaq,False,0,0,0,0,0,0,60,1,5,50
+big_none,4,classic,Swedish,Olof Skötkonung,True,72,3,14,22,22,24,60,27,46,71
+big_none,4,classic,Mongol,Chinggis,True,63,1,3,7,9,1,40,109,65,372
+big_none,4,classic,Iroquois,Thayendanegea,False,0,0,0,0,0,0,60,2,5,50
+big_none,4,classic,German,Otto I,True,111,9,35,53,25,29,60,46,52,22
+big_none,4,classic,French,Charles Martel,False,1,0,0,0,0,0,60,5,5,75
+big_none,4,classic,Austrian,Karl Renner,True,39,2,3,7,6,1,40,53,73,17
+big_none,4,classic,Zulu,Senzangakhona kaJama,True,48,2,7,13,19,9,80,4,7,15
+big_none,4,classic,Byzantine,Theodora,True,112,9,32,44,28,0,70,29,51,68
+big_none,4,classic,Brazilian,Getúlio Vargas,False,14,0,0,0,2,0,60,25,28,345
+big_none,4,classic,English,Oliver Cromwell,True,40,2,7,18,7,1,40,43,44,175
+big_none,4,classic,Thai,Pibul Songgram,True,33,2,3,16,7,0,40,24,62,5
+big_none,4,classic,Danish,Christian IV,True,103,6,17,30,20,13,70,111,68,69
+big_none,4,classic,Chinese,Wang Guangmei,True,25,1,3,9,8,6,80,9,30,336
+big_none,4,classic,Russian,Ekaterina II,True,76,3,8,16,20,17,80,58,63,18
+big_none,4,classic,Spanish,Carlos III,False,0,0,0,0,0,0,60,1,5,50
+big_none,4,classic,Mayan,Kan Ek',True,0,0,0,2,0,0,60,2,3,50
+big_none,4,classic,Japanese,Jimmu,False,0,0,0,0,0,0,60,2,5,50
+big_none,4,classic,Dutch,Johan Rudolph Thorbecke,True,81,4,15,14,24,22,50,36,35,21
+big_none,4,classic,Khmer,Jayavarman II,True,92,4,19,12,29,0,70,29,24,131
+big_none,4,classic,Mali,Gao,True,56,2,8,11,10,3,40,66,61,356
+big_none,4,classic,Turkish,Osman I,False,6,0,0,0,3,0,60,1,5,169
+big_none,4,classic,Hittite,Anittas,True,99,4,22,18,31,42,70,31,25,26
+big_none,4,classic,Polish,Józef Piłsudski,False,0,0,0,0,0,0,60,1,5,50
+big_none,4,classic,Ethiopian,Zoskales,True,64,2,6,9,17,9,80,47,81,254
+big_none,4,classic,Indonesian,Suharto,False,0,0,0,0,0,0,60,2,5,50
+big_none,4,classic,American,Woodrow Wilson,True,26,1,2,8,5,1,40,31,39,39
+big_none,4,classic,Sioux,Big Eagle,True,61,2,5,9,21,0,70,21,48,284
+big_none,4,classic,Songhai,Sonni Ali,True,84,3,9,12,26,6,40,53,48,59
+big_none,4,classic,Italian,Vittorio Emanuele II,True,56,1,5,5,19,4,60,23,52,443
+big_none,4,classic,Indian,Shivaji,False,1,0,0,0,0,0,60,3,5,75
+big_none,4,classic,Babylonian,Nabu-Nasir,True,47,1,1,3,18,2,60,24,28,463
+big_none,4,classic,Carthaginian,Dido,True,44,2,6,9,13,5,50,25,19,35
+big_none,4,classic,Sumerian,Shulgi,False,0,0,0,0,0,0,60,2,5,50
+big_none,4,classic,Celtic,Talorgos,True,89,6,17,25,26,33,80,32,49,184
+big_none,4,classic,Egyptian,Tutankhamun,True,73,2,8,13,22,6,50,41,46,19
+big_none,4,classic,Tupi,Tibiriça,True,52,2,6,8,12,8,80,48,61,142
+big_none,4,classic,Apache,Góyą́ń,True,84,4,13,15,28,32,80,22,23,397
+big_none,4,classic,Taino,Loquillo,True,62,3,7,17,21,16,80,24,18,88
+big_none,4,classic,Polynesian,Malietoa Tanumafili,False,0,0,0,0,0,0,60,2,5,50
+big_none,4,classic,Cherokee,Sequoyah,False,69,0,0,0,19,0,60,76,55,61
+big_none,4,classic,Roman,Octavianus,False,0,0,0,0,0,0,60,2,5,50
+big_none,4,classic,Greek,Megas Alexandros,True,82,3,12,13,27,31,80,34,15,34
+big_none,4,classic,Hunnic,Octar,True,40,3,4,11,15,9,70,10,26,444
+big_none,4,classic,Viking,Gormr Gamli,True,59,3,7,12,9,2,40,86,58,16
+big_none,5,classic,Babylonian,Tukulti-Apil-Eshara III,True,50,2,4,9,15,8,80,40,21,51
+big_none,5,classic,Greek,Alexandros Molossus,False,0,0,0,0,0,0,60,2,5,50
+big_none,5,classic,Roman,Tiberius Sempronius Gracchus,True,44,1,5,8,12,0,70,35,43,44
+big_none,5,classic,Carthaginian,Hamilcar Barca,True,94,3,18,20,29,12,70,35,19,307
+big_none,5,classic,Egyptian,Thutmose I,False,0,0,0,0,0,0,60,2,5,50
+big_none,5,classic,Hittite,Telipinus,True,94,6,26,18,28,66,90,10,14,332
+big_none,5,classic,Korean,Yi Song-gye,True,106,6,26,24,29,0,70,32,71,295
+big_none,5,classic,Khmer,Jayavarman II,True,59,2,8,9,19,0,70,25,33,96
+big_none,5,classic,Inca,Atawallpa,True,26,2,5,13,6,2,60,17,37,313
+big_none,5,classic,Persian,Khshayarsha I,False,7,0,0,0,1,1,60,9,24,231
+big_none,5,classic,Mayan,Pakal,True,31,1,3,10,8,1,40,29,25,1556
+big_none,5,classic,Mongol,Tsagadai,True,80,3,11,20,24,6,40,52,19,19
+big_none,5,classic,Swedish,Anna Lindh,True,80,3,16,16,25,31,80,21,48,35
+big_none,5,classic,Sioux,Little Crow,True,21,1,3,9,5,1,40,15,34,477
+big_none,5,classic,Iroquois,Guyasuta,True,61,2,6,11,26,30,80,3,5,472
+big_none,5,classic,Chinese,Deng Xiaoping,True,78,2,10,20,21,10,70,53,54,531
+big_none,5,classic,Thai,Chulalongkorn,False,0,0,0,0,0,0,60,1,5,75
+big_none,5,classic,Japanese,Tokugawa Ieyasu,False,37,0,0,0,13,20,80,22,39,435
+big_none,5,classic,Arab,Mohammad,False,0,0,0,0,0,0,60,0,5,50
+big_none,5,classic,Polish,Józef Piłsudski,False,0,0,0,0,0,0,60,2,5,50
+big_none,5,classic,Russian,Dmitriy Donskoy,False,0,0,0,0,0,0,60,2,5,50
+big_none,5,classic,Austrian,Wilhelm Miklas,True,80,4,11,16,26,30,80,32,32,66
+big_none,5,classic,American,Richard Nixon,True,82,2,9,13,23,18,70,58,63,128
+big_none,5,classic,Zulu,Mpande kaSenzangakhona,True,69,2,6,8,21,3,60,44,59,58
+big_none,5,classic,Indonesian,Suharto,True,83,3,12,15,27,6,60,23,55,81
+big_none,5,classic,Dutch,Lodewijk Napoleon,False,1,0,0,0,0,0,60,3,5,75
+big_none,5,classic,Songhai,Askia Mohammad I,True,67,3,8,9,24,18,80,19,25,443
+big_none,5,classic,Aztec,Acamapichtli,False,1,0,0,0,0,0,60,3,5,50
+big_none,5,classic,Danish,Knud den Hellige,True,82,4,13,30,22,29,70,48,46,90
+big_none,5,classic,Sumerian,Etana,True,36,1,2,2,14,4,70,14,18,31
+big_none,5,classic,German,Otto I,False,0,0,0,0,0,0,60,1,5,50
+big_none,5,classic,Celtic,Bolgios,True,87,5,23,27,25,50,80,24,21,1195
+big_none,5,classic,Brazilian,Deodoro da Fonseca,True,1,0,0,1,0,0,60,3,4,50
+big_none,5,classic,Ethiopian,Mengistu Haile Mariam,True,66,1,3,7,24,0,20,26,32,346
+big_none,5,classic,English,John Lackland,True,71,3,10,13,22,12,80,31,20,88
+big_none,5,classic,Mali,Wali Keita,False,1,0,0,0,0,0,60,3,5,50
+big_none,5,classic,Indian,Ashoka,True,22,2,4,20,6,1,40,13,9,87
+big_none,5,classic,Turkish,Kemal Atatürk,True,93,4,16,26,29,25,60,30,35,27
+big_none,5,classic,Tupi,Tibiriça,False,0,0,0,0,0,0,60,0,5,50
+big_none,5,classic,Apache,Goyaałé,True,77,4,17,11,26,30,80,12,17,292
+big_none,5,classic,Taino,Agüeybana,True,85,3,11,10,23,34,80,65,48,49
+big_none,5,classic,Cherokee,Tahlonteskee,False,1,0,0,0,0,0,60,5,5,50
+big_none,5,classic,Polynesian,Solomon Mamaloni,False,1,0,0,0,0,0,60,5,5,50
+big_none,5,classic,Italian,Giacomo Matteotti,False,0,0,0,0,0,0,60,1,5,75
+big_none,5,classic,Byzantine,Theodora,True,71,2,11,16,20,9,70,45,32,318
+big_none,5,classic,Portuguese,Pedro IV,True,53,1,1,9,18,3,60,37,21,431
+big_none,5,classic,Spanish,Isabel II,True,75,4,12,10,27,25,80,18,14,543
+big_none,5,classic,French,Maximilien de Robespierre,True,77,2,10,10,13,4,50,95,91,196
+big_none,5,classic,Hunnic,Charaton,True,70,3,7,12,20,4,20,57,25,423
+big_none,5,classic,Viking,Knutr,True,72,4,10,22,22,15,80,32,30,22
+big_dof,0,dof,Turkish,Kılıçarslan,True,16,1,1,5,6,1,60,6,14,245
+big_dof,0,dof,Chinese,Wang Guangmei,True,76,3,10,27,25,7,60,26,35,20
+big_dof,0,dof,German,Otto von Bismarck,True,45,2,5,16,13,3,60,27,42,562
+big_dof,0,dof,Ethiopian,Tewodros II,False,43,0,0,0,18,5,80,13,20,185
+big_dof,0,dof,Indonesian,Sukarno,False,0,0,0,0,0,0,60,2,5,50
+big_dof,0,dof,American,John F. Kennedy,True,126,11,28,48,34,62,90,42,49,96
+big_dof,0,dof,Japanese,Jimmu,True,24,2,4,12,7,1,40,11,21,729
+big_dof,0,dof,Swedish,Per Albin Hansson,True,13,1,1,6,4,0,60,10,17,6
+big_dof,0,dof,Russian,Aleksandr Nevsky,True,62,2,7,11,25,15,70,7,13,209
+big_dof,0,dof,French,Charles Martel,True,62,1,6,5,22,0,0,21,30,5
+big_dof,0,dof,Spanish,Rafael del Riego,True,38,1,3,16,9,1,60,26,67,356
+big_dof,0,dof,Thai,Maha Mongkut,False,0,0,0,0,0,0,60,1,5,75
+big_dof,0,dof,Iroquois,Kateri Tekakwitha,True,102,2,9,11,20,0,70,123,105,545
+big_dof,0,dof,Dutch,Willem V,True,54,3,11,34,14,5,50,34,14,7
+big_dof,0,dof,Arab,Al-Hakim,True,86,5,21,36,24,19,40,23,33,17
+big_dof,0,dof,Austrian,Rudolf II,True,53,1,1,5,21,0,60,23,19,33
+big_dof,0,dof,English,Edward Longshanks,False,0,0,0,0,0,0,60,0,5,50
+big_dof,0,dof,Byzantine,Heraclius,True,72,3,12,13,23,21,80,33,19,70
+big_dof,0,dof,Danish,Knud den Store,True,62,2,9,13,22,20,70,11,28,266
+big_dof,0,dof,Persian,Ardashir I,True,71,2,11,9,21,24,80,30,36,327
+big_dof,0,dof,Polish,Jan III Sobieski,True,38,1,6,10,11,4,60,16,17,112
+big_dof,0,dof,Mongol,Börte,True,63,1,1,2,15,4,70,68,97,147
+big_dof,0,dof,Khmer,Ishanavarman,False,1,0,0,0,0,0,60,3,5,50
+big_dof,0,dof,Italian,Marco Minghetti,True,119,5,25,23,26,10,60,88,58,19
+big_dof,0,dof,Korean,Wang Kon,False,2,0,0,0,0,0,60,6,5,50
+big_dof,0,dof,Songhai,Sunni Silman Dandi,False,0,0,0,0,0,0,60,1,5,50
+big_dof,0,dof,Mayan,Sac K'uk',False,0,0,0,0,0,0,60,0,5,50
+big_dof,0,dof,Aztec,Ixtlilxochitl,False,0,0,0,0,0,0,60,0,5,50
+big_dof,0,dof,Celtic,Keretrios,True,84,5,17,13,23,33,80,45,31,123
+big_dof,0,dof,Brazilian,Juscelino Kubitscheck,True,19,2,2,18,5,0,40,15,10,1340
+big_dof,0,dof,Portuguese,João IV,True,48,1,5,3,13,0,70,24,81,277
+big_dof,0,dof,Mali,Gao,False,0,0,0,0,0,0,60,0,5,50
+big_dof,0,dof,Babylonian,Burnaburish II,True,73,4,11,31,18,7,50,51,45,14
+big_dof,0,dof,Sumerian,Urukagina,True,72,3,10,17,26,22,70,20,20,106
+big_dof,0,dof,Sioux,Red Cloud,True,98,3,8,18,26,4,40,91,69,19
+big_dof,0,dof,Zulu,Mdlani,False,1,0,0,0,0,0,60,4,5,75
+big_dof,0,dof,Indian,Subhas Chandra Bose,False,0,0,0,0,0,0,60,0,5,50
+big_dof,0,dof,Inca,Thupa Inka Yupanki,False,0,0,0,0,0,0,60,1,5,50
+big_dof,0,dof,Hittite,Kanis,False,0,0,0,0,0,0,60,2,5,50
+big_dof,0,dof,Carthaginian,Hasdrubal Barca,True,87,5,19,50,24,12,50,36,45,32
+big_dof,0,dof,Egyptian,Akhenaten,True,64,2,7,9,24,17,70,20,15,422
+big_dof,0,dof,Taino,Canobaná,False,0,0,0,0,0,0,60,1,5,50
+big_dof,0,dof,Polynesian,Kamehameha,True,87,5,17,33,26,0,0,32,34,28
+big_dof,0,dof,Tupi,Konyan Bebe,False,1,0,0,0,0,0,60,3,5,50
+big_dof,0,dof,Apache,Alchesay,False,0,0,0,0,0,0,60,2,5,50
+big_dof,0,dof,Cherokee,Wilma Mankiller,True,38,2,4,13,13,9,80,12,24,120
+big_dof,0,dof,Greek,Leonidas,True,40,2,5,23,7,1,40,51,23,1671
+big_dof,0,dof,Roman,Constantinus I,True,64,3,9,12,16,13,70,48,51,175
+big_dof,0,dof,Hunnic,Bleda,True,94,7,21,25,25,0,60,38,46,99
+big_dof,0,dof,Viking,Gormr Gamli,True,103,3,15,10,31,38,80,60,29,31
+big_dof,1,dof,Zulu,Solomon kaDinizulu,True,56,2,7,11,10,3,60,66,65,170
+big_dof,1,dof,Russian,Ivan III,True,64,2,11,24,16,5,70,38,68,180
+big_dof,1,dof,Persian,Khshayarsha I,True,84,5,16,24,23,0,70,45,38,22
+big_dof,1,dof,Mongol,Tokhtamysh,False,0,0,0,0,0,0,60,0,5,50
+big_dof,1,dof,Korean,Chumong,True,75,2,7,11,22,7,70,56,59,29
+big_dof,1,dof,Sumerian,En-Mer-Kar,True,128,7,23,31,33,31,80,52,56,226
+big_dof,1,dof,Arab,Harun al-Rashid,True,24,1,1,5,0,0,40,55,57,62
+big_dof,1,dof,Japanese,Hirohito,True,77,2,11,11,23,0,60,33,51,15
+big_dof,1,dof,Portuguese,José,False,0,0,0,0,0,0,60,0,5,50
+big_dof,1,dof,Khmer,Jayavarman VII,False,0,0,0,0,0,0,60,1,5,50
+big_dof,1,dof,American,Franklin D. Roosevelt,True,96,4,14,11,22,21,80,86,70,65
+big_dof,1,dof,Inca,Pachakuti Inka Yupanki,False,38,0,0,0,15,0,80,16,24,176
+big_dof,1,dof,English,William the Conqueror,True,72,2,8,6,15,10,80,83,68,63
+big_dof,1,dof,Viking,Gormr Gamli,False,0,0,0,0,0,0,60,1,5,75
+big_dof,1,dof,Italian,Benito Mussolini,True,64,1,2,7,17,1,40,64,67,34
+big_dof,1,dof,Aztec,Ahuitzotl,True,75,3,12,13,25,0,70,18,44,23
+big_dof,1,dof,Byzantine,Theodora,False,1,0,0,0,0,0,60,5,5,50
+big_dof,1,dof,Mayan,Sac K'uk',False,1,0,0,0,0,0,60,4,5,50
+big_dof,1,dof,Brazilian,Tancredo Neves,True,79,4,13,47,14,4,40,80,78,42
+big_dof,1,dof,Polish,Tadeusz Kościuszko,True,96,3,12,19,26,6,60,70,59,52
+big_dof,1,dof,Iroquois,Kaintwakon,True,71,3,6,16,24,2,40,30,44,92
+big_dof,1,dof,Carthaginian,Hasdrubal Barca,False,0,0,0,0,0,0,60,2,5,50
+big_dof,1,dof,Thai,Pibul Songgram,False,1,0,0,0,0,0,60,4,5,50
+big_dof,1,dof,Austrian,Matthias,False,3,0,0,0,1,0,60,5,4,168
+big_dof,1,dof,Mali,Gao,True,75,2,9,10,28,0,70,21,21,40
+big_dof,1,dof,Songhai,Askia Ishaq I,True,81,3,10,11,24,20,80,50,55,105
+big_dof,1,dof,French,Richelieu,True,54,2,8,13,20,6,60,11,14,10
+big_dof,1,dof,Spanish,Gáspar Melchor de Jovellanos,False,0,0,0,0,0,0,60,1,5,50
+big_dof,1,dof,German,Arminius,True,99,3,13,12,18,16,80,110,120,33
+big_dof,1,dof,Indian,Indira Gandhi,True,70,3,13,11,19,13,80,35,58,65
+big_dof,1,dof,Sioux,Crow Dog,True,53,3,8,13,8,2,40,59,93,50
+big_dof,1,dof,Dutch,Johan van Oldenbarnevelt,False,0,0,0,0,0,0,60,0,5,50
+big_dof,1,dof,Egyptian,Nefertiti,True,103,4,14,20,20,0,70,111,98,99
+big_dof,1,dof,Ethiopian,Tewodros II,True,17,1,1,8,6,1,40,8,19,363
+big_dof,1,dof,Chinese,Wang Guangmei,False,0,0,0,0,0,0,60,0,5,50
+big_dof,1,dof,Celtic,Bolgios,False,0,0,0,0,0,0,60,1,5,75
+big_dof,1,dof,Turkish,Süleyman Demirel,False,1,0,0,0,0,0,60,4,5,50
+big_dof,1,dof,Indonesian,Megawati Sukarnoputri,True,100,4,20,44,19,11,60,92,82,69
+big_dof,1,dof,Babylonian,Hammurabi,True,77,1,1,9,18,0,40,99,51,72
+big_dof,1,dof,Hittite,Hattusilis,True,26,1,4,9,4,2,60,27,42,447
+big_dof,1,dof,Tupi,Konyan Bebe,True,76,4,15,28,20,20,80,40,38,151
+big_dof,1,dof,Taino,Canobaná,False,1,0,0,0,0,0,60,4,5,50
+big_dof,1,dof,Cherokee,Atakullakulla,True,59,1,3,4,26,16,60,5,17,149
+big_dof,1,dof,Polynesian,Solomon Mamaloni,True,62,1,6,5,18,3,60,46,49,203
+big_dof,1,dof,Apache,K'uu-ch'ish,True,55,2,4,9,8,0,40,72,108,280
+big_dof,1,dof,Hunnic,Uldin,True,71,2,4,4,17,3,50,81,63,164
+big_dof,1,dof,Swedish,Magnus Ladulås,True,95,3,9,13,21,0,60,93,95,74
+big_dof,1,dof,Roman,Publius Cornelius Scipio Africanus,False,1,0,0,0,0,0,60,3,5,50
+big_dof,1,dof,Greek,Solon,False,38,0,0,0,12,5,80,31,45,265
+big_dof,1,dof,Danish,Valdemar III,True,81,2,6,11,17,10,80,104,61,160
+big_dof,2,dof,Apache,Dos-Teh-Seh,True,18,1,2,10,5,1,40,11,23,116
+big_dof,2,dof,Hunnic,Octar,True,77,5,14,30,25,19,70,18,21,34
+big_dof,2,dof,Sumerian,Shulgi,True,116,5,32,21,35,0,70,28,15,451
+big_dof,2,dof,Babylonian,Sharru-Kin II,False,1,0,0,0,0,0,60,3,5,50
+big_dof,2,dof,Mayan,Pakal,False,0,0,0,0,0,0,60,2,5,50
+big_dof,2,dof,Persian,Kurush II,False,1,0,0,0,0,0,60,3,5,50
+big_dof,2,dof,Korean,Tangun,True,105,7,26,27,30,0,70,22,24,49
+big_dof,2,dof,Egyptian,Akhenaten,True,66,3,8,13,26,0,60,11,15,111
+big_dof,2,dof,Mali,Sakura,True,1,0,0,2,0,0,60,4,3,50
+big_dof,2,dof,Swedish,Magnus Ladulås,True,98,4,22,13,32,38,80,15,24,42
+big_dof,2,dof,Byzantine,Theodora,False,0,0,0,0,0,0,60,0,5,50
+big_dof,2,dof,American,John Adams,False,0,0,0,0,0,0,60,1,5,75
+big_dof,2,dof,Danish,Erik Glipping,False,45,0,0,0,20,18,80,7,14,161
+big_dof,2,dof,Polish,Bolesław Chrobry,False,0,0,0,0,0,0,60,2,5,50
+big_dof,2,dof,Arab,Fatimah,False,0,0,0,0,0,0,60,2,5,50
+big_dof,2,dof,Celtic,Arktorios,True,176,16,57,61,41,6,80,8,19,111
+big_dof,2,dof,Aztec,Cuauhtemoc,True,82,3,10,20,17,0,60,79,87,75
+big_dof,2,dof,Carthaginian,Hannibal Barca,False,0,0,0,0,0,0,60,0,5,75
+big_dof,2,dof,Dutch,Herman Willem Daendels,False,0,0,0,0,0,0,60,2,5,50
+big_dof,2,dof,Portuguese,Sancho I,True,94,1,7,9,35,5,60,36,34,123
+big_dof,2,classic,Inca,Atawallpa,False,2,0,0,0,0,0,60,6,5,50
+big_dof,2,dof,Mongol,Tolui,True,68,2,10,14,25,20,60,19,15,226
+big_dof,2,dof,Iroquois,Kaintwakon,False,0,0,0,0,0,0,60,1,5,50
+big_dof,2,dof,Songhai,Askia Mohammad Benkan,False,1,0,0,0,0,0,60,3,5,50
+big_dof,2,dof,Thai,Rama Thibodi,False,0,0,0,0,0,0,60,2,5,50
+big_dof,2,dof,Japanese,Jimmu,True,43,1,2,6,20,2,60,1,7,540
+big_dof,2,dof,English,John Lackland,True,102,2,13,18,29,0,70,63,68,37
+big_dof,2,dof,Khmer,Jayavarman VII,True,40,3,7,18,8,1,40,35,54,212
+big_dof,2,dof,Turkish,İsmail Enver,True,92,6,24,42,24,22,70,38,42,155
+big_dof,2,dof,Brazilian,Getúlio Vargas,True,84,3,12,23,20,26,80,71,60,248
+big_dof,2,dof,Austrian,Rudolf II,True,107,4,14,17,30,18,60,73,53,28
+big_dof,2,dof,Hittite,Muwatallis,True,76,5,14,25,24,17,60,20,36,174
+big_dof,2,dof,Spanish,Rafael del Riego,True,52,1,4,4,22,0,0,7,15,614
+big_dof,2,dof,French,Louis Philippe,True,56,1,2,6,20,8,70,29,36,288
+big_dof,2,dof,Chinese,Wang Guangmei,False,0,0,0,0,0,0,60,0,5,50
+big_dof,2,dof,Sioux,Waneta,False,1,0,0,0,0,0,60,3,5,50
+big_dof,2,dof,Zulu,Ntombhela kaMalandela,True,39,2,7,13,15,11,70,3,5,2261
+big_dof,2,dof,Italian,Giuseppe Garibaldi,False,0,0,0,0,0,0,60,1,5,50
+big_dof,2,dof,German,Alarich,False,1,0,0,0,0,0,60,3,5,50
+big_dof,2,dof,Indonesian,Megawati Sukarnoputri,True,76,2,4,10,28,4,40,31,30,15
+big_dof,2,dof,Ethiopian,Tewodros II,True,53,2,11,9,17,0,70,13,31,161
+big_dof,2,dof,Indian,Shivaji,True,102,3,15,20,27,28,80,77,57,57
+big_dof,2,dof,Polynesian,Solomon Mamaloni,True,68,1,4,6,22,0,60,48,37,102
+big_dof,2,dof,Cherokee,Atakullakulla,True,51,1,4,8,18,3,60,16,27,39
+big_dof,2,dof,Taino,Hayuya,True,109,7,25,22,34,0,90,14,31,57
+big_dof,2,dof,Tupi,Jugasu,True,89,4,20,22,24,22,80,45,34,375
+big_dof,2,dof,Russian,Vladimir Lenin,True,44,1,2,9,14,2,40,25,39,425
+big_dof,2,dof,Greek,Leonidas,True,20,1,1,10,3,0,40,29,38,424
+big_dof,2,dof,Roman,Septimius Severus,False,1,0,0,0,0,0,60,4,5,50
+big_dof,2,dof,Viking,Gormr Gamli,True,80,2,6,10,22,13,80,60,73,186
+big_dof,3,dof,Arab,Fatimah,True,59,3,17,11,18,20,70,11,13,1887
+big_dof,3,dof,Aztec,Itzcoatl,True,65,3,12,10,20,0,70,25,40,96
+big_dof,3,dof,Inca,Pachakuti Inka Yupanki,True,40,1,5,9,7,1,40,35,91,282
+big_dof,3,dof,Japanese,Jimmu,True,128,2,10,11,23,4,60,178,123,104
+big_dof,3,dof,Swedish,Gustav Vasa,True,89,4,13,13,36,79,90,1,6,844
+big_dof,3,dof,Mayan,Tekun Umam,False,0,0,0,0,0,0,60,2,5,50
+big_dof,3,dof,English,Oliver Cromwell,True,98,2,9,6,23,0,70,106,65,398
+big_dof,3,dof,Zulu,Ndaba kaMageba,False,1,0,0,0,0,0,60,3,5,75
+big_dof,3,dof,Mali,Sakura,True,86,2,7,5,18,8,70,89,133,28
+big_dof,3,dof,Carthaginian,Hannibal Barca,True,72,3,6,12,16,1,40,70,73,61
+big_dof,3,dof,French,François Mitterrand,False,0,0,0,0,0,0,60,1,5,50
+big_dof,3,dof,Mongol,Sübeedei,True,55,1,5,3,12,0,60,63,52,222
+big_dof,3,dof,Austrian,Maximilian II,True,83,4,9,14,29,7,40,30,20,27
+big_dof,3,dof,Italian,Luigi Facta,True,61,3,9,15,21,0,70,23,17,63
+big_dof,3,dof,Persian,Shapur I,False,1,0,0,0,0,0,60,3,5,50
+big_dof,3,dof,Danish,Knud den Store,False,0,0,0,0,0,0,60,2,5,50
+big_dof,3,dof,American,Franklin D. Roosevelt,False,0,0,0,0,0,0,60,2,5,50
+big_dof,3,dof,Portuguese,António de Oliveira Salazar,False,0,0,0,0,0,0,60,2,5,50
+big_dof,3,dof,Chinese,Chen Duxiu,True,82,2,9,10,32,0,60,16,22,237
+big_dof,3,dof,Sioux,Red Cloud,True,60,3,10,9,22,0,70,6,10,1716
+big_dof,3,dof,Dutch,Willem I,False,1,0,0,0,0,0,60,3,5,50
+big_dof,3,dof,Ethiopian,Tewodros II,True,45,2,4,11,7,0,40,57,73,127
+big_dof,3,dof,Turkish,Osman I,True,54,1,5,2,16,0,70,29,77,51
+big_dof,3,dof,Korean,Munmu,True,89,5,16,13,24,16,70,50,62,34
+big_dof,3,dof,German,Willy Brandt,True,39,1,1,2,10,1,40,39,55,7
+big_dof,3,dof,Polish,Kazimierz Wielki,False,1,0,0,0,0,0,60,5,5,50
+big_dof,3,dof,Byzantine,Justinianus I,True,61,2,13,19,20,10,70,8,23,194
+big_dof,3,dof,Khmer,Jayavedi,True,72,2,4,3,7,1,40,133,105,164
+big_dof,3,dof,Iroquois,Hiawatha,False,0,0,0,0,0,0,60,1,5,50
+big_dof,3,dof,Thai,Pibul Songgram,False,0,0,0,0,0,0,60,2,5,50
+big_dof,3,dof,Indian,Jawaharlal Nehru,True,113,6,22,21,34,37,60,48,26,21
+big_dof,3,dof,Indonesian,Megawati Sukarnoputri,True,53,2,5,10,9,2,40,67,81,112
+big_dof,3,dof,Hunnic,Bleda,True,0,0,0,1,0,0,60,2,4,50
+big_dof,3,dof,Babylonian,Burnaburish II,True,126,5,19,15,23,20,70,138,140,37
+big_dof,3,dof,Spanish,Fernando VII,True,116,4,15,15,26,0,70,122,72,482
+big_dof,3,dof,Egyptian,Akhenaten,True,43,1,1,3,6,1,40,73,66,296
+big_dof,3,dof,Taino,Hayuya,True,144,13,43,39,38,25,90,14,24,137
+big_dof,3,dof,Sumerian,Ibbi-Sin,False,0,0,0,0,0,0,60,1,5,75
+big_dof,3,dof,Hittite,Suppiluliumas,False,0,0,0,0,0,0,60,2,5,75
+big_dof,3,dof,Songhai,Askia Ishaq I,True,93,1,1,3,18,0,40,130,124,62
+big_dof,3,dof,Celtic,Bolgios,True,57,1,5,3,26,22,80,1,4,507
+big_dof,3,dof,Brazilian,Deodoro da Fonseca,False,2,0,0,0,0,0,60,6,5,50
+big_dof,3,dof,Cherokee,Wilma Mankiller,False,0,0,0,0,0,0,60,2,5,50
+big_dof,3,dof,Apache,Dos-Teh-Seh,True,24,1,2,6,4,1,60,24,54,326
+big_dof,3,dof,Tupi,Konyan Bebe,False,2,0,0,0,0,0,60,6,5,50
+big_dof,3,dof,Polynesian,Solomon Mamaloni,False,0,0,0,0,0,0,60,1,5,50
+big_dof,3,dof,Greek,Alkibiades,True,80,4,12,19,26,0,70,29,38,35
+big_dof,3,dof,Roman,Livia Drusilla,True,64,2,6,12,18,11,80,50,51,19
+big_dof,3,dof,Viking,Eiríkr,True,106,4,13,13,23,18,80,105,99,38
+big_dof,3,dof,Russian,Vladimir Monomakh,True,56,2,8,9,21,0,60,14,10,182
+big_dof,4,dof,Aztec,Ixtlilxochitl,True,66,2,6,12,20,6,60,47,35,40
+big_dof,4,dof,Persian,Kurush II,False,0,0,0,0,0,0,60,0,5,50
+big_dof,4,dof,Korean,Munmu,False,1,0,0,0,0,0,60,3,5,50
+big_dof,4,dof,Portuguese,Maria II,False,0,0,0,0,0,0,60,2,5,75
+big_dof,4,dof,Arab,Umar,True,75,3,8,25,12,2,40,98,87,840
+big_dof,4,dof,Inca,Manqo Qhapaq,False,0,0,0,0,0,0,60,2,5,50
+big_dof,4,dof,Swedish,Olof Skötkonung,True,61,2,11,18,22,22,70,6,14,64
+big_dof,4,dof,Mongol,Chinggis,True,36,2,6,12,11,7,80,13,27,782
+big_dof,4,dof,Iroquois,Thayendanegea,False,0,0,0,0,0,0,60,0,5,50
+big_dof,4,dof,German,Otto I,True,64,1,6,3,22,16,70,31,26,106
+big_dof,4,dof,French,Charles Martel,True,100,5,14,29,16,7,60,128,98,21
+big_dof,4,dof,Austrian,Karl Renner,False,2,0,0,0,0,0,60,8,5,75
+big_dof,4,dof,Zulu,Senzangakhona kaJama,True,18,2,3,19,4,0,40,10,32,30
+big_dof,4,dof,Byzantine,Theodora,True,92,5,21,30,25,9,60,33,37,89
+big_dof,4,dof,Brazilian,Getúlio Vargas,True,53,2,5,17,11,5,60,56,70,451
+big_dof,4,dof,English,Oliver Cromwell,False,22,0,0,0,6,1,60,27,22,233
+big_dof,4,dof,Thai,Pibul Songgram,False,0,0,0,0,0,0,60,0,5,50
+big_dof,4,dof,Danish,Christian IV,True,60,2,5,10,19,8,70,39,33,156
+big_dof,4,dof,Chinese,Wang Guangmei,True,116,4,18,13,26,0,70,104,100,50
+big_dof,4,classic,Russian,Ekaterina II,True,85,4,13,16,26,27,50,42,39,20
+big_dof,4,dof,Spanish,Carlos III,False,0,0,0,0,0,0,60,1,5,50
+big_dof,4,dof,Mayan,Kan Ek',False,0,0,0,0,0,0,60,0,5,50
+big_dof,4,dof,Japanese,Jimmu,True,68,4,9,14,19,13,70,42,47,32
+big_dof,4,dof,Dutch,Johan Rudolph Thorbecke,True,54,3,7,16,15,0,60,35,50,22
+big_dof,4,dof,Khmer,Jayavarman II,False,0,0,0,0,0,0,60,2,5,50
+big_dof,4,dof,Mali,Gao,False,0,0,0,0,0,0,60,2,5,50
+big_dof,4,dof,Turkish,Osman I,True,28,1,3,11,7,1,40,23,35,745
+big_dof,4,dof,Hittite,Anittas,True,108,6,22,36,29,35,90,55,36,66
+big_dof,4,dof,Polish,Józef Piłsudski,False,0,0,0,0,0,0,60,0,5,75
+big_dof,4,dof,Ethiopian,Zoskales,True,54,2,7,14,17,2,40,21,21,47
+big_dof,4,dof,Indonesian,Suharto,True,83,4,16,44,18,6,70,58,85,61
+big_dof,4,dof,American,Woodrow Wilson,True,35,2,3,15,7,0,40,41,43,149
+big_dof,4,dof,Sioux,Big Eagle,True,79,4,15,41,23,14,70,30,39,29
+big_dof,4,dof,Songhai,Sonni Ali,True,87,4,15,29,23,0,70,53,30,85
+big_dof,4,dof,Italian,Vittorio Emanuele II,False,53,0,0,0,18,3,60,34,61,146
+big_dof,4,dof,Indian,Shivaji,False,0,0,0,0,0,0,60,1,5,75
+big_dof,4,dof,Babylonian,Nabu-Nasir,False,0,0,0,0,0,0,60,2,5,50
+big_dof,4,dof,Carthaginian,Dido,True,43,2,5,13,7,1,40,54,55,437
+big_dof,4,dof,Sumerian,Shulgi,False,1,0,0,0,0,0,60,3,5,75
+big_dof,4,dof,Celtic,Talorgos,True,69,3,6,19,23,0,40,30,26,53
+big_dof,4,dof,Egyptian,Tutankhamun,True,63,2,6,13,21,11,50,26,34,49
+big_dof,4,dof,Tupi,Tibiriça,False,1,0,0,0,0,0,60,4,5,50
+big_dof,4,dof,Apache,Góyą́ń,True,118,4,17,19,31,13,60,78,42,14
+big_dof,4,dof,Taino,Loquillo,True,64,3,9,26,11,1,40,80,55,44
+big_dof,4,dof,Polynesian,Malietoa Tanumafili,False,0,0,0,0,0,0,60,1,5,50
+big_dof,4,dof,Cherokee,Sequoyah,True,79,2,9,7,22,17,70,64,44,157
+big_dof,4,dof,Roman,Octavianus,False,0,0,0,0,0,0,60,0,5,50
+big_dof,4,dof,Greek,Megas Alexandros,True,58,2,5,11,20,12,70,18,52,12
+big_dof,4,dof,Hunnic,Octar,True,22,1,2,10,6,1,40,12,43,746
+big_dof,4,dof,Viking,Gormr Gamli,True,60,2,7,8,19,12,80,32,47,181
+big_dof,5,dof,Babylonian,Tukulti-Apil-Eshara III,False,38,0,0,0,14,2,80,20,38,425
+big_dof,5,dof,Greek,Alexandros Molossus,False,1,0,0,0,0,0,60,4,5,50
+big_dof,5,dof,Roman,Tiberius Sempronius Gracchus,True,55,2,5,7,19,0,70,18,31,184
+big_dof,5,dof,Carthaginian,Hamilcar Barca,True,112,5,17,22,30,37,80,75,49,249
+big_dof,5,dof,Egyptian,Thutmose I,True,62,3,11,8,9,10,70,68,109,263
+big_dof,5,dof,Hittite,Telipinus,True,83,4,15,14,27,16,60,22,13,31
+big_dof,5,dof,Korean,Yi Song-gye,True,69,2,9,7,22,8,80,34,33,193
+big_dof,5,dof,Khmer,Jayavarman II,True,152,5,24,18,24,21,70,191,143,529
+big_dof,5,dof,Inca,Atawallpa,True,22,1,1,9,6,1,40,19,22,702
+big_dof,5,dof,Persian,Khshayarsha I,True,36,2,8,18,9,2,60,20,25,285
+big_dof,5,dof,Mayan,Pakal,True,30,1,3,8,9,1,40,16,43,936
+big_dof,5,dof,Mongol,Tsagadai,True,77,1,4,2,21,4,60,66,77,70
+big_dof,5,dof,Swedish,Anna Lindh,True,64,2,9,13,18,28,80,41,38,717
+big_dof,5,dof,Sioux,Little Crow,True,32,2,5,23,10,2,60,12,9,851
+big_dof,5,dof,Iroquois,Guyasuta,True,67,2,5,11,26,20,70,20,23,40
+big_dof,5,dof,Chinese,Deng Xiaoping,True,99,6,25,30,23,19,80,49,54,59
+big_dof,5,dof,Thai,Chulalongkorn,False,0,0,0,0,0,0,60,2,5,50
+big_dof,5,dof,Japanese,Tokugawa Ieyasu,True,67,2,6,3,19,11,80,52,61,185
+big_dof,5,classic,Arab,Mohammad,False,1,0,0,0,0,0,60,3,5,50
+big_dof,5,dof,Polish,Józef Piłsudski,False,1,0,0,0,0,0,60,3,5,50
+big_dof,5,dof,Russian,Dmitriy Donskoy,False,0,0,0,0,0,0,60,1,5,50
+big_dof,5,dof,Austrian,Wilhelm Miklas,True,82,2,5,9,20,9,80,74,113,10
+big_dof,5,dof,American,Richard Nixon,True,121,3,13,19,22,12,60,155,105,22
+big_dof,5,dof,Zulu,Mpande kaSenzangakhona,True,54,2,4,6,18,12,60,26,44,125
+big_dof,5,dof,Indonesian,Suharto,True,150,5,25,27,25,0,70,179,125,80
+big_dof,5,dof,Dutch,Lodewijk Napoleon,False,1,0,0,0,0,0,60,3,5,75
+big_dof,5,dof,Songhai,Askia Mohammad I,True,73,3,12,17,20,10,80,47,45,789
+big_dof,5,dof,Aztec,Acamapichtli,False,1,0,0,0,0,0,60,3,5,50
+big_dof,5,dof,Danish,Knud den Hellige,True,50,2,6,20,12,4,70,39,47,328
+big_dof,5,dof,Sumerian,Etana,True,69,3,12,27,23,10,70,22,16,224
+big_dof,5,dof,German,Otto I,False,0,0,0,0,0,0,60,0,5,50
+big_dof,5,dof,Celtic,Bolgios,True,81,2,11,12,19,0,70,68,84,216
+big_dof,5,dof,Brazilian,Deodoro da Fonseca,False,0,0,0,0,0,0,60,1,5,50
+big_dof,5,dof,Ethiopian,Mengistu Haile Mariam,False,0,0,0,0,0,0,60,1,5,75
+big_dof,5,dof,English,John Lackland,False,1,0,0,0,0,0,60,3,5,50
+big_dof,5,dof,Mali,Wali Keita,True,62,2,11,19,18,9,70,27,47,104
+big_dof,5,dof,Indian,Ashoka,True,28,1,1,9,6,0,40,31,46,259
+big_dof,5,dof,Turkish,Kemal Atatürk,True,87,4,15,17,28,0,70,24,24,27
+big_dof,5,dof,Tupi,Tibiriça,True,70,3,8,12,18,0,80,57,49,164
+big_dof,5,dof,Apache,Goyaałé,True,77,1,4,7,22,1,40,53,101,529
+big_dof,5,dof,Taino,Agüeybana,True,62,2,7,12,18,12,80,34,56,20
+big_dof,5,dof,Cherokee,Tahlonteskee,False,0,0,0,0,0,0,60,1,5,50
+big_dof,5,dof,Polynesian,Solomon Mamaloni,True,59,2,7,11,25,23,90,4,8,305
+big_dof,5,dof,Italian,Giacomo Matteotti,False,0,0,0,0,0,0,60,1,5,75
+big_dof,5,dof,Byzantine,Theodora,True,26,1,3,13,6,1,40,25,21,610
+big_dof,5,dof,Portuguese,Pedro IV,True,101,2,10,4,10,12,80,183,107,431
+big_dof,5,dof,Spanish,Isabel II,True,77,4,15,18,24,18,80,24,21,57
+big_dof,5,dof,French,Maximilien de Robespierre,False,1,0,0,0,0,0,60,4,5,50
+big_dof,5,dof,Hunnic,Charaton,True,65,2,3,11,20,2,60,48,42,150
+big_dof,5,dof,Viking,Knutr,True,68,1,4,5,19,9,80,50,86,125

@@ -63,6 +63,9 @@ def arm_summary(tag, rows):
         "alive": mean([r["alive"] for r in rows]),
         "eliminated": mean([r["eliminated"] for r in rows]),
         "units_killed": mean([r["units_killed"] for r in rows]),
+        "barb_killed": mean([r.get("barb_units_lost", 0) for r in rows]),
+        "units_killed_regular": mean([r["units_killed"] - r.get("barb_units_lost", 0)
+                                      for r in rows]),
         "units_lost_total": sum(r["units_lost"] for r in rows),
         "declares": sum(r["dof_declares"] for r in rows),
         "declares_dof": sum(r.get("dof_declares_dof_seats", 0) for r in rows),
@@ -132,9 +135,11 @@ def main():
             continue
         summary = fmt_table(
             ["партий", "ходов", "игроков", "осталось", "уничтожено игроков",
-             "убито юнитов", "объявлений войны", "из них DOF-местами", "нападений"],
+             "убито варваров", "убито юнитов", "объявлений войны",
+             "из них DOF-местами", "нападений"],
             [[s["games"], s["turns"], s["players"], s["alive"], s["eliminated"],
-              s["units_killed"], s["declares"], s["declares_dof"], s["attacks"]]])
+              round(s["barb_killed"], 1), round(s["units_killed_regular"], 1),
+              s["declares"], s["declares_dof"], s["attacks"]]])
         nat = nation_rows(rows)
         if "mixed" in tag:
             agg_rows = agg(nat, lambda r: f"{r['seat']}")
@@ -153,9 +158,10 @@ def main():
                                              a["bulbs_last_turn"], a["alive_share"]]
                                             for a in agg_rows])
         per_game = fmt_table(
-            ["партия", "живых", "уничтожено", "убито юнитов", "подавлено пар желания",
-             "отказов от принуждения", "объявлений"],
-            [[r["game"], f"{r['alive']}/{r['players']}", r["eliminated"], r["units_killed"],
+            ["партия", "живых", "уничтожено", "убито варваров", "убито юнитов",
+             "подавлено пар желания", "отказов от принуждения", "объявлений"],
+            [[r["game"], f"{r['alive']}/{r['players']}", r["eliminated"],
+              r.get("barb_units_lost", 0), r["units_killed"] - r.get("barb_units_lost", 0),
               r["dof_suppressed"], r["dof_blocked"], r["dof_declares"]] for r in rows])
         blocks.append(f"""## {title} (`{tag}`, policy={rows[0]['policy']})
 
