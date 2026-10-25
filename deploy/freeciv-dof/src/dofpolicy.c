@@ -100,6 +100,13 @@ static int dof_pair_turn[MAX_NUM_PLAYERS][MAX_NUM_PLAYERS];
 static bool dof_pair_init = FALSE;
 static bool dof_ledger_reset = FALSE;
 
+/* Separate accounting of the marks and rule firings that involve barbarians.
+ * Statistics only: no decision reads these counters, the algorithm is the same
+ * with and without them. */
+static int dof_barb_marks = 0;
+static int dof_barb_rules = 0;
+static int dof_summary_turn = -1;
+
 /* Unit performing an action right now, set by server/unithand.c. */
 static int dof_acting_unit_id = 0;
 
@@ -253,8 +260,19 @@ void dof_policy_reload(void)
     dof_acting_unit_id = 0;
     dof_policy.loaded = FALSE;
     dof_checked_turn = -1;
+    dof_barb_marks = 0;
+    dof_barb_rules = 0;
+    dof_summary_turn = -1;
   }
   dof_last_turn = game.info.turn;
+
+  /* Барварский учёт печатается раз в 50 ходов: без него долю варваров в
+   * журнале приходится считать по тексту строк. */
+  if (game.info.turn % 50 == 0 && dof_summary_turn != game.info.turn) {
+    dof_summary_turn = game.info.turn;
+    dof_log("barb_summary turn=%d marks=%d rules=%d",
+            game.info.turn, dof_barb_marks, dof_barb_rules);
+  }
 
   if (!dof_ledger_reset) {
     memset(dof_incidents, 0, sizeof(dof_incidents));
@@ -701,6 +719,19 @@ static void dof_incident_add(int unit_id, int owner, int victim)
   dof_incident_next = (dof_incident_next + 1) % DOF_MAX_INCIDENTS;
   dof_live_count = -1;
 
+  /* Варвары учитываются отдельной меткой: и как нападавший, и как жертва.
+   * На решения это не влияет — только на разбор журнала. */
+  if ((attacker != NULL && is_barbarian(attacker))
+      || (sufferer != NULL && is_barbarian(sufferer))) {
+    dof_barb_marks++;
+    dof_log("unit_source_barb turn=%d unit=%d utype=%s owner=%s victim=%s",
+            game.info.turn, unit_id,
+            punit != NULL ? unit_rule_name(punit) : "?",
+            attacker != NULL ? player_name(attacker) : "?",
+            sufferer != NULL ? player_name(sufferer) : "?");
+    return;
+  }
+
   dof_log("unit_source turn=%d unit=%d utype=%s owner=%s victim=%s",
           game.info.turn, unit_id,
           punit != NULL ? unit_rule_name(punit) : "?",
@@ -770,8 +801,9 @@ void dof_journal_blocked(struct player *pplayer, const struct player *other,
     return;
   }
 
-  dof_log("blocked turn=%d me=%s other=%s what=%s", game.info.turn,
-          player_name(pplayer), player_name(other), what);
+  dof_log("blocked turn=%d me=%s other=%s what=%s%s", game.info.turn,
+          player_name(pplayer), player_name(other), what,
+          is_barbarian(other) ? " barb=1" : "");
 }
 
 /**********************************************************************//**
@@ -782,6 +814,15 @@ void dof_journal_rule(struct player *pplayer, const struct player *other,
                       const char *what)
 {
   if (pplayer == NULL || other == NULL) {
+    return;
+  }
+
+  /* Варварские пары считаются отдельно; формат строки для остальных не
+   * меняется, поле barb=1 добавляется только там, где варвар участвует. */
+  if (is_barbarian(pplayer) || is_barbarian(other)) {
+    dof_barb_rules++;
+    dof_log("rule turn=%d me=%s other=%s what=%s barb=1", game.info.turn,
+            player_name(pplayer), player_name(other), what);
     return;
   }
 
@@ -828,9 +869,10 @@ void dof_journal_declare(struct player *pplayer, const struct player *other,
     return;
   }
 
-  dof_log("declare turn=%d declarer=%s target=%s declarer_dof=%d reason=%d",
+  dof_log("declare turn=%d declarer=%s target=%s declarer_dof=%d reason=%d%s",
           game.info.turn, player_name(pplayer), player_name(other),
-          dof_enabled(pplayer) ? 1 : 0, reason);
+          dof_enabled(pplayer) ? 1 : 0, reason,
+          is_barbarian(other) ? " barb=1" : "");
 }
 
 /**********************************************************************//**
@@ -981,8 +1023,9 @@ void dof_player_console(struct player *pplayer, const char *cmd)
     return;
   }
 
-  dof_log("console me=%s arg=%s enabled=%s policy=%s", player_name(pplayer),
-          verb, dof_enabled(pplayer) ? "yes" : "no", dof_policy_spec());
+  dof_log("console me=%s arg=%s enabled=%s policy=%s barb_marks=%d barb_rules=%d",
+          player_name(pplayer), verb, dof_enabled(pplayer) ? "yes" : "no",
+          dof_policy_spec(), dof_barb_marks, dof_barb_rules);
 }
 
 /**********************************************************************//**

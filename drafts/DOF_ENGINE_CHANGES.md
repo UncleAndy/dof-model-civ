@@ -432,14 +432,16 @@ static void cai_data_phase_begin(struct player *pplayer, bool is_new_phase)
 [DOF] news turn=N violator=X victim=Y violator_dof=0|1
 [DOF] event turn=N act=<rule> violator=X victim=Y mark=SOURCE|NEWS me=Z status=...
 [DOF] unit_source turn=N unit=ID utype=<тип> owner=X victim=Y
+[DOF] unit_source_barb turn=N unit=ID utype=<тип> owner=X victim=Y
 [DOF] unit_gone turn=N unit=ID owner=X victim=Y
+[DOF] barb_summary turn=N marks=X rules=Y
 [DOF] rule turn=N me=X other=Y what=war_on_source|war_on_source_third|ceasefire_offer|coercion_refused
 [DOF] desire_suppressed turn=N me=X other=Y n=1
 [DOF] blocked turn=N me=X other=Y what=declare_war
 [DOF] console me=X arg=on|off|status enabled=yes|no policy=<spec>
 ```
 
-Инварианты: `declare`, `attack`, `news` пишутся для обеих рук; `unit_source` пишется только на нападающего, который начал конфликт, и всегда с настоящим `unit=ID` (запись с `unit=0` означает, что движок не смог назвать юнита, и такие записи в замерах должны отсутствовать); `unit_gone` закрывает пометку в тот ход, когда юнит перестал существовать; `roster` печатается при каждой смене политики и в начале партии, иначе строку журнала нельзя приписать руке; `desire_suppressed` пишется один раз на пару, чтобы разбор не тонул в повторах. Читать на стенде надо из `stderr` (`/docker/logs/freeciv-web-stderr-<port>.log`) при `--debug 2`: при `--debug 1` `log_normal` подавлен.
+Инварианты: `declare`, `attack`, `news` пишутся для обеих рук; `unit_source` пишется только на нападающего, который начал конфликт, и всегда с настоящим `unit=ID` (запись с `unit=0` означает, что движок не смог назвать юнита, и такие записи в замерах должны отсутствовать); `unit_gone` закрывает пометку в тот ход, когда юнит перестал существовать; `unit_source_barb` — та же запись, но варваром является нападавший или жертва (учёт отдельный, решения от него не зависят), а в строках `rule`, `blocked` и `declare` пара с варваром помечается полем `barb=1`; `barb_summary` печатается раз в 50 ходов и даёт текущие счётчики; `roster` печатается при каждой смене политики и в начале партии, иначе строку журнала нельзя приписать руке; `desire_suppressed` пишется один раз на пару, чтобы разбор не тонул в повторах. Читать на стенде надо из `stderr` (`/docker/logs/freeciv-web-stderr-<port>.log`) при `--debug 2`: при `--debug 1` `log_normal` подавлен.
 
 ## §9. Замеры
 
@@ -531,7 +533,7 @@ static void cai_data_phase_begin(struct player *pplayer, bool is_new_phase)
 
 | файл | функция или место | суть |
 |---|---|---|
-| `ai/default/dofpolicy.c` | весь файл, 994 строки | политика, журнал источников **по юнитам**, живой набор и производная матрица «известный источник» (солидарность), «кто начал» (`dof_pair_*`), журнал решений, счётчики, консоль |
+| `ai/default/dofpolicy.c` | весь файл, 1037 строк | политика, журнал источников **по юнитам**, отдельный учёт нападений с участием варваров (`unit_source_barb`, `barb=1`, `barb_summary`), живой набор и производная матрица «известный источник» (солидарность), «кто начал» (`dof_pair_*`), журнал решений, счётчики, консоль |
 | `ai/default/dofpolicy.h` | весь файл, 115 строк | API (`dof_unit_is_source`, `dof_source_unit_count`, `dof_note_unit_attack`, `dof_set_acting_unit`), `DOF_SOURCE_HORIZON 20` |
 | `meson.build` | `server_inc`, список исходников | сборка модуля, путь `ai/default` |
 | `server/aiiface.c` | `call_incident()` | глобальная запись инцидентов |
