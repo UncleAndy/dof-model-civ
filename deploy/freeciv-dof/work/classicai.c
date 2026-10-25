@@ -165,6 +165,11 @@ static void cai_created_by_civil_war(struct player *original,
 **************************************************************************/
 static void cai_data_phase_begin(struct player *pplayer, bool is_new_phase)
 {
+  /* DOF: политика перечитывается в начале хода каждого места, поэтому файл
+   * /docker/freeciv/dof_policy.conf можно менять на ходу — следующий ход уже
+   * пойдёт по новой руке, без перезапуска стенда. Внутри reload стоит кэш по
+   * номеру хода, так что stat() делается один раз за ход. */
+  dof_policy_reload();
   struct ai_type *deftype = classic_ai_get_self();
 
   dai_data_phase_begin(deftype, pplayer, is_new_phase);

@@ -1,5 +1,5 @@
 --- orig/ai_classic_classicai.c	2024-01-04 04:46:54.000000000 +0100
-+++ work/classicai.c	2026-10-25 02:34:23.136345834 +0200
++++ work/classicai.c	2026-10-25 02:52:24.549889437 +0100
 @@ -37,6 +37,8 @@
  #include "daitools.h"
  #include "daiunit.h"
@@ -9,7 +9,19 @@
  #include "classicai.h"
  
  /* This function is only needed as symbol in module. Nevertheless
-@@ -702,6 +704,8 @@
+@@ -163,6 +165,11 @@
+ **************************************************************************/
+ static void cai_data_phase_begin(struct player *pplayer, bool is_new_phase)
+ {
++  /* DOF: политика перечитывается в начале хода каждого места, поэтому файл
++   * /docker/freeciv/dof_policy.conf можно менять на ходу — следующий ход уже
++   * пойдёт по новой руке, без перезапуска стенда. Внутри reload стоит кэш по
++   * номеру хода, так что stat() делается один раз за ход. */
++  dof_policy_reload();
+   struct ai_type *deftype = classic_ai_get_self();
+ 
+   dai_data_phase_begin(deftype, pplayer, is_new_phase);
+@@ -702,6 +709,8 @@
    ai->funcs.treaty_evaluate = cai_treaty_evaluate;
    ai->funcs.treaty_accepted = cai_treaty_accepted;
    ai->funcs.first_contact = cai_diplomacy_first_contact;

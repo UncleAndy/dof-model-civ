@@ -181,6 +181,13 @@ static void dof_log(const char *fmt, ...)
   va_end(args);
 
   log_normal("[DOF] %s", buf);
+
+  /* Стенд (publite2) держит движки с --log ../logs/..., но в этом окружении
+   * файл журнала не обновляется — строки теряются. Дублируем в stderr: он
+   * всегда попадает в /docker/logs/freeciv-web-stderr-<port>.log, поэтому
+   * поведение DOF на живом стенде видно без правки аргументов запуска. */
+  fprintf(stderr, "[DOF] %s\n", buf);
+  fflush(stderr);
 }
 
 /**********************************************************************//**
@@ -189,7 +196,18 @@ static void dof_log(const char *fmt, ...)
 void dof_policy_reload(void)
 {
   static int dof_checked_turn = -1;
+  static int dof_last_turn = -1;
   time_t mtime;
+
+  /* Новая партия в том же процессе (движок живёт с --keep, номер хода
+   * пошёл назад): источники прошлой игры не должны переехать в новую. */
+  if (game.info.turn < dof_last_turn) {
+    memset(dof_source_until, 0, sizeof(dof_source_until));
+    memset(dof_suppressed, 0, sizeof(dof_suppressed));
+    dof_policy.loaded = FALSE;
+    dof_checked_turn = -1;
+  }
+  dof_last_turn = game.info.turn;
 
   if (!dof_ledger_reset) {
     memset(dof_source_until, 0, sizeof(dof_source_until));
