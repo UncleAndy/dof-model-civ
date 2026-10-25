@@ -116,6 +116,7 @@ static int dof_acting_unit_id = 0;
  * and acts against the aggressor (solidarity). */
 static struct dof_incident dof_live[DOF_MAX_INCIDENTS];
 static int dof_live_count = -1;
+static int dof_live_turn = -1;   /* ход, на который построен срез */
 static bool dof_known_source[MAX_NUM_PLAYERS][MAX_NUM_PLAYERS];
 
 /**********************************************************************//**
@@ -257,6 +258,7 @@ void dof_policy_reload(void)
     dof_pair_init = FALSE;
     dof_incident_next = 0;
     dof_live_count = -1;
+    dof_live_turn = -1;
     dof_acting_unit_id = 0;
     dof_policy.loaded = FALSE;
     dof_checked_turn = -1;
@@ -279,6 +281,7 @@ void dof_policy_reload(void)
     memset(dof_live, 0, sizeof(dof_live));
     dof_incident_next = 0;
     dof_live_count = -1;
+    dof_live_turn = -1;
     dof_ledger_reset = TRUE;
   }
 
@@ -424,9 +427,13 @@ static void dof_live_refresh(void)
 {
   int i;
 
-  if (dof_live_count >= 0) {
+  /* The snapshot is valid for one turn only: a marked unit can die without
+   * producing any new incident, and a source must vanish with its unit. */
+  if (dof_live_count >= 0 && dof_live_turn == game.info.turn) {
     return;
   }
+
+  dof_live_turn = game.info.turn;
 
   dof_live_count = 0;
   memset(dof_known_source, 0, sizeof(dof_known_source));
@@ -483,7 +490,7 @@ static void dof_live_refresh(void)
 bool dof_is_source(const struct player *pplayer,
                    const struct player *other)
 {
-  int me, him;
+  int i, me, him;
 
   if (pplayer == NULL || other == NULL || pplayer == other) {
     return FALSE;
@@ -498,7 +505,29 @@ bool dof_is_source(const struct player *pplayer,
 
   dof_live_refresh();
 
-  return dof_known_source[me][him];
+  if (!dof_known_source[me][him]) {
+    return FALSE;
+  }
+
+  /* The snapshot is built once per turn; a marked unit may already be dead.
+   * The collapse source is the unit, so verify against the map right now. */
+  for (i = 0; i < DOF_MAX_INCIDENTS; i++) {
+    const struct dof_incident *inc = &dof_incidents[i];
+    const struct player *victim;
+
+    if (!inc->used || inc->owner != him) {
+      continue;
+    }
+    if (!dof_incident_live(inc)) {
+      continue;
+    }
+    victim = player_by_number(inc->victim);
+    if (victim != NULL && !dof_never_met(pplayer, victim)) {
+      return TRUE;
+    }
+  }
+
+  return FALSE;
 }
 
 /**********************************************************************//**
