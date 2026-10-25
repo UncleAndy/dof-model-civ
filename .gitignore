@@ -220,3 +220,6 @@ civrealm/
 .direnv/
 knowledge/
 drafts/reference/freeciv-src/
+
+# Девственные копии правленых файлов движка (достаются из контейнера заново)
+deploy/freeciv-dof/orig/
