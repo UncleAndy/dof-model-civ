@@ -1,5 +1,5 @@
---- orig/ai_default_daidiplomacy.c
-+++ work/daidiplomacy.c
+--- orig/ai_default_daidiplomacy.c	2026-10-25 01:40:00.000000000 +0200
++++ work/daidiplomacy.c	2026-10-25 22:34:02.797905387 +0100
 @@ -70,6 +70,8 @@
  #include "daiplayer.h"
  #include "daiunit.h"
@@ -63,7 +63,22 @@
    /* This will take us straight to war. */
    while (player_diplstate_get(pplayer, target)->type != DS_WAR) {
      if (pplayer_can_cancel_treaty(pplayer, target) != DIPL_OK) {
-@@ -1630,6 +1658,10 @@
+@@ -1607,6 +1635,9 @@
+   players_iterate(aplayer) {
+     if (pplayer->ai_common.love[player_index(aplayer)] < 0
+         && player_diplstate_get(pplayer, aplayer)->has_reason_to_cancel >= 2
++        /* DOF (M6): an insult is not a collapse. Trespassing grievances open
++         * wars just as surely as desire does, so the same source gate applies. */
++        && (!dof_enabled(pplayer) || dof_is_source(pplayer, aplayer))
+         && dai_diplomacy_get(ait, pplayer, aplayer)->countdown == -1) {
+       DIPLO_LOG(ait, LOG_DIPL2, pplayer, aplayer, "Plans war in revenge");
+       war_countdown(ait, pplayer, aplayer, map_size_checked(),
+@@ -1627,9 +1658,15 @@
+           || adip->countdown >= 0  /* already counting down to war */
+           || ship->state == SSHIP_NONE
+           || players_on_same_team(pplayer, aplayer)
++          /* DOF (M6): a space race is not an attack either. */
++          || (dof_enabled(pplayer) && !dof_is_source(pplayer, aplayer))
            || pplayers_at_war(pplayer, aplayer)) {
          continue;
        }
@@ -74,7 +89,7 @@
  
        /* A spaceship victory is always one single player's or team's victory */
        if (aplayer->spaceship.state == SSHIP_LAUNCHED
-@@ -1679,6 +1711,12 @@
+@@ -1679,6 +1716,12 @@
      if (NEVER_MET(pplayer, aplayer)) {
        continue;
      }
@@ -87,7 +102,7 @@
      turns = game.info.turn;
      turns -= player_diplstate_get(pplayer, aplayer)->first_contact_turn;
      if (WAR(pplayer, aplayer)) {
-@@ -1717,6 +1755,31 @@
+@@ -1717,6 +1760,31 @@
      war_countdown(ait, pplayer, target, 4 + map_size_checked(), war_reason);
    }
  
@@ -119,7 +134,7 @@
    /*** Declare war - against enemies of allies ***/
  
    players_iterate_alive(aplayer) {
-@@ -1726,6 +1789,9 @@
+@@ -1726,6 +1794,9 @@
          && adip->countdown == -1
          && !adip->is_allied_with_ally
          && !pplayers_at_war(pplayer, aplayer)
@@ -129,7 +144,7 @@
          && (player_diplstate_get(pplayer, aplayer)->type != DS_CEASEFIRE
              || fc_rand(5) < 1)) {
        DIPLO_LOG(ait, LOG_DEBUG, pplayer, aplayer, "plans war to help ally %s",
-@@ -1789,7 +1855,9 @@
+@@ -1789,7 +1860,9 @@
        /* No peace to enemies of our allies... or pointless peace. */
        if (is_barbarian(aplayer)
            || aplayer == pplayer
@@ -140,7 +155,7 @@
            || adip->countdown >= 0
            || !could_meet_with_player(pplayer, aplayer)) {
          continue;
-@@ -1927,6 +1995,20 @@
+@@ -1927,6 +2000,20 @@
        case DS_NO_CONTACT: /* but we do have embassy! weird. */
        case DS_WAR:
          clause.type = CLAUSE_CEASEFIRE;

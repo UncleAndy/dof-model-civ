@@ -29,13 +29,13 @@ while true; do
       || echo "[loop] $tag: прогон вернул ошибку"
   done
   .venv/bin/python deploy/freeciv-dof/series_report.py \
-    --tags "loop_none_r${r},loop_dof_r${r}" \
+    --tags "loop_none_r${r},loop_all_r${r}" \
     --md "deploy/freeciv-dof/logs/series/report_loop_r${r}.md" >/dev/null 2>&1 || true
   .venv/bin/python - "$r" <<'PY'
 import json, os, sys
 r = sys.argv[1]
 base = "deploy/freeciv-dof/logs/series"
-for arm in ("none", "dof"):
+for arm in ("none", "all"):
     p = f"{base}/loop_{arm}_r{r}.jsonl"
     if not os.path.exists(p):
         print(f"[stats] r{r} {arm}: файла нет")

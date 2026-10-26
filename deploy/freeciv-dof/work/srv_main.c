@@ -89,6 +89,9 @@
 #include "version.h"
 #include "victory.h"
 
+/* ai/default */
+#include "dofpolicy.h"
+
 /* server */
 #include "aiiface.h"
 #include "animals.h"
@@ -1000,6 +1003,31 @@ static void update_diplomatics(void)
              * war. */
             break;
           case 0:
+            log_normal("[DOF] cease_expiry turn=%d a=%s b=%s pair_dof=%d "
+                       "src_ab=%d src_ba=%d", game.info.turn,
+                       player_name(plr1), player_name(plr2),
+                       dof_pair_enabled(plr1, plr2) ? 1 : 0,
+                       dof_is_source(plr1, plr2) ? 1 : 0,
+                       dof_is_source(plr2, plr1) ? 1 : 0);
+            if (dof_pair_enabled(plr1, plr2)
+                && !dof_is_source(plr1, plr2) && !dof_is_source(plr2, plr1)) {
+              /* DOF: a cease-fire is not a countdown to war. With no living
+               * collapse source the war has no object left, so the pair simply
+               * returns to peace. */
+              state->type = DS_PEACE;
+              state2->type = DS_PEACE;
+              state->turns_left = 0;
+              state2->turns_left = 0;
+              notify_player(plr1, NULL, E_DIPLOMACY, ftc_server,
+                            _("The cease-fire with %s has run out. "
+                              "There is no quarrel left: peace holds."),
+                            player_name(plr2));
+              notify_player(plr2, NULL, E_DIPLOMACY, ftc_server,
+                            _("The cease-fire with %s has run out. "
+                              "There is no quarrel left: peace holds."),
+                            player_name(plr1));
+              break;
+            }
             notify_player(plr1, NULL, E_DIPLOMACY, ftc_server,
                           _("The cease-fire with %s has run out. "
                             "You are now at war with the %s."),

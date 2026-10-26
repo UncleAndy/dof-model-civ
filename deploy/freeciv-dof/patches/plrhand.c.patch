@@ -1,0 +1,25 @@
+--- orig/server_plrhand.c	2023-12-19 04:45:00.000000000 +0100
++++ work/plrhand.c	2026-10-25 22:33:38.970799972 +0100
+@@ -46,6 +46,9 @@
+ /* common/scriptcore */
+ #include "luascript_types.h"
+ 
++/* ai/default */
++#include "dofpolicy.h"
++
+ /* server */
+ #include "aiiface.h"
+ #include "barbarian.h"
+@@ -2273,6 +2276,12 @@
+ get_default_diplstate(const struct player *pplayer1,
+                       const struct player *pplayer2)
+ {
++  /* DOF: first contact is not an act of war. When both seats carry the policy
++   * the stranger is simply met, and any later war needs a collapse source. */
++  if (dof_pair_enabled(pplayer1, pplayer2)) {
++    return DS_PEACE;
++  }
++
+   players_iterate_alive(pplayer3) {
+     if (pplayer3 != pplayer1
+         && pplayer3 != pplayer2

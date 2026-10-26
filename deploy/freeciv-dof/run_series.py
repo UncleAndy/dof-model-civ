@@ -92,8 +92,9 @@ def q(s):
 
 def setup_game(tag, idx, args):
     d = f"{RUNDIR}/{tag}/{idx}"
-    # Один и тот же сид у всех рук: руки сравниваются на одинаковых картах.
-    seed = 1000 + idx * 17
+    # Сид задаётся базой и номером партии: база разводит руки и раунды,
+    # чтобы разные серии не повторяли одни и те же карты.
+    seed = args.seed_base + idx * 17
     serv = "\n".join([
         f"set aifill {args.aifill}",
         "set minp 0",
@@ -329,6 +330,8 @@ def main():
     ap.add_argument("--par", type=int, default=3)
     ap.add_argument("--base-port", type=int, default=6200)
     ap.add_argument("--timeout", type=int, default=3600)
+    ap.add_argument("--seed-base", type=int, default=1000,
+                    help="база сида: seed = base + idx*17 (разные серии — разные карты)")
     args = ap.parse_args()
 
     os.makedirs(LOGS, exist_ok=True)

@@ -22,6 +22,7 @@ work/classicai.c ai/classic/classicai.c
 work/daiunit.c ai/default/daiunit.c
 work/aiiface.c server/aiiface.c
 work/srv_main.c server/srv_main.c
+work/plrhand.c server/plrhand.c
 work/unithand.c server/unithand.c
 work/meson.build meson.build
 "

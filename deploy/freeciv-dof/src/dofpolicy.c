@@ -388,6 +388,15 @@ bool dof_enabled(const struct player *pplayer)
 }
 
 /**********************************************************************//**
+  Do both seats of a pair carry the policy? Diplomatic state is symmetric and
+  pairwise, so an engine rule may only be suspended when both sides are DOF.
+**************************************************************************/
+bool dof_pair_enabled(const struct player *one, const struct player *two)
+{
+  return dof_enabled(one) && dof_enabled(two);
+}
+
+/**********************************************************************//**
   Is this recorded incident still a live source? The unit must still exist and
   belong to the recorded attacker: the source of collapse is the unit, so the
   response ends when the unit is gone.
@@ -464,6 +473,14 @@ static void dof_live_refresh(void)
     dof_live[dof_live_count++] = *inc;
 
     if (attacker == NULL) {
+      continue;
+    }
+
+    /* Attacks on barbarians are pest control, not a collapse act: a player
+     * that clears a barbarian band must not become a legitimate target for
+     * every seat that knows the barbarians. The barbarian ledger still counts
+     * these incidents separately. */
+    if (sufferer != NULL && is_barbarian(sufferer)) {
       continue;
     }
 

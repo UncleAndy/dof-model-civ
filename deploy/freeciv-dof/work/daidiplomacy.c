@@ -1635,6 +1635,9 @@ void dai_diplomacy_actions(struct ai_type *ait, struct player *pplayer)
   players_iterate(aplayer) {
     if (pplayer->ai_common.love[player_index(aplayer)] < 0
         && player_diplstate_get(pplayer, aplayer)->has_reason_to_cancel >= 2
+        /* DOF (M6): an insult is not a collapse. Trespassing grievances open
+         * wars just as surely as desire does, so the same source gate applies. */
+        && (!dof_enabled(pplayer) || dof_is_source(pplayer, aplayer))
         && dai_diplomacy_get(ait, pplayer, aplayer)->countdown == -1) {
       DIPLO_LOG(ait, LOG_DIPL2, pplayer, aplayer, "Plans war in revenge");
       war_countdown(ait, pplayer, aplayer, map_size_checked(),
@@ -1655,6 +1658,8 @@ void dai_diplomacy_actions(struct ai_type *ait, struct player *pplayer)
           || adip->countdown >= 0  /* already counting down to war */
           || ship->state == SSHIP_NONE
           || players_on_same_team(pplayer, aplayer)
+          /* DOF (M6): a space race is not an attack either. */
+          || (dof_enabled(pplayer) && !dof_is_source(pplayer, aplayer))
           || pplayers_at_war(pplayer, aplayer)) {
         continue;
       }

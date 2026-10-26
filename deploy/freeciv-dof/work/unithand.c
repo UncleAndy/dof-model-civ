@@ -3446,6 +3446,15 @@ bool unit_perform_action(struct player *pplayer,
       dof_victim = tile_owner(target_tile);
     }
     if (dof_victim != NULL && dof_victim != pplayer) {
+      /* DOF (M6b): a collapse source is the only legitimate target. The engine
+       * treats DS_NO_CONTACT as war, so a stranger one has never met is a legal
+       * victim - that is "ignorance is hostility", the very thing the policy
+       * removes. Barbarians stay fair game. */
+      if (dof_enabled(pplayer) && !is_barbarian(dof_victim)
+          && !dof_is_source(pplayer, dof_victim)) {
+        dof_journal_blocked(pplayer, dof_victim, "attack_not_source");
+        return FALSE;
+      }
       dof_note_unit_attack(actor_unit, dof_victim);
     }
   }

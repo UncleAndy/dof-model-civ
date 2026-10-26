@@ -47,6 +47,11 @@ void dof_policy_reload(void);
 /* Is the DOF policy active for this player (seat)? */
 bool dof_enabled(const struct player *pplayer);
 
+/* Both seats of a pair carry the policy. Diplomatic state is pairwise, so a
+ * rule that disables an engine-driven war may only apply when neither side is
+ * a control seat. */
+bool dof_pair_enabled(const struct player *one, const struct player *two);
+
 /* Is "other" a collapse source from the point of view of "pplayer"?
  * A source is a player observed attacking somebody "pplayer" knows and has
  * met itself, so self-defence and solidarity are the same judgement. */
