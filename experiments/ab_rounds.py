@@ -11,6 +11,7 @@
 import argparse
 import concurrent.futures
 import datetime
+import queue
 import hashlib
 import json
 import os
@@ -334,36 +335,112 @@ def cmp_sections(base, sec):
             "final_turn_diff": (None if ft is None or bt is None else ft - bt)}
 
 
-def play_round(rnd, seed, args, out):
+def _policy_of(arm):
+    for name, policy, _ in ARMS:
+        if name == arm:
+            return policy
+    return "none"
+
+
+def _assemble(rnd, seed, sections, args, alt):
+    """Собрать раунд из трёх готовых разделов."""
     data = {"round": rnd, "seed": seed, "started_utc": now(),
             "params": {"turns": args.turns, "aifill": args.aifill, "size": args.size,
-                       "engine_md5": engine_md5(), "parallel": True},
-            "sections": {}}
-    # Все три партии раунда идут одновременно: у каждой свой порт, свой каталог
-    # в контейнере и свой jsonl, поэтому данные не перемешиваются.
-    with concurrent.futures.ThreadPoolExecutor(max_workers=len(ARMS)) as ex:
-        futs = [(arm[0], ex.submit(_one_arm, rnd, seed, args, out, arm)) for arm in ARMS]
-        errors = []
-        for _, fut in futs:
-            try:
-                nm, sec = fut.result()
-                data["sections"][nm] = sec
-                log(f"раунд {rnd}: {nm} готов ({sec['secs']} c, ход {sec['final_turn']}, "
-                    f"живых {sec['alive']}/{sec['players']}, убито {sec['units_killed']}, "
-                    f"объявлений {sec['dof_declares']}, "
-                    f"кораблей запущено {len(sec['spaceship_launched'])})", out)
-            except Exception as e:
-                errors.append(e)
-    if errors:
-        raise errors[0]
-    a = data["sections"]["nodof"]
-    b = data["sections"]["dof"]
-    c = data["sections"]["half"]
+                       "engine_md5": engine_md5(), "pool": args.par_games},
+            "sections": sections}
+    a, b, c = sections["nodof"], sections["dof"], sections["half"]
     data["comparison"] = {"dof_vs_nodof": cmp_sections(a, b),
                           "half_vs_nodof": cmp_sections(a, c),
                           "half_vs_dof": cmp_sections(b, c)}
+    if alt:
+        data["seed_fallback"] = {"requested": args.seed_base + rnd * 17,
+                                 "used": seed,
+                                 "why": "map generation failed for requested seed"}
     data["finished_utc"] = now()
     return data
+
+
+def run_pool(args, out, done):
+    """Пул партий: как только одна заканчивается, стартует следующая.
+
+    Одновременно идёт не больше --par-games партий, причём это могут быть
+    партии разных раундов. Каждая живёт в своём каталоге контейнера, на своём
+    порту и со своим jsonl, поэтому данные не перемешиваются; раунд пишется,
+    когда собраны все три его раздела.
+    """
+    ports = queue.Queue()
+    for p in args.ports_list:
+        ports.put(p)
+
+    pending, queued = [], set()
+    for rnd in range(args.start, args.start + args.count):
+        if rnd in done:
+            continue
+        for name, _, _ in ARMS:
+            pending.append({"rnd": rnd, "arm": name, "alt": 0, "tries": 0})
+            queued.add((rnd, name, 0))
+
+    rounds, inflight = {}, {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=args.par_games) as ex:
+        while pending or inflight:
+            while pending and len(inflight) < args.par_games:
+                t = pending.pop(0)
+                port = ports.get()
+                seed = args.seed_base + t["rnd"] * 17 + t["alt"]
+                arm = (t["arm"], _policy_of(t["arm"]), port)
+                fut = ex.submit(_one_arm, t["rnd"], seed, args, out, arm)
+                inflight[fut] = dict(t, port=port, seed=seed)
+            if not inflight:
+                break
+            finished, _ = concurrent.futures.wait(
+                inflight, return_when=concurrent.futures.FIRST_COMPLETED)
+            for fut in finished:
+                info = inflight.pop(fut)
+                ports.put(info["port"])
+                rnd, arm = info["rnd"], info["arm"]
+                state = rounds.setdefault(rnd, {"sections": {}, "alt": 0})
+                try:
+                    name, sec = fut.result()
+                except Exception as e:
+                    msg = str(e)
+                    if "MAPGEN" in msg:
+                        # Карта под этот сид не генерируется: переигрываем весь
+                        # раунд на сиде +1, уже собранные разделы отбрасываем.
+                        if info["alt"] == state["alt"]:
+                            state["alt"] += 1
+                            state["sections"].clear()
+                            log(f"раунд {rnd}: карта для сида {info['seed']} не генерируется, "
+                                f"беру {args.seed_base + rnd * 17 + state['alt']}", out)
+                            for nm, _, _ in ARMS:
+                                key = (rnd, nm, state["alt"])
+                                if key not in queued:
+                                    queued.add(key)
+                                    pending.append({"rnd": rnd, "arm": nm,
+                                                    "alt": state["alt"], "tries": 0})
+                        continue
+                    info["tries"] += 1
+                    log(f"раунд {rnd}: {arm} сбой (попытка {info['tries']}): {msg}", out)
+                    if info["tries"] < args.retries:
+                        pending.insert(0, {"rnd": rnd, "arm": arm,
+                                           "alt": info["alt"], "tries": info["tries"]})
+                    else:
+                        with open(os.path.join(out, "failed_rounds.log"), "a") as f:
+                            f.write(f"{rnd}\t{arm}\t{info['seed']}\t{msg}\n")
+                    continue
+                sec["totals"] = totals(sec)
+                state["sections"][name] = sec
+                log(f"раунд {rnd}: {name} готов ({sec['secs']} c, ход {sec['final_turn']}, "
+                    f"живых {sec['alive']}/{sec['players']}, убито {sec['units_killed']}, "
+                    f"объявлений {sec['dof_declares']}, "
+                    f"кораблей {len(sec['spaceship_launched'])}, "
+                    f"в работе {len(inflight)}/{args.par_games})", out)
+                if len(state["sections"]) == len(ARMS) and rnd not in done:
+                    data = _assemble(rnd, info["seed"], state["sections"], args, state["alt"])
+                    write_round(data, out)
+                    done.add(rnd)
+                    log(f"раунд {rnd} записан (всего {len(done)} из {args.count})", out)
+                    if len(done) % args.summary_every == 0:
+                        summarise(out)
 
 
 def write_round(data, out):
@@ -482,7 +559,14 @@ def main():
                     help="дополнительная серверная команда, например 'set endspaceship 0'")
     ap.add_argument("--out", default=os.path.join(ROOT, "experiments", "dof-ab-26102026"))
     ap.add_argument("--summary-every", type=int, default=10)
+    ap.add_argument("--par-games", type=int, default=4,
+                    help="сколько партий играть одновременно (пул)")
+    ap.add_argument("--ports", default="8100,8200,8300,8400",
+                    help="порты для пула, через запятую")
     args = ap.parse_args()
+    args.ports_list = [int(x) for x in args.ports.split(",") if x.strip()]
+    if len(args.ports_list) < args.par_games:
+        ap.error("портов меньше, чем партий в пуле")
 
     out = args.out
     os.makedirs(os.path.join(out, "rounds"), exist_ok=True)
@@ -490,45 +574,7 @@ def main():
         f"сид {args.seed_base}+17*r, движок {engine_md5()}", out)
     done = load_done(out)
     log(f"уже готово раундов: {len(done)}", out)
-    for rnd in range(args.start, args.start + args.count):
-        if rnd in done:
-            continue
-        seed = args.seed_base + rnd * 17
-        alt = 0            # подмена сида, если карта под этот сид не генерируется
-        attempt = 0
-        while True:
-            attempt += 1
-            seed_try = seed + alt
-            try:
-                data = play_round(rnd, seed_try, args, out)
-                if alt:
-                    data["seed_fallback"] = {"requested": seed, "used": seed_try,
-                                             "why": "map generation failed for requested seed"}
-                write_round(data, out)
-                log(f"раунд {rnd} записан (попытка {attempt}, сид {seed_try})", out)
-                break
-            except Exception as e:
-                log(f"раунд {rnd} попытка {attempt} (сид {seed_try}) провалилась: {e}", out)
-                for name, _, port in ARMS:
-                    sh(f"docker exec {CONTAINER} sh -lc 'rm -rf {RUNDIR}/ab{rnd:04d}{name}'")
-                    for f in (f"{LOGS}/ab{rnd:04d}{name}.jsonl",):
-                        if os.path.exists(f):
-                            os.remove(f)
-                # Отказ генерации карты — не сбой стенда: лечится другим сидом.
-                if "MAPGEN" in str(e) and alt < 4:
-                    alt += 1
-                    log(f"раунд {rnd}: карта под сид {seed_try} не генерируется, "
-                        f"пробую {seed + alt}", out)
-                    continue
-                if attempt >= args.retries:
-                    log(f"раунд {rnd}: исчерпаны попытки, раунд пропущен", out)
-                    with open(os.path.join(out, "failed_rounds.log"), "a") as f:
-                        f.write(f"{rnd}\t{seed}\t{e}\n")
-                    break
-                restart_stand(out)
-        if (rnd - args.start + 1) % args.summary_every == 0:
-            summarise(out)
-    summarise(out)
+    run_pool(args, out, done)
     log("ВСЕ ЗАПЛАНИРОВАННЫЕ РАУНДЫ ОБРАБОТАНЫ", out)
 
 
