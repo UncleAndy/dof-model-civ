@@ -104,6 +104,9 @@ def setup_game(tag, idx, args):
         f"set savename dof-{tag}-{idx}",
         f"set gameseed {seed}",
         f"set mapseed {seed}",
+        # Дополнительные серверные команды для разовых замеров (например,
+        # отключение космической победы: --set 'set victories ""').
+        *(getattr(args, "set", None) or []),
         "start",
         "",
     ])
@@ -330,6 +333,8 @@ def main():
     ap.add_argument("--par", type=int, default=3)
     ap.add_argument("--base-port", type=int, default=6200)
     ap.add_argument("--timeout", type=int, default=3600)
+    ap.add_argument("--set", action="append", default=None, metavar="CMD",
+                    help="дополнительная серверная команда, например 'set victories \"\"'")
     ap.add_argument("--seed-base", type=int, default=1000,
                     help="база сида: seed = base + idx*17 (разные серии — разные карты)")
     args = ap.parse_args()
