@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-"""Раунды A/B: одна карта (один сид), две последовательные партии — без DOF и с DOF.
+"""Раунды A/B/C: одна карта (один сид), три партии — без DOF, с DOF у всех, 50/50.
 
-Раунд = две партии с одинаковым gameseed/mapseed, 200 ходов, aifill 10, size 2.
-Партии идут строго последовательно. Данные каждой партии пишутся в отдельный
-каталог контейнера и в отдельный jsonl, затем переносятся в один json раунда
-двумя разделами (`nodof`, `dof`) и исходные файлы удаляются — перемешать нельзя.
+Раунд = три партии с одинаковым gameseed/mapseed. Партии идут параллельно на
+разных портах, каждая в своём каталоге контейнера и со своим jsonl, затем
+переносятся в один json раунда разделами (`nodof`, `dof`, `half`); исходные
+файлы удаляются — перемешать нельзя.
 
-  ab_rounds.py --count 1000 --start 0
+  ab_rounds.py --count 10 --start 0 --turns 3000
 """
 import argparse
+import concurrent.futures
 import datetime
 import hashlib
 import json
@@ -25,7 +26,10 @@ PY = os.path.join(ROOT, ".venv", "bin", "python")
 CONTAINER = "freeciv-web"
 RUNDIR = "/home/docker/dofrun/series"
 BIN = "/home/docker/freeciv/bin/freeciv-web"
-ARMS = (("nodof", "none", 7600), ("dof", "all", 7800))
+# Ручки раунда: без DOF, DOF у всех мест, DOF через одно место (50/50).
+# Политика "even" включает DOF для чётных мест — это и есть половина состава.
+ARMS = (("nodof", "none", 7600), ("dof", "all", 7700), ("half", "even", 7800))
+SAVE_SUFFIX = {"nodof": "no_dof", "dof": "dof", "half": "half"}
 
 
 def now():
@@ -107,7 +111,8 @@ def last_row(tag):
 def parse_journal(stdout_text):
     """Краткая выжимка журнала DOF: счётчики и образцы событий."""
     out = {"policy": None, "roster_dof": None, "declares": [], "attacks": [],
-           "blocked": 0, "suppressed": 0, "cease_expiry": 0, "unit_source": 0}
+           "blocked": 0, "suppressed": 0, "cease_expiry": 0, "unit_source": 0,
+           "on_source": 0}
     for line in stdout_text.splitlines():
         if "[DOF] policy=" in line:
             m = re.search(r"policy=(\w+)", line)
@@ -125,9 +130,51 @@ def parse_journal(stdout_text):
             out["suppressed"] += 1
         elif "[DOF] cease_expiry" in line:
             out["cease_expiry"] += 1
+        elif "[DOF] unit_source_on_source" in line:
+            # M7: нападение на уже объявленный источник — не коллапс.
+            out["on_source"] += 1
         elif "[DOF] unit_source" in line:
             out["unit_source"] += 1
     return out
+
+
+def save_facts(path):
+    """Разбор финального сейва: ход, год, состояние корабля у каждого места.
+
+    Космические достижения в обычной игре завершают партию, поэтому пишем их
+    отдельно: state 0 — не строился, 1 — строится, 2 — запущен, 3 — долетел.
+    """
+    r = subprocess.run(["zstd", "-dc", path], capture_output=True, text=True, timeout=300)
+    if r.returncode != 0:
+        return {"turn": None, "year": None, "players": {}}
+    turn = year = None
+    players, cur = {}, None
+    for line in r.stdout.splitlines():
+        if cur is None:
+            if turn is None and line.startswith("turn="):
+                turn = int(line.split("=", 1)[1] or 0)
+            elif year is None and line.startswith("year="):
+                year = int(line.split("=", 1)[1] or 0)
+        m = re.match(r"^\[player(\d+)\]$", line)
+        if m:
+            cur = {"id": int(m.group(1))}
+            players[cur["id"]] = cur
+            continue
+        if line.startswith("["):
+            cur = None
+            continue
+        if cur is None or "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        if k in ("name", "nation", "is_alive"):
+            cur[k] = v.strip().strip('"')
+        elif k.startswith("spaceship."):
+            kk = k.split(".", 1)[1]
+            try:
+                cur["sship_" + kk] = int(v)
+            except ValueError:
+                pass
+    return {"turn": turn, "year": year, "players": players}
 
 
 def play(arm, policy, port, tag, seed, args, out, rnd):
@@ -143,6 +190,8 @@ def play(arm, policy, port, tag, seed, args, out, rnd):
            "--aifill", str(args.aifill), "--size", str(args.size), "--par", "1",
            "--policy", policy, "--seed-base", str(seed), "--base-port", str(port),
            "--timeout", str(args.timeout)]
+    for extra in (getattr(args, "set", None) or []):
+        cmd += ["--set", extra]
     t0 = time.time()
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=args.timeout + 300)
     secs = round(time.time() - t0, 1)
@@ -174,6 +223,15 @@ def play(arm, policy, port, tag, seed, args, out, rnd):
     seeds_in = sorted({x.split()[-1] for x in lines[2:]})
     if seeds_in and seeds_in != [str(seed)]:
         raise RuntimeError(f"{tag}: в s.serv сид {seeds_in}, ожидался {seed}")
+    # Какие настройки завершения игры реально попали в s.serv: по ним видно,
+    # отключены ли победы (disabled) или действуют по умолчанию.
+    r = sh(f"docker exec {CONTAINER} sh -lc 'cat {d}/s.serv'")
+    victory_settings = {}
+    for ln in r.stdout.splitlines():
+        parts = ln.strip().split(None, 2)
+        if (len(parts) == 3 and parts[0] == "set"
+                and parts[1] in ("victories", "endspaceship", "endvictory")):
+            victory_settings[parts[1]] = parts[2].strip()
     r = sh(f"docker exec {CONTAINER} sh -lc 'cd {d} && wc -c < stdout.txt'")
     stdout_bytes = int(r.stdout.strip() or 0)
     r = sh(f"docker exec {CONTAINER} sh -lc 'cd {d} && cat stdout.txt'", timeout=120)
@@ -201,9 +259,36 @@ def play(arm, policy, port, tag, seed, args, out, rnd):
     # Финальный сейв кладём рядом с результатами, с человекочитаемым именем.
     save_dir = os.path.join(out, "rounds", "saves")
     os.makedirs(save_dir, exist_ok=True)
-    suffix = "no_dof" if arm == "nodof" else "dof"
-    sh(f"docker cp {CONTAINER}:{d}/{save} "
-       f"{os.path.join(save_dir, f'save_round_{rnd}_{suffix}.sav.zst')}")
+    host_save = os.path.join(save_dir, f"save_round_{rnd}_{SAVE_SUFFIX[arm]}.sav.zst")
+    sh(f"docker cp {CONTAINER}:{d}/{save} {host_save}")
+    facts = save_facts(host_save)
+
+    # Достижения, которые в обычной игре завершают партию: состояние корабля
+    # по местам (2 — запущен, 3 — долетел) и культура.
+    sship = {p.get("name"): p for p in facts["players"].values()}
+    for n in row["nations"]:
+        p = sship.get(n.get("name")) or {}
+        n["spaceship_state"] = p.get("sship_state", 0)
+        for kk in ("structurals", "components", "modules", "fuel", "propulsion",
+                   "habitation", "life_support", "solar_panels"):
+            if "sship_" + kk in p:
+                n["sship_" + kk] = p["sship_" + kk]
+    launched = sorted(n["name"] for n in row["nations"]
+                      if (n.get("spaceship_state") or 0) >= 2)
+    arrived = sorted(n["name"] for n in row["nations"]
+                     if (n.get("spaceship_state") or 0) >= 3)
+    culture = sorted(((n.get("culture") or 0, n.get("name")) for n in row["nations"]
+                      if not n.get("is_barbarian")), reverse=True)
+    section["final_turn"] = facts["turn"]
+    section["final_year"] = facts["year"]
+    section["victory_settings"] = victory_settings
+    section["spaceship_launched"] = launched
+    section["spaceship_arrived"] = arrived
+    section["culture_top"] = ({"name": culture[0][1], "value": culture[0][0]}
+                              if culture else None)
+    section["culture_second"] = ({"name": culture[1][1], "value": culture[1][0]}
+                                 if len(culture) > 1 else None)
+    section["conquest_would_be"] = (row["alive"] == 1 and row["players"] > 1)
     sh(f"docker exec {CONTAINER} sh -lc 'rm -rf {RUNDIR}/{tag}'")
     if os.path.exists(jsonl):
         os.remove(jsonl)
@@ -226,27 +311,57 @@ def totals(section):
             "declares": section["dof_declares"], "attacks": section["dof_news"]}
 
 
+def _one_arm(rnd, seed, args, out, arm):
+    """Одна партия раунда: обёртка для запуска в отдельном потоке."""
+    name, policy, port = arm
+    tag = f"ab{rnd:04d}{name}"
+    sec = play(name, policy, port, tag, seed, args, out, rnd)
+    sec["totals"] = totals(sec)
+    return name, sec
+
+
+def cmp_sections(base, sec):
+    """Разница метрик одной руки относительно базовой."""
+    def d(k):
+        return round(sec["totals"].get(k, 0) - base["totals"].get(k, 0), 2)
+    ft, bt = sec.get("final_turn"), base.get("final_turn")
+    return {"alive_diff": sec["alive"] - base["alive"],
+            "kills_diff": sec["units_killed"] - base["units_killed"],
+            "declares_diff": sec["dof_declares"] - base["dof_declares"],
+            "score_mean_diff": d("score_mean"),
+            "bulbs_mean_diff": d("bulbs_mean"),
+            "techs_mean_diff": d("techs_mean"),
+            "final_turn_diff": (None if ft is None or bt is None else ft - bt)}
+
+
 def play_round(rnd, seed, args, out):
     data = {"round": rnd, "seed": seed, "started_utc": now(),
             "params": {"turns": args.turns, "aifill": args.aifill, "size": args.size,
-                       "engine_md5": engine_md5()},
+                       "engine_md5": engine_md5(), "parallel": True},
             "sections": {}}
-    for name, policy, port in ARMS:
-        tag = f"ab{rnd:04d}{name}"
-        sec = play(name, policy, port, tag, seed, args, out, rnd)
-        sec["totals"] = totals(sec)
-        data["sections"][name] = sec
-        log(f"раунд {rnd}: {name} готов ({sec['secs']} c, живых {sec['alive']}/{sec['players']}, "
-            f"убито {sec['units_killed']}, объявлений {sec['dof_declares']})", out)
-    a, b = data["sections"]["nodof"], data["sections"]["dof"]
-    data["comparison"] = {
-        "alive_diff": b["alive"] - a["alive"],
-        "kills_diff": b["units_killed"] - a["units_killed"],
-        "declares_diff": b["dof_declares"] - a["dof_declares"],
-        "score_mean_diff": round(b["totals"]["score_mean"] - a["totals"]["score_mean"], 2),
-        "bulbs_mean_diff": round(b["totals"]["bulbs_mean"] - a["totals"]["bulbs_mean"], 2),
-        "techs_mean_diff": round(b["totals"]["techs_mean"] - a["totals"]["techs_mean"], 2),
-    }
+    # Все три партии раунда идут одновременно: у каждой свой порт, свой каталог
+    # в контейнере и свой jsonl, поэтому данные не перемешиваются.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(ARMS)) as ex:
+        futs = [(arm[0], ex.submit(_one_arm, rnd, seed, args, out, arm)) for arm in ARMS]
+        errors = []
+        for _, fut in futs:
+            try:
+                nm, sec = fut.result()
+                data["sections"][nm] = sec
+                log(f"раунд {rnd}: {nm} готов ({sec['secs']} c, ход {sec['final_turn']}, "
+                    f"живых {sec['alive']}/{sec['players']}, убито {sec['units_killed']}, "
+                    f"объявлений {sec['dof_declares']}, "
+                    f"кораблей запущено {len(sec['spaceship_launched'])})", out)
+            except Exception as e:
+                errors.append(e)
+    if errors:
+        raise errors[0]
+    a = data["sections"]["nodof"]
+    b = data["sections"]["dof"]
+    c = data["sections"]["half"]
+    data["comparison"] = {"dof_vs_nodof": cmp_sections(a, b),
+                          "half_vs_nodof": cmp_sections(a, c),
+                          "half_vs_dof": cmp_sections(b, c)}
     data["finished_utc"] = now()
     return data
 
@@ -279,7 +394,7 @@ def load_done(out):
         try:
             with open(os.path.join(d, name), encoding="utf-8") as f:
                 data = json.load(f)
-            if {"nodof", "dof"} <= set(data.get("sections", {})):
+            if {"nodof", "dof", "half"} <= set(data.get("sections", {})):
                 done.add(int(m.group(1)))
         except Exception:
             continue
@@ -297,10 +412,12 @@ def summarise(out):
                 data = json.load(f)
         except Exception:
             continue
-        if {"nodof", "dof"} <= set(data.get("sections", {})):
+        if {"nodof", "dof", "half"} <= set(data.get("sections", {})):
             rows.append(data)
     if not rows:
         return
+    ARMS_NAMES = [a[0] for a in ARMS]
+
     def agg(arm):
         ts = [r["sections"][arm]["totals"] for r in rows]
         keys = ["score_mean", "score_sum", "cities_sum", "population_sum", "techs_mean",
@@ -309,28 +426,46 @@ def summarise(out):
         o = {"rounds": len(ts)}
         for k in keys:
             o[k] = round(sum(t.get(k, 0) for t in ts) / len(ts), 2)
+        # Достижения, которые в обычной игре завершают партию.
+        o["spaceship_launched_rounds"] = sum(
+            1 for r in rows if r["sections"][arm].get("spaceship_launched"))
+        o["spaceship_arrived_rounds"] = sum(
+            1 for r in rows if r["sections"][arm].get("spaceship_arrived"))
+        o["spaceship_launched_max"] = max(
+            (len(r["sections"][arm].get("spaceship_launched") or []) for r in rows),
+            default=0)
+        o["conquest_rounds"] = sum(
+            1 for r in rows if r["sections"][arm].get("conquest_would_be"))
+        o["final_turn_mean"] = round(sum(
+            (r["sections"][arm].get("final_turn") or 0) for r in rows) / len(rows), 1)
         return o
+
     summary = {"generated_utc": now(), "rounds_done": len(rows),
                "seed_range": [min(r["seed"] for r in rows), max(r["seed"] for r in rows)],
-               "params": rows[0]["params"],
-               "nodof": agg("nodof"), "dof": agg("dof")}
+               "params": rows[0]["params"]}
+    for a in ARMS_NAMES:
+        summary[a] = agg(a)
     with open(os.path.join(out, "summary.json"), "w", encoding="utf-8") as f:
         json.dump(summary, f, ensure_ascii=False, indent=1)
     with open(os.path.join(out, "report.md"), "w", encoding="utf-8") as f:
-        f.write("# A/B: без DOF против DOF у всех мест\n\n")
+        f.write("# A/B/C: без DOF, DOF у всех, DOF 50/50\n\n")
         f.write(f"раундов: {len(rows)}, сиды {min(r['seed'] for r in rows)}–"
                 f"{max(r['seed'] for r in rows)}, {rows[0]['params']['turns']} ходов, "
                 f"aifill {rows[0]['params']['aifill']}, size {rows[0]['params']['size']}, "
-                f"движок `{rows[0]['params']['engine_md5']}`\n\n")
-        f.write("| метрика (среднее на раунд) | без DOF | DOF | разница |\n|---|---|---|---|\n")
+                f"движок `{rows[0]['params']['engine_md5']}`, партии раунда параллельно\n\n")
+        f.write("| метрика (среднее на раунд) | без DOF | DOF у всех | 50/50 |\n|---|---|---|---|\n")
         names = {"score_mean": "score на место", "cities_sum": "городов всего",
                  "population_sum": "население всего", "techs_mean": "технологий на место",
                  "bulbs_mean": "наука, bulbs/ход", "units_killed": "убито юнитов",
                  "units_lost": "потеряно юнитов", "alive": "живых мест",
-                 "players": "мест в партии", "declares": "объявлений войны"}
+                 "players": "мест в партии", "declares": "объявлений войны",
+                 "final_turn_mean": "средний финальный ход",
+                 "spaceship_launched_rounds": "раундов с запуском корабля",
+                 "spaceship_arrived_rounds": "раундов с прибытием корабля",
+                 "conquest_rounds": "раундов с завоеванием"}
         for k, label in names.items():
-            f.write(f"| {label} | {summary['nodof'][k]} | {summary['dof'][k]} | "
-                    f"{round(summary['dof'][k] - summary['nodof'][k], 2)} |\n")
+            f.write(f"| {label} | {summary['nodof'].get(k)} | {summary['dof'].get(k)} | "
+                    f"{summary['half'].get(k)} |\n")
 
 
 def main():
@@ -343,6 +478,8 @@ def main():
     ap.add_argument("--size", type=int, default=2)
     ap.add_argument("--timeout", type=int, default=900)
     ap.add_argument("--retries", type=int, default=3)
+    ap.add_argument("--set", action="append", default=None, metavar="CMD",
+                    help="дополнительная серверная команда, например 'set endspaceship 0'")
     ap.add_argument("--out", default=os.path.join(ROOT, "experiments", "dof-ab-26102026"))
     ap.add_argument("--summary-every", type=int, default=10)
     args = ap.parse_args()

@@ -87,6 +87,10 @@ struct dof_incident {
   int turn;       /* turn of the attack */
   bool used;
   bool gone_logged;
+  bool on_source; /* M7: the victim was already a collapse source, so this
+                   * attack is an answer, not a collapse act. The record is
+                   * kept for the journal, but it never classifies its author
+                   * as a source and never grounds solidarity. */
 };
 
 static struct dof_incident dof_incidents[DOF_MAX_INCIDENTS];
@@ -105,6 +109,8 @@ static bool dof_ledger_reset = FALSE;
  * with and without them. */
 static int dof_barb_marks = 0;
 static int dof_barb_rules = 0;
+/* M7: attacks on an already declared collapse source (kept, never a source). */
+static int dof_attacks_on_source = 0;
 static int dof_summary_turn = -1;
 
 /* Unit performing an action right now, set by server/unithand.c. */
@@ -272,8 +278,9 @@ void dof_policy_reload(void)
    * журнале приходится считать по тексту строк. */
   if (game.info.turn % 50 == 0 && dof_summary_turn != game.info.turn) {
     dof_summary_turn = game.info.turn;
-    dof_log("barb_summary turn=%d marks=%d rules=%d",
-            game.info.turn, dof_barb_marks, dof_barb_rules);
+    dof_log("barb_summary turn=%d marks=%d rules=%d on_source=%d",
+            game.info.turn, dof_barb_marks, dof_barb_rules,
+            dof_attacks_on_source);
   }
 
   if (!dof_ledger_reset) {
@@ -453,6 +460,12 @@ static void dof_live_refresh(void)
     struct player *sufferer;
 
     if (!inc->used) {
+      continue;
+    }
+
+    if (inc->on_source) {
+      /* M7: an answer to a declared source is never a source itself, so it
+       * stays out of the snapshot that grounds both defence and solidarity. */
       continue;
     }
 
@@ -730,6 +743,27 @@ static bool dof_pair_is_initiator(int owner, int victim)
 }
 
 /**********************************************************************//**
+  Is this player a declared collapse source right now - for anyone? The
+  ledger holds one record per attacking unit; the M7 flag marks answers to a
+  source and such records do not count here, so answering a source never
+  chains a new one.
+**************************************************************************/
+static bool dof_is_source_any(int victim)
+{
+  int i;
+
+  dof_live_refresh();
+
+  for (i = 0; i < dof_live_count; i++) {
+    if (dof_live[i].owner == victim) {
+      return TRUE;
+    }
+  }
+
+  return FALSE;
+}
+
+/**********************************************************************//**
   Record one attacking unit in the ledger and journal it. An attack performed
   by the same unit on the same victim in the same turn is recorded once.
 **************************************************************************/
@@ -739,6 +773,7 @@ static void dof_incident_add(int unit_id, int owner, int victim)
   struct player *attacker = player_by_number(owner);
   struct player *sufferer = player_by_number(victim);
   struct unit *punit = unit_id > 0 ? game_unit_by_number(unit_id) : NULL;
+  bool on_source;
   int i;
 
   for (i = 0; i < DOF_MAX_INCIDENTS; i++) {
@@ -750,7 +785,12 @@ static void dof_incident_add(int unit_id, int owner, int victim)
     }
   }
 
-  if (!dof_pair_is_initiator(owner, victim)) {
+  /* DOF (M7): an attack on a player who is already a declared collapse source
+   * is an answer, not a collapse act. It is recorded with the flag so that the
+   * journal and the statistics keep it, but it never classifies the attacker. */
+  on_source = dof_is_source_any(victim);
+
+  if (!on_source && !dof_pair_is_initiator(owner, victim)) {
     /* A counter-attack by the defending side: not a source of collapse. */
     return;
   }
@@ -761,6 +801,7 @@ static void dof_incident_add(int unit_id, int owner, int victim)
   inc->turn = game.info.turn;
   inc->used = TRUE;
   inc->gone_logged = FALSE;
+  inc->on_source = on_source;
 
   dof_incident_next = (dof_incident_next + 1) % DOF_MAX_INCIDENTS;
   dof_live_count = -1;
@@ -771,6 +812,17 @@ static void dof_incident_add(int unit_id, int owner, int victim)
       || (sufferer != NULL && is_barbarian(sufferer))) {
     dof_barb_marks++;
     dof_log("unit_source_barb turn=%d unit=%d utype=%s owner=%s victim=%s",
+            game.info.turn, unit_id,
+            punit != NULL ? unit_rule_name(punit) : "?",
+            attacker != NULL ? player_name(attacker) : "?",
+            sufferer != NULL ? player_name(sufferer) : "?");
+    return;
+  }
+
+  if (on_source) {
+    /* M7: kept for the journal, but this record is not a collapse source. */
+    dof_attacks_on_source++;
+    dof_log("unit_source_on_source turn=%d unit=%d utype=%s owner=%s victim=%s",
             game.info.turn, unit_id,
             punit != NULL ? unit_rule_name(punit) : "?",
             attacker != NULL ? player_name(attacker) : "?",
