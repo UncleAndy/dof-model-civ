@@ -1,0 +1,102 @@
+{
+ "rounds": 1000,
+ "params": {
+  "turns": 200,
+  "aifill": 10,
+  "size": 2,
+  "engine_md5": "46c45251cad1bc739951772b7fb764af"
+ },
+ "alpha": 0.05,
+ "bonferroni": 0.00625,
+ "metrics_tested": 8,
+ "tests": {
+  "score_mean": {
+   "mean_diff": 23.43,
+   "t": 86.8,
+   "p": 0.0,
+   "better": 990,
+   "worse": 10,
+   "n": 1000,
+   "median": 24.15,
+   "p5": 8.81,
+   "p95": 36.5
+  },
+  "cities_sum": {
+   "mean_diff": 8.03,
+   "t": 41.6,
+   "p": 2.8499971274739345e-220,
+   "better": 912,
+   "worse": 64,
+   "n": 1000,
+   "median": 8.0,
+   "p5": -1.0,
+   "p95": 19.0
+  },
+  "population_sum": {
+   "mean_diff": 66.38,
+   "t": 73.3,
+   "p": 0.0,
+   "better": 987,
+   "worse": 13,
+   "n": 1000,
+   "median": 66.0,
+   "p5": 19.0,
+   "p95": 114.0
+  },
+  "techs_mean": {
+   "mean_diff": 12.99,
+   "t": 132.4,
+   "p": 0.0,
+   "better": 999,
+   "worse": 1,
+   "n": 1000,
+   "median": 13.3,
+   "p5": 7.7,
+   "p95": 17.7
+  },
+  "bulbs_mean": {
+   "mean_diff": 413.73,
+   "t": 97.6,
+   "p": 0.0,
+   "better": 996,
+   "worse": 4,
+   "n": 1000,
+   "median": 420.65,
+   "p5": 167.94,
+   "p95": 618.6
+  },
+  "units_killed": {
+   "mean_diff": -291.91,
+   "t": -147.0,
+   "p": 0.0,
+   "better": 0,
+   "worse": 1000,
+   "n": 1000,
+   "median": -290.0,
+   "p5": -395.95,
+   "p95": -194.0
+  },
+  "alive": {
+   "mean_diff": -0.0,
+   "t": -0.5,
+   "p": 0.586466943355819,
+   "better": 21,
+   "worse": 24,
+   "n": 1000,
+   "median": 0.0,
+   "p5": 0.0,
+   "p95": 0.0
+  },
+  "declares": {
+   "mean_diff": -44.47,
+   "t": -159.7,
+   "p": 0.0,
+   "better": 0,
+   "worse": 1000,
+   "n": 1000,
+   "median": -44.0,
+   "p5": -59.95,
+   "p95": -31.0
+  }
+ }
+}

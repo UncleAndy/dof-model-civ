@@ -1,0 +1,1734 @@
+[
+ {
+  "round": 48,
+  "seed": 40816,
+  "seat": "Anittas",
+  "nation": "Hittite",
+  "player_id": 2,
+  "turns_seen": 187,
+  "founded_cities_total": 4,
+  "cities_now": {
+   "Kazimierz Wielki": 1,
+   "Cuauhtemoc": 3
+  },
+  "captured_cities": [
+   {
+    "city": "Salatiwari",
+    "owner": "Kazimierz Wielki"
+   },
+   {
+    "city": "Kussara",
+    "owner": "Cuauhtemoc"
+   },
+   {
+    "city": "Nesa",
+    "owner": "Cuauhtemoc"
+   },
+   {
+    "city": "Zalpuwa",
+    "owner": "Cuauhtemoc"
+   }
+  ],
+  "declares": [
+   {
+    "turn": 49,
+    "declarer": "Anittas",
+    "target": "Cuauhtemoc"
+   },
+   {
+    "turn": 53,
+    "declarer": "Kazimierz Wielki",
+    "target": "Anittas"
+   },
+   {
+    "turn": 53,
+    "declarer": "Philippe Auguste",
+    "target": "Anittas"
+   },
+   {
+    "turn": 126,
+    "declarer": "Unassigned",
+    "target": "Anittas"
+   },
+   {
+    "turn": 133,
+    "declarer": "Unassigned",
+    "target": "Anittas"
+   },
+   {
+    "turn": 137,
+    "declarer": "Unassigned",
+    "target": "Anittas"
+   },
+   {
+    "turn": 149,
+    "declarer": "Anittas",
+    "target": "Al-Mansur"
+   },
+   {
+    "turn": 186,
+    "declarer": "Anittas",
+    "target": "Kazimierz"
+   }
+  ],
+  "attacks_by": {
+   "Cuauhtemoc": 24,
+   "Philippe Auguste": 2
+  },
+  "attacks_total": 26,
+  "units_lost": 39,
+  "units_killed": 32,
+  "techs": 15,
+  "verified_same_game": true
+ },
+ {
+  "round": 54,
+  "seed": 40918,
+  "seat": "Lucius Iunius Brutus",
+  "nation": "Roman",
+  "player_id": 3,
+  "turns_seen": 189,
+  "founded_cities_total": 6,
+  "cities_now": {
+   "Solon": 3,
+   "Hasdrubal Barca": 3
+  },
+  "captured_cities": [
+   {
+    "city": "Beneventum",
+    "owner": "Solon"
+   },
+   {
+    "city": "Capua",
+    "owner": "Solon"
+   },
+   {
+    "city": "Ancona",
+    "owner": "Solon"
+   },
+   {
+    "city": "Corfinium",
+    "owner": "Hasdrubal Barca"
+   },
+   {
+    "city": "Brundisium",
+    "owner": "Hasdrubal Barca"
+   },
+   {
+    "city": "Veii",
+    "owner": "Hasdrubal Barca"
+   }
+  ],
+  "declares": [
+   {
+    "turn": 40,
+    "declarer": "Solon",
+    "target": "Lucius"
+   },
+   {
+    "turn": 41,
+    "declarer": "Hasdrubal Barca",
+    "target": "Lucius"
+   },
+   {
+    "turn": 44,
+    "declarer": "Narmer",
+    "target": "Lucius"
+   },
+   {
+    "turn": 45,
+    "declarer": "En-Mer-Kar",
+    "target": "Lucius"
+   },
+   {
+    "turn": 48,
+    "declarer": "Tukulti-Apil-Eshara III",
+    "target": "Lucius"
+   },
+   {
+    "turn": 52,
+    "declarer": "Narmer",
+    "target": "Lucius"
+   },
+   {
+    "turn": 171,
+    "declarer": "Lucius Iunius Brutus",
+    "target": "Narmer"
+   },
+   {
+    "turn": 175,
+    "declarer": "Lucius Iunius Brutus",
+    "target": "En-Mer-Kar"
+   }
+  ],
+  "attacks_by": {
+   "En-Mer-Kar": 1,
+   "Hasdrubal Barca": 11
+  },
+  "attacks_total": 12,
+  "units_lost": 53,
+  "units_killed": 52,
+  "techs": 19,
+  "verified_same_game": true
+ },
+ {
+  "round": 68,
+  "seed": 41156,
+  "seat": "Rafael del Riego",
+  "nation": "Spanish",
+  "player_id": 5,
+  "turns_seen": 161,
+  "founded_cities_total": 8,
+  "cities_now": {
+   "Louis VII": 1,
+   "Karl Renner": 4,
+   "Unassigned": 3
+  },
+  "captured_cities": [
+   {
+    "city": "Sevilla",
+    "owner": "Louis VII"
+   },
+   {
+    "city": "Pamplona",
+    "owner": "Karl Renner"
+   },
+   {
+    "city": "Bilbao",
+    "owner": "Karl Renner"
+   },
+   {
+    "city": "Madrid",
+    "owner": "Karl Renner"
+   },
+   {
+    "city": "Santander",
+    "owner": "Karl Renner"
+   },
+   {
+    "city": "Valladolid",
+    "owner": "Unassigned"
+   },
+   {
+    "city": "La Coruña",
+    "owner": "Unassigned"
+   },
+   {
+    "city": "León",
+    "owner": "Unassigned"
+   }
+  ],
+  "declares": [
+   {
+    "turn": 55,
+    "declarer": "Louis VII",
+    "target": "Rafael"
+   },
+   {
+    "turn": 59,
+    "declarer": "Karl Renner",
+    "target": "Rafael"
+   },
+   {
+    "turn": 116,
+    "declarer": "Rafael del Riego",
+    "target": "Jimmu"
+   },
+   {
+    "turn": 118,
+    "declarer": "Rafael del Riego",
+    "target": "João"
+   },
+   {
+    "turn": 123,
+    "declarer": "Rafael del Riego",
+    "target": "Jimmu"
+   },
+   {
+    "turn": 124,
+    "declarer": "Rafael del Riego",
+    "target": "João"
+   },
+   {
+    "turn": 126,
+    "declarer": "Rafael del Riego",
+    "target": "Oliver"
+   },
+   {
+    "turn": 135,
+    "declarer": "Rafael del Riego",
+    "target": "Gao"
+   },
+   {
+    "turn": 136,
+    "declarer": "Rafael del Riego",
+    "target": "Oliver"
+   },
+   {
+    "turn": 139,
+    "declarer": "Gao",
+    "target": "Rafael"
+   },
+   {
+    "turn": 144,
+    "declarer": "Rafael del Riego",
+    "target": "Gao"
+   }
+  ],
+  "attacks_by": {
+   "Karl Renner": 59,
+   "Unassigned": 1,
+   "Louis VII": 5
+  },
+  "attacks_total": 65,
+  "units_lost": 75,
+  "units_killed": 26,
+  "techs": 22,
+  "verified_same_game": true
+ },
+ {
+  "round": 69,
+  "seed": 41173,
+  "seat": "Darayavaush I",
+  "nation": "Persian",
+  "player_id": 5,
+  "turns_seen": 189,
+  "founded_cities_total": 2,
+  "cities_now": {
+   "Jeanne d'Arc": 2
+  },
+  "captured_cities": [
+   {
+    "city": "Susa",
+    "owner": "Jeanne d'Arc"
+   },
+   {
+    "city": "Hagmatana",
+    "owner": "Jeanne d'Arc"
+   }
+  ],
+  "declares": [
+   {
+    "turn": 52,
+    "declarer": "Darayavaush I",
+    "target": "Jeanne"
+   },
+   {
+    "turn": 61,
+    "declarer": "Gao",
+    "target": "Darayavaush"
+   },
+   {
+    "turn": 61,
+    "declarer": "Magnus Ladulås",
+    "target": "Darayavaush"
+   },
+   {
+    "turn": 67,
+    "declarer": "Gao",
+    "target": "Darayavaush"
+   },
+   {
+    "turn": 70,
+    "declarer": "Magnus Ladulås",
+    "target": "Darayavaush"
+   },
+   {
+    "turn": 123,
+    "declarer": "Darayavaush I",
+    "target": "Ronald"
+   },
+   {
+    "turn": 130,
+    "declarer": "Darayavaush I",
+    "target": "Ronald"
+   },
+   {
+    "turn": 157,
+    "declarer": "Magnus Ladulås",
+    "target": "Darayavaush"
+   },
+   {
+    "turn": 176,
+    "declarer": "Jadwiga",
+    "target": "Darayavaush"
+   },
+   {
+    "turn": 177,
+    "declarer": "Fatimah",
+    "target": "Darayavaush"
+   },
+   {
+    "turn": 187,
+    "declarer": "Fatimah",
+    "target": "Darayavaush"
+   }
+  ],
+  "attacks_by": {
+   "Jeanne d'Arc": 2,
+   "Magnus Ladulås": 4
+  },
+  "attacks_total": 6,
+  "units_lost": 51,
+  "units_killed": 21,
+  "techs": 21,
+  "verified_same_game": true
+ },
+ {
+  "round": 134,
+  "seed": 42278,
+  "seat": "Ferdinand V",
+  "nation": "Austrian",
+  "player_id": 8,
+  "turns_seen": 174,
+  "founded_cities_total": 3,
+  "cities_now": {
+   "Vladimir Putin": 3
+  },
+  "captured_cities": [
+   {
+    "city": "Graz",
+    "owner": "Vladimir Putin"
+   },
+   {
+    "city": "Wien",
+    "owner": "Vladimir Putin"
+   },
+   {
+    "city": "Salzburg",
+    "owner": "Vladimir Putin"
+   }
+  ],
+  "declares": [
+   {
+    "turn": 63,
+    "declarer": "Ferdinand V",
+    "target": "Theodora"
+   },
+   {
+    "turn": 80,
+    "declarer": "Ferdinand V",
+    "target": "Theodora"
+   },
+   {
+    "turn": 97,
+    "declarer": "Ferdinand V",
+    "target": "João"
+   },
+   {
+    "turn": 109,
+    "declarer": "Ferdinand V",
+    "target": "João"
+   },
+   {
+    "turn": 136,
+    "declarer": "Vladimir Putin",
+    "target": "Ferdinand"
+   },
+   {
+    "turn": 145,
+    "declarer": "Vladimir Putin",
+    "target": "Ferdinand"
+   },
+   {
+    "turn": 149,
+    "declarer": "Chen Duxiu",
+    "target": "Ferdinand"
+   },
+   {
+    "turn": 152,
+    "declarer": "Styrbjörn Sterki",
+    "target": "Ferdinand"
+   },
+   {
+    "turn": 161,
+    "declarer": "Styrbjörn Sterki",
+    "target": "Ferdinand"
+   }
+  ],
+  "attacks_by": {
+   "Chen Duxiu": 6
+  },
+  "attacks_total": 6,
+  "units_lost": 26,
+  "units_killed": 19,
+  "techs": 10,
+  "verified_same_game": true
+ },
+ {
+  "round": 146,
+  "seed": 42482,
+  "seat": "Solomon Mamaloni",
+  "nation": "Polynesian",
+  "player_id": 0,
+  "turns_seen": null,
+  "founded_cities_total": 4,
+  "cities_now": {
+   "Franz Joseph I": 2,
+   "Thayendanegea": 2
+  },
+  "captured_cities": [
+   {
+    "city": "Hanga Roa",
+    "owner": "Franz Joseph I"
+   },
+   {
+    "city": "Lihue",
+    "owner": "Franz Joseph I"
+   },
+   {
+    "city": "Honolulu",
+    "owner": "Thayendanegea"
+   },
+   {
+    "city": "Apia",
+    "owner": "Thayendanegea"
+   }
+  ],
+  "declares": [],
+  "attacks_by": {},
+  "attacks_total": 0,
+  "units_lost": 37,
+  "units_killed": 12,
+  "techs": 16,
+  "verified_same_game": true
+ },
+ {
+  "round": 171,
+  "seed": 42907,
+  "seat": "Anna Lindh",
+  "nation": "Swedish",
+  "player_id": 2,
+  "turns_seen": 155,
+  "founded_cities_total": 6,
+  "cities_now": {
+   "Maurits": 1,
+   "Emilio Castelar": 1,
+   "Harun al-Rashid": 4
+  },
+  "captured_cities": [
+   {
+    "city": "Uppsala",
+    "owner": "Maurits"
+   },
+   {
+    "city": "Växjö",
+    "owner": "Emilio Castelar"
+   },
+   {
+    "city": "Lödöse",
+    "owner": "Harun al-Rashid"
+   },
+   {
+    "city": "Sollentuna",
+    "owner": "Harun al-Rashid"
+   },
+   {
+    "city": "Stockholm",
+    "owner": "Harun al-Rashid"
+   },
+   {
+    "city": "Västerås",
+    "owner": "Harun al-Rashid"
+   }
+  ],
+  "declares": [
+   {
+    "turn": 39,
+    "declarer": "Harun al-Rashid",
+    "target": "Anna"
+   },
+   {
+    "turn": 58,
+    "declarer": "Jeanne d'Arc",
+    "target": "Anna"
+   },
+   {
+    "turn": 62,
+    "declarer": "Valdemar Atterdag",
+    "target": "Anna"
+   },
+   {
+    "turn": 66,
+    "declarer": "Maurits",
+    "target": "Anna"
+   },
+   {
+    "turn": 67,
+    "declarer": "Chandragupta",
+    "target": "Anna"
+   },
+   {
+    "turn": 97,
+    "declarer": "Anna Lindh",
+    "target": "Jeanne"
+   }
+  ],
+  "attacks_by": {
+   "Harun al-Rashid": 10
+  },
+  "attacks_total": 10,
+  "units_lost": 38,
+  "units_killed": 20,
+  "techs": 21,
+  "verified_same_game": true
+ },
+ {
+  "round": 174,
+  "seed": 42958,
+  "seat": "Sancho I",
+  "nation": "Portuguese",
+  "player_id": 2,
+  "turns_seen": 156,
+  "founded_cities_total": 3,
+  "cities_now": {
+   "Elizabeth I": 2,
+   "Sonni Ali": 1
+  },
+  "captured_cities": [
+   {
+    "city": "Lisboa",
+    "owner": "Elizabeth I"
+   },
+   {
+    "city": "Porto",
+    "owner": "Elizabeth I"
+   },
+   {
+    "city": "Guimarães",
+    "owner": "Sonni Ali"
+   }
+  ],
+  "declares": [
+   {
+    "turn": 40,
+    "declarer": "Sancho I",
+    "target": "Sonni"
+   },
+   {
+    "turn": 47,
+    "declarer": "Khshayarsha I",
+    "target": "Sancho"
+   },
+   {
+    "turn": 54,
+    "declarer": "Sancho I",
+    "target": "Khshayarsha"
+   },
+   {
+    "turn": 113,
+    "declarer": "Sancho I",
+    "target": "Jan"
+   },
+   {
+    "turn": 120,
+    "declarer": "Sancho I",
+    "target": "Jan"
+   },
+   {
+    "turn": 140,
+    "declarer": "Gustav II Adolf",
+    "target": "Sancho"
+   },
+   {
+    "turn": 147,
+    "declarer": "Gustav II Adolf",
+    "target": "Sancho"
+   },
+   {
+    "turn": 150,
+    "declarer": "Khshayarsha I",
+    "target": "Sancho"
+   },
+   {
+    "turn": 156,
+    "declarer": "Sancho I",
+    "target": "Jan"
+   }
+  ],
+  "attacks_by": {},
+  "attacks_total": 0,
+  "units_lost": 11,
+  "units_killed": 5,
+  "techs": 13,
+  "verified_same_game": true
+ },
+ {
+  "round": 361,
+  "seed": 46137,
+  "seat": "Ardashir I",
+  "nation": "Persian",
+  "player_id": 4,
+  "turns_seen": 167,
+  "founded_cities_total": 5,
+  "cities_now": {
+   "Bolgios": 5
+  },
+  "captured_cities": [
+   {
+    "city": "Baktra",
+    "owner": "Bolgios"
+   },
+   {
+    "city": "Parsa",
+    "owner": "Bolgios"
+   },
+   {
+    "city": "Susa",
+    "owner": "Bolgios"
+   },
+   {
+    "city": "Raga",
+    "owner": "Bolgios"
+   },
+   {
+    "city": "Pathragada",
+    "owner": "Bolgios"
+   }
+  ],
+  "declares": [
+   {
+    "turn": 47,
+    "declarer": "Ardashir I",
+    "target": "Bolgios"
+   },
+   {
+    "turn": 76,
+    "declarer": "Ardashir I",
+    "target": "Muwatallis"
+   },
+   {
+    "turn": 87,
+    "declarer": "Ardashir I",
+    "target": "Muwatallis"
+   }
+  ],
+  "attacks_by": {},
+  "attacks_total": 0,
+  "units_lost": 49,
+  "units_killed": 34,
+  "techs": 24,
+  "verified_same_game": true
+ },
+ {
+  "round": 450,
+  "seed": 47650,
+  "seat": "Per Albin Hansson",
+  "nation": "Swedish",
+  "player_id": 9,
+  "turns_seen": 159,
+  "founded_cities_total": 4,
+  "cities_now": {
+   "Johan van Oldenbarnevelt": 3,
+   "Rudolf II": 1
+  },
+  "captured_cities": [
+   {
+    "city": "Stockholm",
+    "owner": "Johan van Oldenbarnevelt"
+   },
+   {
+    "city": "Linköping",
+    "owner": "Johan van Oldenbarnevelt"
+   },
+   {
+    "city": "Lödöse",
+    "owner": "Johan van Oldenbarnevelt"
+   },
+   {
+    "city": "Husaby",
+    "owner": "Rudolf II"
+   }
+  ],
+  "declares": [
+   {
+    "turn": 55,
+    "declarer": "Per Albin Hansson",
+    "target": "Johan"
+   },
+   {
+    "turn": 83,
+    "declarer": "Per Albin Hansson",
+    "target": "Johan"
+   },
+   {
+    "turn": 151,
+    "declarer": "Per Albin Hansson",
+    "target": "Johan"
+   }
+  ],
+  "attacks_by": {
+   "Johan van Oldenbarnevelt": 11,
+   "Rudolf II": 2
+  },
+  "attacks_total": 13,
+  "units_lost": 32,
+  "units_killed": 9,
+  "techs": 16,
+  "verified_same_game": true
+ },
+ {
+  "round": 587,
+  "seed": 49979,
+  "seat": "Crazy Horse",
+  "nation": "Sioux",
+  "player_id": 8,
+  "turns_seen": null,
+  "founded_cities_total": 3,
+  "cities_now": {
+   "Alfred the Great": 3
+  },
+  "captured_cities": [
+   {
+    "city": "Wahpeton",
+    "owner": "Alfred the Great"
+   },
+   {
+    "city": "Sisseton",
+    "owner": "Alfred the Great"
+   },
+   {
+    "city": "Mdewakanton",
+    "owner": "Alfred the Great"
+   }
+  ],
+  "declares": [],
+  "attacks_by": {},
+  "attacks_total": 0,
+  "units_lost": 27,
+  "units_killed": 19,
+  "techs": 18,
+  "verified_same_game": true
+ },
+ {
+  "round": 606,
+  "seed": 50302,
+  "seat": "Michael VIII Palaeologus",
+  "nation": "Byzantine",
+  "player_id": 5,
+  "turns_seen": 198,
+  "founded_cities_total": 5,
+  "cities_now": {
+   "Tangun": 5
+  },
+  "captured_cities": [
+   {
+    "city": "Dyrrachio",
+    "owner": "Tangun"
+   },
+   {
+    "city": "Efesos",
+    "owner": "Tangun"
+   },
+   {
+    "city": "Trapezounta",
+    "owner": "Tangun"
+   },
+   {
+    "city": "Thessaloniki",
+    "owner": "Tangun"
+   },
+   {
+    "city": "Konstantinoupolis",
+    "owner": "Tangun"
+   }
+  ],
+  "declares": [
+   {
+    "turn": 127,
+    "declarer": "Haraldr Gormsson",
+    "target": "Michael"
+   },
+   {
+    "turn": 127,
+    "declarer": "Sunni Silman Dandi",
+    "target": "Michael"
+   },
+   {
+    "turn": 132,
+    "declarer": "Michael VIII Palaeologus",
+    "target": "Tangun"
+   },
+   {
+    "turn": 133,
+    "declarer": "Michael VIII Palaeologus",
+    "target": "Haraldr"
+   },
+   {
+    "turn": 139,
+    "declarer": "Michael VIII Palaeologus",
+    "target": "Tangun"
+   },
+   {
+    "turn": 162,
+    "declarer": "Pachakuti Inka Yupanki",
+    "target": "Michael"
+   },
+   {
+    "turn": 167,
+    "declarer": "Sunni Silman Dandi",
+    "target": "Michael"
+   }
+  ],
+  "attacks_by": {
+   "Tangun": 13
+  },
+  "attacks_total": 13,
+  "units_lost": 27,
+  "units_killed": 2,
+  "techs": 41,
+  "verified_same_game": true
+ },
+ {
+  "round": 627,
+  "seed": 50659,
+  "seat": "Chandragupta",
+  "nation": "Indian",
+  "player_id": 9,
+  "turns_seen": 174,
+  "founded_cities_total": 8,
+  "cities_now": {
+   "Sunni Silman Dandi": 7,
+   "Valdemar III": 1
+  },
+  "captured_cities": [
+   {
+    "city": "Kolkata",
+    "owner": "Sunni Silman Dandi"
+   },
+   {
+    "city": "Kanpur",
+    "owner": "Sunni Silman Dandi"
+   },
+   {
+    "city": "Mumbai",
+    "owner": "Sunni Silman Dandi"
+   },
+   {
+    "city": "Bangalore",
+    "owner": "Sunni Silman Dandi"
+   },
+   {
+    "city": "Delhi",
+    "owner": "Sunni Silman Dandi"
+   },
+   {
+    "city": "Hyderabad",
+    "owner": "Sunni Silman Dandi"
+   },
+   {
+    "city": "Chennai",
+    "owner": "Sunni Silman Dandi"
+   },
+   {
+    "city": "Ahmedabad",
+    "owner": "Valdemar III"
+   }
+  ],
+  "declares": [
+   {
+    "turn": 39,
+    "declarer": "Crescencio Poot",
+    "target": "Chandragupta"
+   },
+   {
+    "turn": 73,
+    "declarer": "Valdemar III",
+    "target": "Chandragupta"
+   },
+   {
+    "turn": 75,
+    "declarer": "Chandragupta",
+    "target": "Sunni"
+   },
+   {
+    "turn": 76,
+    "declarer": "Chandragupta",
+    "target": "Crescencio"
+   },
+   {
+    "turn": 77,
+    "declarer": "Boudikka",
+    "target": "Chandragupta"
+   },
+   {
+    "turn": 77,
+    "declarer": "Mönkh",
+    "target": "Chandragupta"
+   },
+   {
+    "turn": 84,
+    "declarer": "Boudikka",
+    "target": "Chandragupta"
+   },
+   {
+    "turn": 122,
+    "declarer": "Chandragupta",
+    "target": "Dido"
+   },
+   {
+    "turn": 128,
+    "declarer": "Dido",
+    "target": "Chandragupta"
+   },
+   {
+    "turn": 133,
+    "declarer": "Thayendanegea",
+    "target": "Chandragupta"
+   },
+   {
+    "turn": 172,
+    "declarer": "Chandragupta",
+    "target": "Crescencio"
+   }
+  ],
+  "attacks_by": {
+   "Valdemar III": 15,
+   "Sunni Silman Dandi": 4,
+   "Crescencio Poot": 1
+  },
+  "attacks_total": 20,
+  "units_lost": 43,
+  "units_killed": 16,
+  "techs": 22,
+  "verified_same_game": true
+ },
+ {
+  "round": 676,
+  "seed": 51492,
+  "seat": "Selçuk Bey",
+  "nation": "Turkish",
+  "player_id": 0,
+  "turns_seen": 196,
+  "founded_cities_total": 0,
+  "cities_now": {},
+  "captured_cities": [],
+  "declares": [
+   {
+    "turn": 36,
+    "declarer": "Selçuk Bey",
+    "target": "Zoskales"
+   },
+   {
+    "turn": 46,
+    "declarer": "Pietro Badoglio",
+    "target": "Selçuk"
+   },
+   {
+    "turn": 50,
+    "declarer": "Shapur I",
+    "target": "Selçuk"
+   },
+   {
+    "turn": 55,
+    "declarer": "Jayavarman VII",
+    "target": "Selçuk"
+   },
+   {
+    "turn": 59,
+    "declarer": "Pietro Badoglio",
+    "target": "Selçuk"
+   },
+   {
+    "turn": 66,
+    "declarer": "Jayavarman VII",
+    "target": "Selçuk"
+   },
+   {
+    "turn": 67,
+    "declarer": "João II",
+    "target": "Selçuk"
+   },
+   {
+    "turn": 68,
+    "declarer": "Wilhelm Miklas",
+    "target": "Selçuk"
+   },
+   {
+    "turn": 71,
+    "declarer": "Hirohito",
+    "target": "Selçuk"
+   },
+   {
+    "turn": 71,
+    "declarer": "Indira Gandhi",
+    "target": "Selçuk"
+   },
+   {
+    "turn": 77,
+    "declarer": "João II",
+    "target": "Selçuk"
+   },
+   {
+    "turn": 81,
+    "declarer": "Indira Gandhi",
+    "target": "Selçuk"
+   },
+   {
+    "turn": 84,
+    "declarer": "Rama Thibodi",
+    "target": "Selçuk"
+   },
+   {
+    "turn": 85,
+    "declarer": "Hirohito",
+    "target": "Selçuk"
+   },
+   {
+    "turn": 97,
+    "declarer": "Rama Thibodi",
+    "target": "Selçuk"
+   },
+   {
+    "turn": 154,
+    "declarer": "Shapur I",
+    "target": "Selçuk"
+   },
+   {
+    "turn": 157,
+    "declarer": "Zoskales",
+    "target": "Selçuk"
+   },
+   {
+    "turn": 182,
+    "declarer": "Rama Thibodi",
+    "target": "Selçuk"
+   },
+   {
+    "turn": 189,
+    "declarer": "João II",
+    "target": "Selçuk"
+   }
+  ],
+  "attacks_by": {
+   "Zoskales": 6
+  },
+  "attacks_total": 6,
+  "units_lost": 19,
+  "units_killed": 4,
+  "techs": 7,
+  "verified_same_game": true
+ },
+ {
+  "round": 687,
+  "seed": 51679,
+  "seat": "Darayavaush I",
+  "nation": "Persian",
+  "player_id": 8,
+  "turns_seen": 193,
+  "founded_cities_total": 1,
+  "cities_now": {
+   "Crescencio Poot": 1
+  },
+  "captured_cities": [
+   {
+    "city": "Raga",
+    "owner": "Crescencio Poot"
+   }
+  ],
+  "declares": [
+   {
+    "turn": 79,
+    "declarer": "Darayavaush I",
+    "target": "Crescencio"
+   },
+   {
+    "turn": 79,
+    "declarer": "Darayavaush I",
+    "target": "Suryavarman"
+   },
+   {
+    "turn": 91,
+    "declarer": "Suryavarman I",
+    "target": "Darayavaush"
+   },
+   {
+    "turn": 137,
+    "declarer": "Diwitiakos",
+    "target": "Darayavaush"
+   },
+   {
+    "turn": 144,
+    "declarer": "Diwitiakos",
+    "target": "Darayavaush"
+   },
+   {
+    "turn": 151,
+    "declarer": "Hannibal Barca",
+    "target": "Darayavaush"
+   },
+   {
+    "turn": 173,
+    "declarer": "Darayavaush I",
+    "target": "Hannibal"
+   },
+   {
+    "turn": 182,
+    "declarer": "En-Mer-Kar",
+    "target": "Darayavaush"
+   }
+  ],
+  "attacks_by": {
+   "Crescencio Poot": 43,
+   "Creca": 5,
+   "Diwitiakos": 2
+  },
+  "attacks_total": 50,
+  "units_lost": 53,
+  "units_killed": 28,
+  "techs": 17,
+  "verified_same_game": true
+ },
+ {
+  "round": 746,
+  "seed": 52682,
+  "seat": "Hammurabi",
+  "nation": "Babylonian",
+  "player_id": 0,
+  "turns_seen": 107,
+  "founded_cities_total": 2,
+  "cities_now": {
+   "Hatshepsut": 2
+  },
+  "captured_cities": [
+   {
+    "city": "Babilum",
+    "owner": "Hatshepsut"
+   },
+   {
+    "city": "Nibbur",
+    "owner": "Hatshepsut"
+   }
+  ],
+  "declares": [
+   {
+    "turn": 42,
+    "declarer": "Hammurabi",
+    "target": "Hatshepsut"
+   },
+   {
+    "turn": 49,
+    "declarer": "Alexandros Molossus",
+    "target": "Hammurabi"
+   },
+   {
+    "turn": 54,
+    "declarer": "Alexandros Molossus",
+    "target": "Hammurabi"
+   },
+   {
+    "turn": 58,
+    "declarer": "Mursilis",
+    "target": "Hammurabi"
+   },
+   {
+    "turn": 68,
+    "declarer": "En-Mer-Kar",
+    "target": "Hammurabi"
+   },
+   {
+    "turn": 69,
+    "declarer": "Mursilis",
+    "target": "Hammurabi"
+   },
+   {
+    "turn": 76,
+    "declarer": "En-Mer-Kar",
+    "target": "Hammurabi"
+   },
+   {
+    "turn": 95,
+    "declarer": "Hammurabi",
+    "target": "Edward"
+   },
+   {
+    "turn": 107,
+    "declarer": "Hammurabi",
+    "target": "Edward"
+   }
+  ],
+  "attacks_by": {
+   "Hatshepsut": 4
+  },
+  "attacks_total": 4,
+  "units_lost": 17,
+  "units_killed": 6,
+  "techs": 8,
+  "verified_same_game": true
+ },
+ {
+  "round": 746,
+  "seed": 52682,
+  "seat": "Itzamnaaj B'alam II",
+  "nation": "Mayan",
+  "player_id": 3,
+  "turns_seen": 170,
+  "founded_cities_total": 6,
+  "cities_now": {
+   "En-Mer-Kar": 5,
+   "Alexandros Molossus": 1
+  },
+  "captured_cities": [
+   {
+    "city": "Ox Witz Ja'",
+    "owner": "En-Mer-Kar"
+   },
+   {
+    "city": "Pa' Chan",
+    "owner": "En-Mer-Kar"
+   },
+   {
+    "city": "Oxwitik",
+    "owner": "En-Mer-Kar"
+   },
+   {
+    "city": "Popo",
+    "owner": "En-Mer-Kar"
+   },
+   {
+    "city": "Chi'che'en Itsa",
+    "owner": "En-Mer-Kar"
+   },
+   {
+    "city": "Kaan",
+    "owner": "Alexandros Molossus"
+   }
+  ],
+  "declares": [
+   {
+    "turn": 49,
+    "declarer": "Itzamnaaj B'alam II",
+    "target": "Hatshepsut"
+   },
+   {
+    "turn": 56,
+    "declarer": "Itzamnaaj B'alam II",
+    "target": "Hatshepsut"
+   },
+   {
+    "turn": 59,
+    "declarer": "Itzamnaaj B'alam II",
+    "target": "Alexandros"
+   },
+   {
+    "turn": 63,
+    "declarer": "Mursilis",
+    "target": "Itzamnaaj"
+   },
+   {
+    "turn": 90,
+    "declarer": "Itzamnaaj B'alam II",
+    "target": "Edward"
+   },
+   {
+    "turn": 93,
+    "declarer": "Itzamnaaj B'alam II",
+    "target": "Yi"
+   },
+   {
+    "turn": 97,
+    "declarer": "Itzamnaaj B'alam II",
+    "target": "Edward"
+   },
+   {
+    "turn": 105,
+    "declarer": "Itzamnaaj B'alam II",
+    "target": "Yi"
+   },
+   {
+    "turn": 122,
+    "declarer": "Itzamnaaj B'alam II",
+    "target": "Windoseibara"
+   },
+   {
+    "turn": 129,
+    "declarer": "Windoseibara",
+    "target": "Itzamnaaj"
+   },
+   {
+    "turn": 160,
+    "declarer": "Yi Song-gye",
+    "target": "Itzamnaaj"
+   },
+   {
+    "turn": 161,
+    "declarer": "Hatshepsut",
+    "target": "Itzamnaaj"
+   },
+   {
+    "turn": 170,
+    "declarer": "Itzamnaaj B'alam II",
+    "target": "Edward"
+   }
+  ],
+  "attacks_by": {
+   "Alexandros Molossus": 1,
+   "En-Mer-Kar": 23,
+   "Hatshepsut": 1
+  },
+  "attacks_total": 25,
+  "units_lost": 72,
+  "units_killed": 36,
+  "techs": 27,
+  "verified_same_game": true
+ },
+ {
+  "round": 760,
+  "seed": 52920,
+  "seat": "Khülegü",
+  "nation": "Mongol",
+  "player_id": 3,
+  "turns_seen": 183,
+  "founded_cities_total": 6,
+  "cities_now": {
+   "Svend Tveskæg": 3,
+   "Unassigned": 3
+  },
+  "captured_cities": [
+   {
+    "city": "Ulaanbaatar",
+    "owner": "Svend Tveskæg"
+   },
+   {
+    "city": "Karakorum",
+    "owner": "Svend Tveskæg"
+   },
+   {
+    "city": "Sainshand",
+    "owner": "Svend Tveskæg"
+   },
+   {
+    "city": "Khovd",
+    "owner": "Unassigned"
+   },
+   {
+    "city": "Ulaangom",
+    "owner": "Unassigned"
+   },
+   {
+    "city": "Tsetserleg",
+    "owner": "Unassigned"
+   }
+  ],
+  "declares": [
+   {
+    "turn": 55,
+    "declarer": "Khülegü",
+    "target": "Svend"
+   },
+   {
+    "turn": 58,
+    "declarer": "Khülegü",
+    "target": "Pietro"
+   },
+   {
+    "turn": 62,
+    "declarer": "Khülegü",
+    "target": "Harun"
+   },
+   {
+    "turn": 62,
+    "declarer": "Khülegü",
+    "target": "Thupa"
+   },
+   {
+    "turn": 63,
+    "declarer": "Darayavaush I",
+    "target": "Khülegü"
+   },
+   {
+    "turn": 64,
+    "declarer": "Khülegü",
+    "target": "Pietro"
+   },
+   {
+    "turn": 77,
+    "declarer": "Khülegü",
+    "target": "Harun"
+   },
+   {
+    "turn": 116,
+    "declarer": "Unassigned",
+    "target": "Khülegü"
+   }
+  ],
+  "attacks_by": {
+   "Svend Tveskæg": 1,
+   "Darayavaush I": 2
+  },
+  "attacks_total": 3,
+  "units_lost": 50,
+  "units_killed": 37,
+  "techs": 22,
+  "verified_same_game": true
+ },
+ {
+  "round": 790,
+  "seed": 53430,
+  "seat": "Deng Xiaoping",
+  "nation": "Chinese",
+  "player_id": 3,
+  "turns_seen": 172,
+  "founded_cities_total": 4,
+  "cities_now": {
+   "Güyük": 3,
+   "Sonni Ali": 1
+  },
+  "captured_cities": [
+   {
+    "city": "Chengdu",
+    "owner": "Güyük"
+   },
+   {
+    "city": "Beijing",
+    "owner": "Güyük"
+   },
+   {
+    "city": "Guangzhou",
+    "owner": "Güyük"
+   },
+   {
+    "city": "Tianjin",
+    "owner": "Sonni Ali"
+   }
+  ],
+  "declares": [
+   {
+    "turn": 70,
+    "declarer": "Deng Xiaoping",
+    "target": "Jayavedi"
+   },
+   {
+    "turn": 70,
+    "declarer": "Deng Xiaoping",
+    "target": "Franz"
+   },
+   {
+    "turn": 71,
+    "declarer": "Deng Xiaoping",
+    "target": "Sonni"
+   },
+   {
+    "turn": 79,
+    "declarer": "Franz Joseph I",
+    "target": "Deng"
+   },
+   {
+    "turn": 80,
+    "declarer": "Jayavedi",
+    "target": "Deng"
+   },
+   {
+    "turn": 106,
+    "declarer": "Güyük",
+    "target": "Deng"
+   },
+   {
+    "turn": 126,
+    "declarer": "Deng Xiaoping",
+    "target": "Pachakuti"
+   },
+   {
+    "turn": 126,
+    "declarer": "Deng Xiaoping",
+    "target": "Crow"
+   },
+   {
+    "turn": 126,
+    "declarer": "Deng Xiaoping",
+    "target": "Richard"
+   },
+   {
+    "turn": 133,
+    "declarer": "Deng Xiaoping",
+    "target": "Richard"
+   },
+   {
+    "turn": 135,
+    "declarer": "Crow Dog",
+    "target": "Deng"
+   }
+  ],
+  "attacks_by": {
+   "Franz Joseph I": 8,
+   "Jayavedi": 4
+  },
+  "attacks_total": 12,
+  "units_lost": 110,
+  "units_killed": 61,
+  "techs": 20,
+  "verified_same_game": true
+ },
+ {
+  "round": 939,
+  "seed": 55963,
+  "seat": "Wilhelm Miklas",
+  "nation": "Austrian",
+  "player_id": 6,
+  "turns_seen": 197,
+  "founded_cities_total": 5,
+  "cities_now": {
+   "Franklin D. Roosevelt": 5
+  },
+  "captured_cities": [
+   {
+    "city": "Linz",
+    "owner": "Franklin D. Roosevelt"
+   },
+   {
+    "city": "Wien",
+    "owner": "Franklin D. Roosevelt"
+   },
+   {
+    "city": "Salzburg",
+    "owner": "Franklin D. Roosevelt"
+   },
+   {
+    "city": "Graz",
+    "owner": "Franklin D. Roosevelt"
+   },
+   {
+    "city": "Innsbruck",
+    "owner": "Franklin D. Roosevelt"
+   }
+  ],
+  "declares": [
+   {
+    "turn": 40,
+    "declarer": "Franklin D. Roosevelt",
+    "target": "Wilhelm"
+   },
+   {
+    "turn": 79,
+    "declarer": "Wilhelm Miklas",
+    "target": "Alfonso"
+   },
+   {
+    "turn": 88,
+    "declarer": "Wilhelm Miklas",
+    "target": "Alfonso"
+   },
+   {
+    "turn": 149,
+    "declarer": "Wilhelm Miklas",
+    "target": "Dasoda-hae"
+   },
+   {
+    "turn": 149,
+    "declarer": "Wilhelm Miklas",
+    "target": "Stefan"
+   },
+   {
+    "turn": 154,
+    "declarer": "Wilhelm Miklas",
+    "target": "Elizabeth"
+   },
+   {
+    "turn": 157,
+    "declarer": "Wilhelm Miklas",
+    "target": "Dasoda-hae"
+   },
+   {
+    "turn": 159,
+    "declarer": "Wilhelm Miklas",
+    "target": "Stefan"
+   }
+  ],
+  "attacks_by": {
+   "Alfonso XIII": 6,
+   "Jasaw Chan K'awiil I": 2,
+   "Franklin D. Roosevelt": 6,
+   "Dasoda-hae": 33
+  },
+  "attacks_total": 47,
+  "units_lost": 69,
+  "units_killed": 21,
+  "techs": 22,
+  "verified_same_game": true
+ },
+ {
+  "round": 958,
+  "seed": 56286,
+  "seat": "Maha Mongkut",
+  "nation": "Thai",
+  "player_id": 3,
+  "turns_seen": 171,
+  "founded_cities_total": 4,
+  "cities_now": {
+   "Askia Ishaq I": 4
+  },
+  "captured_cities": [
+   {
+    "city": "Bangkok",
+    "owner": "Askia Ishaq I"
+   },
+   {
+    "city": "Thon Buri",
+    "owner": "Askia Ishaq I"
+   },
+   {
+    "city": "Khon Kaen",
+    "owner": "Askia Ishaq I"
+   },
+   {
+    "city": "Nakhon Rachasima",
+    "owner": "Askia Ishaq I"
+   }
+  ],
+  "declares": [
+   {
+    "turn": 88,
+    "declarer": "Maha Mongkut",
+    "target": "Henry"
+   },
+   {
+    "turn": 92,
+    "declarer": "Maha Mongkut",
+    "target": "Askia"
+   },
+   {
+    "turn": 92,
+    "declarer": "Jayavarman II",
+    "target": "Maha"
+   },
+   {
+    "turn": 102,
+    "declarer": "Maha Mongkut",
+    "target": "Jayavarman"
+   },
+   {
+    "turn": 139,
+    "declarer": "James Monroe",
+    "target": "Maha"
+   },
+   {
+    "turn": 146,
+    "declarer": "Henry II",
+    "target": "Maha"
+   },
+   {
+    "turn": 147,
+    "declarer": "James Monroe",
+    "target": "Maha"
+   },
+   {
+    "turn": 170,
+    "declarer": "Maha Mongkut",
+    "target": "João"
+   },
+   {
+    "turn": 171,
+    "declarer": "Unassigned",
+    "target": "Maha"
+   }
+  ],
+  "attacks_by": {
+   "Askia Ishaq I": 22
+  },
+  "attacks_total": 22,
+  "units_lost": 40,
+  "units_killed": 15,
+  "techs": 16,
+  "verified_same_game": true
+ }
+]
