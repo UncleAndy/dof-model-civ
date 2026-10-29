@@ -322,10 +322,22 @@ def run_game(tag, idx, args, lock, fh):
     return row
 
 
+def policy_arg(s):
+    """Политика DOF: none/all/even/odd либо список индексов мест через запятую."""
+    s = (s or "").strip()
+    if s in ("none", "all", "even", "odd"):
+        return s
+    if re.fullmatch(r"[0-9][0-9, ]*", s):
+        return s
+    raise argparse.ArgumentTypeError(
+        f"политика должна быть none|all|even|odd или списком индексов, а не {s!r}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--tag", required=True)
-    ap.add_argument("--policy", required=True, choices=["none", "all", "even", "odd"])
+    ap.add_argument("--policy", required=True, type=policy_arg,
+                    help="none|all|even|odd или список индексов мест: '0,3,6'")
     ap.add_argument("--games", type=int, default=6)
     ap.add_argument("--turns", type=int, default=200)
     ap.add_argument("--aifill", type=int, default=8)

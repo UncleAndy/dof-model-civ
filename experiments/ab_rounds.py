@@ -27,10 +27,44 @@ PY = os.path.join(ROOT, ".venv", "bin", "python")
 CONTAINER = "freeciv-web"
 RUNDIR = "/home/docker/dofrun/series"
 BIN = "/home/docker/freeciv/bin/freeciv-web"
-# Ручки раунда: без DOF, DOF у всех мест, DOF через одно место (50/50).
-# Политика "even" включает DOF для чётных мест — это и есть половина состава.
-ARMS = (("nodof", "none", 7600), ("dof", "all", 7700), ("half", "even", 7800))
-SAVE_SUFFIX = {"nodof": "no_dof", "dof": "dof", "half": "half"}
+# Ручки раунда задаются строкой --arms: "имя:политика;имя:политика;...".
+# Политика: none | all | even | odd | rotN | список индексов, например "0,3,6".
+#
+# rotN — N мест по правилу DOF, причём состав мест меняется от раунда к раунду
+# (иначе DOF всегда достаётся одним и тем же индексам и результат можно списать
+# на стартовую позицию). Индексы берутся с шагом 3 по кругу из 10.
+DEFAULT_ARMS = "nodof:none;dof:all;half:even"
+ARMS = ()
+SAVE_SUFFIX = {}
+
+
+def _rot_seats(rnd, k, step=7, stride=3):
+    """k индексов мест для DOF: сдвиг на раунд + равномерный шаг по кругу."""
+    base = (rnd * step) % 10
+    return ",".join(str((base + i * stride) % 10) for i in range(k))
+
+
+def configure_arms(spec):
+    """Разобрать --arms и заполнить ARMS/SAVE_SUFFIX."""
+    global ARMS, SAVE_SUFFIX
+    arms, suffix = [], {}
+    for part in spec.split(";"):
+        part = part.strip()
+        if not part:
+            continue
+        name, _, policy = part.partition(":")
+        name, policy = name.strip(), policy.strip()
+        if not name or not policy:
+            raise SystemExit(f"не разобрал руку: {part!r} (нужно имя:политика)")
+        if name in suffix:
+            raise SystemExit(f"имя руки повторяется: {name}")
+        suffix[name] = name
+        arms.append({"name": name, "policy": policy})
+    if not arms:
+        raise SystemExit("пустой список рук")
+    ARMS = tuple(arms)
+    SAVE_SUFFIX = suffix
+    return ARMS
 
 
 def now():
@@ -86,8 +120,8 @@ def clear_stale(port, out):
 
 def mapgen_failed(rnd):
     """Признак отказа генерации карты: движок не смог расставить стартовые позиции."""
-    for name, _, _ in ARMS:
-        d = f"{RUNDIR}/ab{rnd:04d}{name}"
+    for a in ARMS:
+        d = f"{RUNDIR}/ab{rnd:04d}{a['name']}"
         r = sh(f"docker exec {CONTAINER} sh -lc 'grep -qa \"allocate starting positions\" "
                f"{d}/stdout.txt 2>/dev/null && echo yes'")
         if r.stdout.strip() == "yes":
@@ -335,10 +369,18 @@ def cmp_sections(base, sec):
             "final_turn_diff": (None if ft is None or bt is None else ft - bt)}
 
 
-def _policy_of(arm):
-    for name, policy, _ in ARMS:
-        if name == arm:
-            return policy
+def _arm_names():
+    return [a["name"] for a in ARMS]
+
+
+def _policy_of(arm, rnd=0):
+    """Политика руки на конкретный раунд: rotN разворачивается в список мест."""
+    for a in ARMS:
+        if a["name"] == arm:
+            pol = a["policy"]
+            if pol.startswith("rot"):
+                return _rot_seats(rnd, int(pol[3:]))
+            return pol
     return "none"
 
 
@@ -348,10 +390,19 @@ def _assemble(rnd, seed, sections, args, alt):
             "params": {"turns": args.turns, "aifill": args.aifill, "size": args.size,
                        "engine_md5": engine_md5(), "pool": args.par_games},
             "sections": sections}
-    a, b, c = sections["nodof"], sections["dof"], sections["half"]
-    data["comparison"] = {"dof_vs_nodof": cmp_sections(a, b),
-                          "half_vs_nodof": cmp_sections(a, c),
-                          "half_vs_dof": cmp_sections(b, c)}
+    # сравнения — каждая рука с первой (эталон раунда) и все пары между собой
+    names = [n for n in _arm_names() if n in sections]
+    if names:
+        ref = names[0]
+        data["comparison"] = {f"{n}_vs_{ref}": cmp_sections(sections[ref], sections[n])
+                              for n in names[1:]}
+        for i, n1 in enumerate(names):
+            for n2 in names[i + 1:]:
+                if n1 == ref:
+                    continue
+                data["comparison"][f"{n2}_vs_{n1}"] = cmp_sections(sections[n1], sections[n2])
+    else:
+        data["comparison"] = {}
     if alt:
         data["seed_fallback"] = {"requested": args.seed_base + rnd * 17,
                                  "used": seed,
@@ -376,9 +427,9 @@ def run_pool(args, out, done):
     for rnd in range(args.start, args.start + args.count):
         if rnd in done:
             continue
-        for name, _, _ in ARMS:
-            pending.append({"rnd": rnd, "arm": name, "alt": 0, "tries": 0})
-            queued.add((rnd, name, 0))
+        for a in ARMS:
+            pending.append({"rnd": rnd, "arm": a["name"], "alt": 0, "tries": 0})
+            queued.add((rnd, a["name"], 0))
 
     rounds, inflight = {}, {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.par_games) as ex:
@@ -387,7 +438,7 @@ def run_pool(args, out, done):
                 t = pending.pop(0)
                 port = ports.get()
                 seed = args.seed_base + t["rnd"] * 17 + t["alt"]
-                arm = (t["arm"], _policy_of(t["arm"]), port)
+                arm = (t["arm"], _policy_of(t["arm"], t["rnd"]), port)
                 fut = ex.submit(_one_arm, t["rnd"], seed, args, out, arm)
                 inflight[fut] = dict(t, port=port, seed=seed)
             if not inflight:
@@ -411,11 +462,11 @@ def run_pool(args, out, done):
                             state["sections"].clear()
                             log(f"раунд {rnd}: карта для сида {info['seed']} не генерируется, "
                                 f"беру {args.seed_base + rnd * 17 + state['alt']}", out)
-                            for nm, _, _ in ARMS:
-                                key = (rnd, nm, state["alt"])
+                            for a2 in ARMS:
+                                key = (rnd, a2["name"], state["alt"])
                                 if key not in queued:
                                     queued.add(key)
-                                    pending.append({"rnd": rnd, "arm": nm,
+                                    pending.append({"rnd": rnd, "arm": a2["name"],
                                                     "alt": state["alt"], "tries": 0})
                         continue
                     info["tries"] += 1
@@ -471,7 +522,7 @@ def load_done(out):
         try:
             with open(os.path.join(d, name), encoding="utf-8") as f:
                 data = json.load(f)
-            if {"nodof", "dof", "half"} <= set(data.get("sections", {})):
+            if set(_arm_names()) <= set(data.get("sections", {})):
                 done.add(int(m.group(1)))
         except Exception:
             continue
@@ -489,11 +540,11 @@ def summarise(out):
                 data = json.load(f)
         except Exception:
             continue
-        if {"nodof", "dof", "half"} <= set(data.get("sections", {})):
+        if set(_arm_names()) <= set(data.get("sections", {})):
             rows.append(data)
     if not rows:
         return
-    ARMS_NAMES = [a[0] for a in ARMS]
+    ARMS_NAMES = _arm_names()
 
     def agg(arm):
         ts = [r["sections"][arm]["totals"] for r in rows]
@@ -525,12 +576,13 @@ def summarise(out):
     with open(os.path.join(out, "summary.json"), "w", encoding="utf-8") as f:
         json.dump(summary, f, ensure_ascii=False, indent=1)
     with open(os.path.join(out, "report.md"), "w", encoding="utf-8") as f:
-        f.write("# A/B/C: без DOF, DOF у всех, DOF 50/50\n\n")
+        f.write("# Серия: " + ", ".join(str(a["policy"]) for a in ARMS) + "\n\n")
         f.write(f"раундов: {len(rows)}, сиды {min(r['seed'] for r in rows)}–"
                 f"{max(r['seed'] for r in rows)}, {rows[0]['params']['turns']} ходов, "
                 f"aifill {rows[0]['params']['aifill']}, size {rows[0]['params']['size']}, "
                 f"движок `{rows[0]['params']['engine_md5']}`, партии раунда параллельно\n\n")
-        f.write("| метрика (среднее на раунд) | без DOF | DOF у всех | 50/50 |\n|---|---|---|---|\n")
+        f.write("| метрика (среднее на раунд) | " + " | ".join(ARMS_NAMES) + " |\n")
+        f.write("|---" * (len(ARMS_NAMES) + 1) + "|\n")
         names = {"score_mean": "score на место", "cities_sum": "городов всего",
                  "population_sum": "население всего", "techs_mean": "технологий на место",
                  "bulbs_mean": "наука, bulbs/ход", "units_killed": "убито юнитов",
@@ -541,8 +593,8 @@ def summarise(out):
                  "spaceship_arrived_rounds": "раундов с прибытием корабля",
                  "conquest_rounds": "раундов с завоеванием"}
         for k, label in names.items():
-            f.write(f"| {label} | {summary['nodof'].get(k)} | {summary['dof'].get(k)} | "
-                    f"{summary['half'].get(k)} |\n")
+            cells = " | ".join(str(summary[a].get(k)) for a in ARMS_NAMES)
+            f.write(f"| {label} | {cells} |\n")
 
 
 def main():
@@ -563,7 +615,11 @@ def main():
                     help="сколько партий играть одновременно (пул)")
     ap.add_argument("--ports", default="8100,8200,8300,8400",
                     help="порты для пула, через запятую")
+    ap.add_argument("--arms", default=DEFAULT_ARMS,
+                    help="руки раунда: 'имя:политика;имя:политика'. Политика: "
+                         "none|all|even|odd|rotN|список индексов ('0,3,6')")
     args = ap.parse_args()
+    configure_arms(args.arms)
     args.ports_list = [int(x) for x in args.ports.split(",") if x.strip()]
     if len(args.ports_list) < args.par_games:
         ap.error("портов меньше, чем партий в пуле")

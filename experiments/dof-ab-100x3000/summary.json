@@ -502,12 +502,50 @@
    }
   }
  },
+ "victories": {
+  "rounds_ship_in_flight": {
+   "nodof": 94,
+   "dof": 100,
+   "half": 75
+  },
+  "rounds_ship_arrived": {
+   "nodof": 94,
+   "dof": 100,
+   "half": 73
+  },
+  "rounds_conquest": {
+   "nodof": 2,
+   "dof": 0,
+   "half": 1
+  },
+  "half_seats": {
+   "dof": {
+    "ship": 73,
+    "arr": 72,
+    "first_score": 51,
+    "conq": 0
+   },
+   "plain": {
+    "ship": 59,
+    "arr": 58,
+    "first_score": 49,
+    "conq": 1
+   }
+  },
+  "half_race": {
+   "both": 19,
+   "only_dof": 26,
+   "only_plain": 27,
+   "none": 28
+  },
+  "culture_note": "culture = 0 у всех мест во всех сейвах"
+ },
  "half_split": {
   "dof_alive": 387,
   "dof_seats": 500,
   "plain_alive": 401,
   "plain_seats": 500,
-  "top5_dof": 289,
+  "top5_dof": 301,
   "top5_total": 500,
   "kills_ratio_dof": 0.5811232204310001,
   "kills_ratio_plain": 1.318774543469456,
