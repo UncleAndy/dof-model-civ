@@ -407,6 +407,12 @@ def _assemble(rnd, seed, sections, args, alt):
         data["seed_fallback"] = {"requested": args.seed_base + rnd * 17,
                                  "used": seed,
                                  "why": "map generation failed for requested seed"}
+    if getattr(args, "seed_override", None):
+        data["seed_override"] = {
+            "requested": args.seed_base + rnd * 17,
+            "used": seed,
+            "why": "исходный сид давал игры без финального сейва",
+        }
     data["finished_utc"] = now()
     return data
 
@@ -437,7 +443,10 @@ def run_pool(args, out, done):
             while pending and len(inflight) < args.par_games:
                 t = pending.pop(0)
                 port = ports.get()
-                seed = args.seed_base + t["rnd"] * 17 + t["alt"]
+                if getattr(args, "seed_override", None):
+                    seed = args.seed_override + t["alt"]
+                else:
+                    seed = args.seed_base + t["rnd"] * 17 + t["alt"]
                 arm = (t["arm"], _policy_of(t["arm"], t["rnd"]), port)
                 fut = ex.submit(_one_arm, t["rnd"], seed, args, out, arm)
                 inflight[fut] = dict(t, port=port, seed=seed)
@@ -602,6 +611,9 @@ def main():
     ap.add_argument("--start", type=int, default=0)
     ap.add_argument("--count", type=int, default=1000)
     ap.add_argument("--seed-base", type=int, default=40000)
+    ap.add_argument("--seed-override", type=int, default=None,
+                    help="жёсткий сид для всех раундов запуска (вместо seed-base+17*r); "
+                         "в файл раунда пишется пометка seed_override")
     ap.add_argument("--turns", type=int, default=200)
     ap.add_argument("--aifill", type=int, default=10)
     ap.add_argument("--size", type=int, default=2)
