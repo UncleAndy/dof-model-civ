@@ -116,6 +116,31 @@ void dof_player_console(struct player *pplayer, const char *cmd);
  * from server/srv_main.c in srv_scores(). */
 void dof_totals_report(void);
 
+/* Rule set carried by a DOF seat. A preset picks a subset: "full" is the
+ * behaviour every published series used; the others isolate one rule, so that
+ * an effect can be attributed to that rule and not to the concept as a whole.
+ * Spec syntax in the policy file: <seat selector>[:<preset>], for example
+ * "even:ban", "all:nocoerce", "0,3,6:nowarblock". No preset means "full". */
+#define DOF_F_BAN        (1u << 0)  /* no war desire, no declaration, no revenge */
+#define DOF_F_ATTACK     (1u << 1)  /* no attack on a non-source (unit level) */
+#define DOF_F_SELFDEF    (1u << 2)  /* answer an attack on this seat */
+#define DOF_F_SOLIDARITY (1u << 3)  /* answer an attack on a known third party */
+#define DOF_F_COERCE     (1u << 4)  /* no bribe/sabotage/poison/spy nuke */
+#define DOF_F_UNKNOWN    (1u << 5)  /* an unmet player is not a target */
+#define DOF_F_RAMPAGE    (1u << 6)  /* marked units are hunted first */
+#define DOF_F_CEASEFIRE  (1u << 7)  /* peace without ransom; expiry is peace */
+#define DOF_F_SPACE      (1u << 8)  /* no war to stop a space race */
+#define DOF_F_NO_TARGET  (1u << 9)  /* no war because nothing else is left */
+#define DOF_F_ALLY_WAR   (1u << 10) /* no joining a war for an ally */
+#define DOF_F_NO_MERCY   (1u << 11) /* peace is offered even to the target */
+#define DOF_F_FULL       0x00000FFFu
+
+/* Which rules this seat carries (0 for a classic seat). */
+unsigned dof_flags(const struct player *pplayer);
+
+/* Is this one rule on for this seat? */
+bool dof_flag(const struct player *pplayer, unsigned flag);
+
 /* Current policy spec, for logging/reporting. */
 const char *dof_policy_spec(void);
 

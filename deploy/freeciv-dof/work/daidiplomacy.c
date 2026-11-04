@@ -840,7 +840,7 @@ static int dai_war_desire(struct ai_type *ait, struct player *pplayer,
    * no war desire against anyone it is not already fighting and that has not
    * been observed attacking somebody. Everything below is the stock "profit
    * from war" calculation and stays untouched for the classic arm. */
-  if (dof_enabled(pplayer) && !WAR(pplayer, target)
+  if (dof_flag(pplayer, DOF_F_BAN) && !WAR(pplayer, target)
       && !dof_is_source(pplayer, target)) {
     dof_count_suppressed(pplayer, target);
     return 0;
@@ -1360,7 +1360,7 @@ static void dai_go_to_war(struct ai_type *ait, struct player *pplayer,
 
   /* DOF (M1): last line of defence. Whatever path led here, a DOF seat does
    * not open a war against a player that has not been observed attacking. */
-  if (dof_enabled(pplayer) && !dof_is_source(pplayer, target)) {
+  if (dof_flag(pplayer, DOF_F_BAN) && !dof_is_source(pplayer, target)) {
     dof_journal_blocked(pplayer, target, "declare_war");
     adip->countdown = -1;
     return;
@@ -1637,7 +1637,7 @@ void dai_diplomacy_actions(struct ai_type *ait, struct player *pplayer)
         && player_diplstate_get(pplayer, aplayer)->has_reason_to_cancel >= 2
         /* DOF (M6): an insult is not a collapse. Trespassing grievances open
          * wars just as surely as desire does, so the same source gate applies. */
-        && (!dof_enabled(pplayer) || dof_is_source(pplayer, aplayer))
+        && (!dof_flag(pplayer, DOF_F_BAN) || dof_is_source(pplayer, aplayer))
         && dai_diplomacy_get(ait, pplayer, aplayer)->countdown == -1) {
       DIPLO_LOG(ait, LOG_DIPL2, pplayer, aplayer, "Plans war in revenge");
       war_countdown(ait, pplayer, aplayer, map_size_checked(),
@@ -1659,12 +1659,12 @@ void dai_diplomacy_actions(struct ai_type *ait, struct player *pplayer)
           || ship->state == SSHIP_NONE
           || players_on_same_team(pplayer, aplayer)
           /* DOF (M6): a space race is not an attack either. */
-          || (dof_enabled(pplayer) && !dof_is_source(pplayer, aplayer))
+          || (dof_flag(pplayer, DOF_F_SPACE) && !dof_is_source(pplayer, aplayer))
           || pplayers_at_war(pplayer, aplayer)) {
         continue;
       }
       /* DOF (M1): stopping a space race by war is still an unprovoked attack. */
-      if (dof_enabled(pplayer) && !dof_is_source(pplayer, aplayer)) {
+      if (dof_flag(pplayer, DOF_F_SPACE) && !dof_is_source(pplayer, aplayer)) {
         continue;
       }
 
@@ -1719,7 +1719,7 @@ void dai_diplomacy_actions(struct ai_type *ait, struct player *pplayer)
     /* DOF (M1): "we are out of targets, so what?" is exactly the behaviour
      * the policy removes. A DOF seat never picks a victim among players that
      * have not been observed attacking anybody. */
-    if (dof_enabled(pplayer) && !dof_is_source(pplayer, aplayer)) {
+    if (dof_flag(pplayer, DOF_F_NO_TARGET) && !dof_is_source(pplayer, aplayer)) {
       continue;
     }
     turns = game.info.turn;
@@ -1762,7 +1762,7 @@ void dai_diplomacy_actions(struct ai_type *ait, struct player *pplayer)
 
   /*** DOF (M3): an observed attacker is answered by war ***/
 
-  if (dof_enabled(pplayer)) {
+  if (dof_flag(pplayer, DOF_F_SELFDEF | DOF_F_SOLIDARITY)) {
     players_iterate_alive(aplayer) {
       struct ai_dip_intel *adip = dai_diplomacy_get(ait, pplayer, aplayer);
 
@@ -1773,6 +1773,13 @@ void dai_diplomacy_actions(struct ai_type *ait, struct player *pplayer)
         continue;
       }
       if (dof_is_source(pplayer, aplayer)) {
+        /* Self-defence and solidarity are separate rules: a seat may answer an
+         * attack on itself while staying out of a war it only heard about. */
+        if (dof_source_is_third_party(pplayer, aplayer)
+            ? !dof_flag(pplayer, DOF_F_SOLIDARITY)
+            : !dof_flag(pplayer, DOF_F_SELFDEF)) {
+          continue;
+        }
         /* No profit calculation and no hatred: the source is answered.
          * Solidarity: an attack on a third party the seat knows both sides of
          * is answered the same way, and the journal keeps the two apart. */
@@ -1796,7 +1803,8 @@ void dai_diplomacy_actions(struct ai_type *ait, struct player *pplayer)
         && !pplayers_at_war(pplayer, aplayer)
         /* DOF (M1): joining a war against a third party is still opening a
          * war. Only a collapse source is a legitimate target. */
-        && (!dof_enabled(pplayer) || dof_is_source(pplayer, aplayer))
+        && (!dof_flag(pplayer, DOF_F_ALLY_WAR)
+            || dof_is_source(pplayer, aplayer))
         && (player_diplstate_get(pplayer, aplayer)->type != DS_CEASEFIRE
             || fc_rand(5) < 1)) {
       DIPLO_LOG(ait, LOG_DEBUG, pplayer, aplayer, "plans war to help ally %s",
@@ -1862,7 +1870,7 @@ void dai_diplomacy_actions(struct ai_type *ait, struct player *pplayer)
           || aplayer == pplayer
           /* DOF (M1): "no mercy" turns a war into a permanent state. A DOF
            * seat keeps offering peace to everyone, including its target. */
-          || (aplayer == target && !dof_enabled(pplayer))
+          || (aplayer == target && !dof_flag(pplayer, DOF_F_NO_MERCY))
           || adip->countdown >= 0
           || !could_meet_with_player(pplayer, aplayer)) {
         continue;
@@ -2003,7 +2011,8 @@ void dai_diplomacy_actions(struct ai_type *ait, struct player *pplayer)
         /* DOF (M3): peace is not bought. Once the source flag has expired the
          * war has no object left, so the ceasefire is offered regardless of
          * how much this opponent is disliked. */
-        if (dof_enabled(pplayer) && !dof_is_source(pplayer, aplayer)) {
+        if (dof_flag(pplayer, DOF_F_CEASEFIRE)
+            && !dof_is_source(pplayer, aplayer)) {
           dof_journal_rule(pplayer, aplayer, "ceasefire_offer");
           clear_old_treaty(pplayer, aplayer);
           dai_diplomacy_suggest(pplayer, aplayer, CLAUSE_CEASEFIRE, FALSE, 0);

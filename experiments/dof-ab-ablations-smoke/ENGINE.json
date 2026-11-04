@@ -1,0 +1,24 @@
+{
+ "binary_md5": "3f730485c7d15c1fc6633be3a35b6ad5",
+ "binary_path": "/home/docker/freeciv/bin/freeciv-web",
+ "sources_md5": {
+  "dofpolicy.c": "17527dcea664d5c282bc36252d8a8019",
+  "dofpolicy.h": "855ad766352e65d329f6191369eb2143"
+ },
+ "sources_local_md5": {
+  "dofpolicy.c": "17527dcea664d5c282bc36252d8a8019",
+  "dofpolicy.h": "855ad766352e65d329f6191369eb2143"
+ },
+ "sources_match_local": true,
+ "image_tag": "civrealm/freeciv-web:1.4",
+ "image_id": "sha256:d4ce74d7eb7401ff2383761484f4ccb12b5cd0d9193f4cc4be3c8a0ab257f4a5",
+ "recorded_utc": "2026-11-04T18:39:16Z",
+ "start": {
+  "turns": 60,
+  "aifill": 10,
+  "size": 2,
+  "arms": "none:none;ban:even:ban;selfdef:even:selfdef;solid:even:solidarity;nowarblock:even:nowarblock;full:even:full",
+  "ports": "8100,8200,8300,8400",
+  "seed_base": 300000
+ }
+}

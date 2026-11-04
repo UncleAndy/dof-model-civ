@@ -3450,7 +3450,7 @@ bool unit_perform_action(struct player *pplayer,
        * treats DS_NO_CONTACT as war, so a stranger one has never met is a legal
        * victim - that is "ignorance is hostility", the very thing the policy
        * removes. Barbarians stay fair game. */
-      if (dof_enabled(pplayer) && !is_barbarian(dof_victim)
+      if (dof_flag(pplayer, DOF_F_ATTACK) && !is_barbarian(dof_victim)
           && !dof_is_source(pplayer, dof_victim)) {
         dof_journal_blocked(pplayer, dof_victim, "attack_not_source");
         return FALSE;

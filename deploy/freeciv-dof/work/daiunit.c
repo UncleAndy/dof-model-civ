@@ -490,7 +490,7 @@ static int dai_rampage_want(struct unit *punit, struct tile *ptile)
 
       /* DOF: the collapse source is a unit, not a nation. A unit that was
        * observed attacking somebody this seat knows is hunted first. */
-      if (dof_enabled(pplayer) && dof_unit_is_source(pplayer, pdef)) {
+      if (dof_flag(pplayer, DOF_F_RAMPAGE) && dof_unit_is_source(pplayer, pdef)) {
         desire *= 3;
       }
 

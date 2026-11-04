@@ -363,12 +363,22 @@ def run_game(tag, idx, args, lock, fh):
     return row
 
 
+# Пресеты правил (см. DOF_F_* в src/dofpolicy.h). Политика пишется как
+# «выбор мест[:пресет]»: even, even:ban, 0,3,6:nowarblock.
+PRESETS = ("full", "ban", "selfdef", "solidarity", "nocoerce", "nowarblock")
+
+
 def policy_arg(s):
-    """Политика DOF: none/all/even/odd либо список индексов мест через запятую."""
+    """Политика DOF: none/all/even/odd либо список индексов, с пресетом или без."""
     s = (s or "").strip()
-    if s in ("none", "all", "even", "odd"):
+    base, _, preset = s.partition(":")
+    base, preset = base.strip(), preset.strip()
+    if preset and preset not in PRESETS:
+        raise argparse.ArgumentTypeError(
+            f"пресет {preset!r} неизвестен: {', '.join(PRESETS)}")
+    if base in ("none", "all", "even", "odd"):
         return s
-    if re.fullmatch(r"[0-9][0-9, ]*", s):
+    if re.fullmatch(r"[0-9][0-9, ]*", base):
         return s
     raise argparse.ArgumentTypeError(
         f"политика должна быть none|all|even|odd или списком индексов, а не {s!r}")

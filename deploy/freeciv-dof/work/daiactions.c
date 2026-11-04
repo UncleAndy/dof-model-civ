@@ -123,7 +123,7 @@ adv_want dai_action_value_unit_vs_city(struct action *paction,
    * and a spy-delivered nuclear strike are an attack by another name. A DOF
    * seat performs them only against a collapse source and only in a war of
    * its own. Embassies and other peaceful presence stay free. */
-  if (dof_enabled(actor_player)
+  if (dof_flag(actor_player, DOF_F_COERCE)
       && !dof_is_source(actor_player, target_player)
       && !pplayers_at_war(actor_player, target_player)
       && !action_has_result(paction, ACTRES_ESTABLISH_EMBASSY)) {

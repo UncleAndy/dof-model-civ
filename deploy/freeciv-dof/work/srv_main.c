@@ -1010,6 +1010,8 @@ static void update_diplomatics(void)
                        dof_is_source(plr1, plr2) ? 1 : 0,
                        dof_is_source(plr2, plr1) ? 1 : 0);
             if (dof_pair_enabled(plr1, plr2)
+                && dof_flag(plr1, DOF_F_CEASEFIRE)
+                && dof_flag(plr2, DOF_F_CEASEFIRE)
                 && !dof_is_source(plr1, plr2) && !dof_is_source(plr2, plr1)) {
               /* DOF: a cease-fire is not a countdown to war. With no living
                * collapse source the war has no object left, so the pair simply

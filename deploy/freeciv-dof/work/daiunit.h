@@ -77,7 +77,7 @@ struct unit_type_ai
  * means a war already under way, or a player observed attacking somebody.
  * The classic arm keeps the stock rule (unmet players are targets). */
 #define POTENTIALLY_HOSTILE_PLAYER(ait, pplayer, aplayer)               \
-  (dof_enabled(pplayer)                                                 \
+  (dof_flag(pplayer, DOF_F_UNKNOWN)                                     \
    ? (WAR(pplayer, aplayer) || dof_is_source(pplayer, aplayer))         \
    : (WAR(pplayer, aplayer) || NEVER_MET(pplayer, aplayer)              \
       || dai_diplomacy_get(ait, pplayer, aplayer)->countdown >= 0))

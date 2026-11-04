@@ -69,8 +69,10 @@ static struct {
   enum dof_mode mode;
   bool listed[MAX_NUM_PLAYERS];
   char spec[DOF_SPEC_LEN];
+  unsigned flags;               /* DOF_F_* rule set of a DOF seat */
   signed char force[MAX_NUM_PLAYERS];
-} dof_policy = { FALSE, 0, DOF_MODE_NONE, { FALSE }, "none", { DOF_FORCE_NONE } };
+} dof_policy = { FALSE, 0, DOF_MODE_NONE, { FALSE }, "none", DOF_F_FULL,
+                 { DOF_FORCE_NONE } };
 
 /* Turns on which a pair's war desire was zeroed by the policy. */
 static unsigned short dof_suppressed[MAX_NUM_PLAYERS][MAX_NUM_PLAYERS];
@@ -182,6 +184,43 @@ static time_t dof_policy_mtime(void)
 }
 
 /**********************************************************************//**
+  Rule set of a preset. "full" is the published behaviour; the rest are
+  ablations, each one turning off everything that is not needed to test a
+  single rule.
+**************************************************************************/
+static unsigned dof_preset_flags(const char *name)
+{
+  if (name == NULL || name[0] == '\0' || fc_strcasecmp(name, "full") == 0) {
+    return DOF_F_FULL;
+  }
+  if (fc_strcasecmp(name, "ban") == 0) {
+    /* Только прямой запрет: не начинать войн ни по одному поводу (желание,
+     * обида, космос, «некого бить», война за союзника, незнакомец) и не бить
+     * не-источника. Ответ на нападение в этот набор не входит. */
+    return DOF_F_BAN | DOF_F_ATTACK | DOF_F_UNKNOWN
+           | DOF_F_SPACE | DOF_F_NO_TARGET | DOF_F_ALLY_WAR;
+  }
+  if (fc_strcasecmp(name, "selfdef") == 0) {
+    /* Мир в первую очередь, но на нападение на себя — ответ. */
+    return dof_preset_flags("ban") | DOF_F_SELFDEF | DOF_F_RAMPAGE;
+  }
+  if (fc_strcasecmp(name, "solidarity") == 0) {
+    return dof_preset_flags("selfdef") | DOF_F_SOLIDARITY;
+  }
+  if (fc_strcasecmp(name, "nocoerce") == 0) {
+    return dof_preset_flags("solidarity") | DOF_F_COERCE;
+  }
+  if (fc_strcasecmp(name, "nowarblock") == 0) {
+    /* Полный DOF без блока войны: место вправе начинать войны по любому
+     * поводу, остальные правила (ответ, солидарность, принуждение, мир,
+     * приоритет помеченных юнитов) работают. */
+    return DOF_F_FULL & ~(DOF_F_BAN | DOF_F_ATTACK | DOF_F_UNKNOWN
+                          | DOF_F_SPACE | DOF_F_NO_TARGET | DOF_F_ALLY_WAR);
+  }
+  return 0; /* unknown preset */
+}
+
+/**********************************************************************//**
   Parse one policy spec into the mask.
 **************************************************************************/
 static void dof_policy_parse(const char *raw)
@@ -213,6 +252,30 @@ static void dof_policy_parse(const char *raw)
   }
 
   fc_strlcpy(dof_policy.spec, buf, sizeof(dof_policy.spec));
+
+  /* Preset after ':': "even:ban" carries the rule set of "ban". A spec without
+   * a preset keeps the full rule set, so every old file means what it meant. */
+  {
+    char *colon = strchr(buf, ':');
+    char *preset = NULL;
+
+    if (colon != NULL) {
+      *colon = '\0';
+      preset = colon + 1;
+    }
+    if (preset == NULL || preset[0] == '\0') {
+      dof_policy.flags = DOF_F_FULL;
+    } else {
+      dof_policy.flags = dof_preset_flags(preset);
+      if (dof_policy.flags == 0) {
+        /* Unknown preset: never silently change behaviour — keep the full set
+         * and make the mistake visible in the journal. */
+        dof_policy.flags = DOF_F_FULL;
+        log_error("[DOF] unknown preset \"%s\" in policy \"%s\", using full",
+                  preset, dof_policy.spec);
+      }
+    }
+  }
 
   if (fc_strcasecmp(buf, "none") == 0) {
     dof_policy.mode = DOF_MODE_NONE;
@@ -381,7 +444,8 @@ void dof_policy_reload(void)
   dof_policy.mtime = mtime;
   dof_policy.loaded = TRUE;
 
-  dof_log("policy=%s turn=%d", dof_policy.spec, game.info.turn);
+  dof_log("policy=%s turn=%d flags=0x%x", dof_policy.spec, game.info.turn,
+          dof_policy.flags);
 
   /* Roster: which AI seats exist and which of them carry the DOF policy.
    * Without it a journal line cannot be attributed to an arm. */
@@ -403,6 +467,24 @@ void dof_policy_reload(void)
     } players_iterate_end;
     dof_log("roster ai_seats=[%s]", roster);
   }
+}
+
+/**********************************************************************//**
+  Which rules this seat carries. 0 for a classic seat: every gate below reads
+  its own bit, so an ablation never needs a second switch.
+**************************************************************************/
+unsigned dof_flags(const struct player *pplayer)
+{
+  if (!dof_enabled(pplayer)) {
+    return 0;
+  }
+
+  return dof_policy.flags;
+}
+
+bool dof_flag(const struct player *pplayer, unsigned flag)
+{
+  return (dof_flags(pplayer) & flag) != 0;
 }
 
 /**********************************************************************//**

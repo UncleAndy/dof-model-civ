@@ -40,7 +40,7 @@ def expected_dof(policy, seats):
     seats — индексы мест партии: even/odd в движке выбирают по чётности
     индекса, поэтому на карте с 8 местами это 4, а не 5.
     """
-    p = (policy or "").strip()
+    p = (policy or "").strip().split(":")[0].strip()
     n = len(seats)
     if p == "none":
         return 0
