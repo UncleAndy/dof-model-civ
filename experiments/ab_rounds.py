@@ -94,6 +94,14 @@ MARK_END = "<!-- engine:end -->"
 _ENGINE_CACHE = None
 
 
+def _sha256_file(path):
+    try:
+        with open(path, "rb") as f:
+            return hashlib.sha256(f.read()).hexdigest()
+    except OSError:
+        return "?"
+
+
 def _md5_file(path):
     try:
         with open(path, "rb") as f:
@@ -402,6 +410,8 @@ def play(arm, policy, port, tag, seed, args, out, rnd):
         "dof_blocked": row["dof_blocked"], "dof_suppressed": row["dof_suppressed"],
         "dof_roster": row.get("dof_roster"),
         "journal": journal,
+        "engine_totals": row.get("totals", {}).get("seats") or {},
+        "engine_totals_global": row.get("totals", {}).get("global"),
         "nations": row["nations"],
     }
     # Финальный сейв кладём рядом с результатами, с человекочитаемым именем.
@@ -427,6 +437,19 @@ def play(arm, policy, port, tag, seed, args, out, rnd):
                      if (n.get("spaceship_state") or 0) >= 3)
     culture = sorted(((n.get("culture") or 0, n.get("name")) for n in row["nations"]
                       if not n.get("is_barbarian")), reverse=True)
+    # Конфиги партии — часть постановки. Каталог в контейнере стирается ниже,
+    # поэтому s.serv и policy.conf копируются в артефакты раунда вместе с хешами.
+    cfg_dir = os.path.join(out, "rounds", "configs", tag)
+    os.makedirs(cfg_dir, exist_ok=True)
+    for name in ("s.serv", "policy.conf"):
+        sh(f"docker cp {CONTAINER}:{d}/{name} {os.path.join(cfg_dir, name)}")
+    section["config"] = {
+        "dir": os.path.relpath(cfg_dir, out),
+        "s_serv_sha256": _sha256_file(os.path.join(cfg_dir, "s.serv")),
+        "policy_file_sha256": _sha256_file(os.path.join(cfg_dir, "policy.conf")),
+        "policy_text": policy,
+    }
+
     section["final_turn"] = facts["turn"]
     section["final_year"] = facts["year"]
     section["victory_settings"] = victory_settings
@@ -444,13 +467,25 @@ def play(arm, policy, port, tag, seed, args, out, rnd):
 
 
 def totals(section):
+    """Агрегаты по МЕСТАМ партии, отдельно от отколовшихся.
+
+    Игрок с id >= 10 — новое место из гражданской войны: оно появляется уже
+    по ходу партии, его стартовые условия не сравнимы с местом из состава, и
+    среднее по всем нациям смешивает две популяции. Поэтому средние считаются
+    по местам 0..9, а отколовшиеся идут отдельными счётчиками.
+    """
     nat = [n for n in section["nations"] if not n.get("is_barbarian")]
-    def s(k):
-        return sum(n.get(k) or 0 for n in nat)
+    seats = [n for n in nat if (n.get("id") or 0) < 10]
+    split = [n for n in nat if (n.get("id") or 0) >= 10]
+    def s(k, src=None):
+        return sum(n.get(k) or 0 for n in (seats if src is None else src))
     def m(k):
-        v = [n.get(k) for n in nat if n.get(k) is not None]
+        v = [n.get(k) for n in seats if n.get(k) is not None]
         return round(sum(v) / len(v), 2) if v else 0
-    return {"nations": len(nat), "score_sum": s("score"), "score_mean": m("score"),
+    return {"totals_schema": 2, "nations": len(nat), "seats": len(seats),
+            "splinters": len(split), "splinters_score_sum": s("score", split),
+            "splinters_cities_sum": s("ncities", split),
+            "score_sum": s("score"), "score_mean": m("score"),
             "cities_sum": s("ncities"), "population_sum": s("population_real"),
             "techs_mean": m("techs"), "bulbs_mean": m("bulbs_last_turn"),
             "science_rate_mean": m("science_rate"),

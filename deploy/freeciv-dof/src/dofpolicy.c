@@ -116,6 +116,43 @@ static int dof_summary_turn = -1;
 /* Unit performing an action right now, set by server/unithand.c. */
 static int dof_acting_unit_id = 0;
 
+/* ---- Audit counters (P0) -------------------------------------------------
+ * blocked actions were counted by journal lines only, and the same rejected
+ * request could be asked again and again inside one turn: the published
+ * "blocked" number measured attempts, not events. Both are kept now, and a
+ * per-turn set of keys keeps the journal to one line per distinct event.
+ * Nothing here is read by a decision: instrumentation only. */
+#define DOF_BLOCK_SLOTS 16384
+#define DOF_BLOCK_PROBE 24
+#define DOF_BLOCK_DECLARE 0
+#define DOF_BLOCK_ATTACK  1
+#define DOF_BLOCK_KINDS   2
+
+struct dof_block_slot {
+  int turn;   /* slot is valid for this turn only (0 = free) */
+  int me, other, unit, kind;
+};
+
+static struct dof_block_slot dof_block_tab[DOF_BLOCK_SLOTS];
+static int dof_blk_att[DOF_BLOCK_KINDS];
+static int dof_blk_uniq[DOF_BLOCK_KINDS];
+static int dof_blk_att_seat[MAX_NUM_PLAYERS];
+static int dof_blk_uniq_seat[MAX_NUM_PLAYERS];
+
+/* Suppressed war desire: pairs (logged once) and events (every call). */
+static int dof_supp_pairs;
+static int dof_supp_pairs_seat[MAX_NUM_PLAYERS];
+static int dof_supp_events;
+static int dof_supp_events_seat[MAX_NUM_PLAYERS];
+
+/* Per-seat counters that the journal only ever showed as text lines. */
+static int dof_declares_seat[MAX_NUM_PLAYERS];
+static int dof_on_source_seat[MAX_NUM_PLAYERS];
+static int dof_marks_seat[MAX_NUM_PLAYERS];
+static int dof_gone_seat[MAX_NUM_PLAYERS];
+static int dof_rules_seat[MAX_NUM_PLAYERS];
+static bool dof_totals_done = FALSE;
+
 /* Live subset of the ledger for this turn, plus the derived per-seat view
  * known_source[me][attacker]: the attacker still has a living marked unit
  * against somebody "me" knows, so "me" can tell the aggressor from the victim
@@ -271,6 +308,21 @@ void dof_policy_reload(void)
     dof_barb_marks = 0;
     dof_barb_rules = 0;
     dof_summary_turn = -1;
+    memset(dof_block_tab, 0, sizeof(dof_block_tab));
+    memset(dof_blk_att, 0, sizeof(dof_blk_att));
+    memset(dof_blk_uniq, 0, sizeof(dof_blk_uniq));
+    memset(dof_blk_att_seat, 0, sizeof(dof_blk_att_seat));
+    memset(dof_blk_uniq_seat, 0, sizeof(dof_blk_uniq_seat));
+    memset(dof_supp_pairs_seat, 0, sizeof(dof_supp_pairs_seat));
+    memset(dof_supp_events_seat, 0, sizeof(dof_supp_events_seat));
+    memset(dof_declares_seat, 0, sizeof(dof_declares_seat));
+    memset(dof_on_source_seat, 0, sizeof(dof_on_source_seat));
+    memset(dof_marks_seat, 0, sizeof(dof_marks_seat));
+    memset(dof_gone_seat, 0, sizeof(dof_gone_seat));
+    memset(dof_rules_seat, 0, sizeof(dof_rules_seat));
+    dof_supp_pairs = 0;
+    dof_supp_events = 0;
+    dof_totals_done = FALSE;
   }
   dof_last_turn = game.info.turn;
 
@@ -475,6 +527,9 @@ static void dof_live_refresh(void)
     if (!dof_incident_live(inc)) {
       if (!inc->gone_logged && inc->unit_id > 0) {
         inc->gone_logged = TRUE;
+        if (inc->owner >= 0 && inc->owner < MAX_NUM_PLAYERS) {
+          dof_gone_seat[inc->owner]++;
+        }
         dof_log("unit_gone turn=%d unit=%d owner=%s victim=%s",
                 game.info.turn, inc->unit_id,
                 attacker != NULL ? player_name(attacker) : "?",
@@ -822,12 +877,19 @@ static void dof_incident_add(int unit_id, int owner, int victim)
   if (on_source) {
     /* M7: kept for the journal, but this record is not a collapse source. */
     dof_attacks_on_source++;
+    if (owner >= 0 && owner < MAX_NUM_PLAYERS) {
+      dof_on_source_seat[owner]++;
+    }
     dof_log("unit_source_on_source turn=%d unit=%d utype=%s owner=%s victim=%s",
             game.info.turn, unit_id,
             punit != NULL ? unit_rule_name(punit) : "?",
             attacker != NULL ? player_name(attacker) : "?",
             sufferer != NULL ? player_name(sufferer) : "?");
     return;
+  }
+
+  if (owner >= 0 && owner < MAX_NUM_PLAYERS) {
+    dof_marks_seat[owner]++;
   }
 
   dof_log("unit_source turn=%d unit=%d utype=%s owner=%s victim=%s",
@@ -889,19 +951,82 @@ void dof_journal_contact(struct player *pplayer, struct player *other)
 }
 
 /**********************************************************************//**
+  Has this rejection already happened in this turn? Open addressing with the
+  turn as the validity marker: keys of earlier turns are free without a clear.
+
+  Returns TRUE when the event was already seen (so the journal stays at one
+  line per distinct event), FALSE on the first sighting.
+**************************************************************************/
+static bool dof_block_seen(int me, int other, int unit, int kind, int turn)
+{
+  unsigned h = (unsigned) me * 73856093u ^ (unsigned) other * 19349663u
+               ^ (unsigned) unit * 83492791u ^ (unsigned) kind * 2654435761u;
+  unsigned base = h & (DOF_BLOCK_SLOTS - 1);
+  int probe;
+
+  for (probe = 0; probe < DOF_BLOCK_PROBE; probe++) {
+    struct dof_block_slot *slot
+      = &dof_block_tab[(base + probe) & (DOF_BLOCK_SLOTS - 1)];
+
+    if (slot->turn != turn) {
+      slot->turn = turn;
+      slot->me = me;
+      slot->other = other;
+      slot->unit = unit;
+      slot->kind = kind;
+      return FALSE;
+    }
+    if (slot->me == me && slot->other == other
+        && slot->unit == unit && slot->kind == kind) {
+      return TRUE;
+    }
+  }
+
+  /* Table pressure: report as unique. An attempt is never lost, only a
+   * duplicate line is kept. */
+  return FALSE;
+}
+
+/**********************************************************************//**
   The policy stopped a hostile act: journal it, so that a run without wars
   can be told apart from a run where the rule never had to fire.
+
+  An AI asks for the same forbidden action many times per turn (every unit
+  re-considers, every target re-evaluates), so the journal line is written
+  once per distinct (seat, target, unit, turn); the counters keep every
+  attempt. Both numbers are reported in the end-of-game totals.
 **************************************************************************/
 void dof_journal_blocked(struct player *pplayer, const struct player *other,
                          const char *what)
 {
+  int me, kind, unit;
+
   if (!dof_enabled(pplayer) || other == NULL) {
     return;
   }
 
-  dof_log("blocked turn=%d me=%s other=%s what=%s%s", game.info.turn,
-          player_name(pplayer), player_name(other), what,
-          is_barbarian(other) ? " barb=1" : "");
+  me = player_index(pplayer);
+  kind = (strcmp(what, "declare_war") == 0) ? DOF_BLOCK_DECLARE
+                                            : DOF_BLOCK_ATTACK;
+  unit = (kind == DOF_BLOCK_ATTACK) ? dof_acting_unit_id : 0;
+
+  dof_blk_att[kind]++;
+  if (me >= 0 && me < MAX_NUM_PLAYERS) {
+    dof_blk_att_seat[me]++;
+  }
+
+  if (dof_block_seen(me, player_index(other), unit, kind, game.info.turn)) {
+    return;
+  }
+
+  dof_blk_uniq[kind]++;
+  if (me >= 0 && me < MAX_NUM_PLAYERS) {
+    dof_blk_uniq_seat[me]++;
+  }
+
+  dof_log("blocked turn=%d me=%s other=%s what=%s unit=%d%s",
+          game.info.turn, player_name(pplayer), player_name(other), what,
+          unit, is_barbarian(other) ? " barb=1" : "");
 }
 
 /**********************************************************************//**
@@ -913,6 +1038,10 @@ void dof_journal_rule(struct player *pplayer, const struct player *other,
 {
   if (pplayer == NULL || other == NULL) {
     return;
+  }
+
+  if (player_index(pplayer) >= 0 && player_index(pplayer) < MAX_NUM_PLAYERS) {
+    dof_rules_seat[player_index(pplayer)]++;
   }
 
   /* Варварские пары считаются отдельно; формат строки для остальных не
@@ -947,9 +1076,14 @@ void dof_count_suppressed(const struct player *pplayer,
     return;
   }
 
+  dof_supp_events++;
+  dof_supp_events_seat[me]++;
+
   if (dof_suppressed[me][him] == 0) {
-    dof_log("desire_suppressed turn=%d me=%s other=%s n=1", game.info.turn,
-            player_name(pplayer), player_name(other));
+    dof_supp_pairs++;
+    dof_supp_pairs_seat[me]++;
+    dof_log("desire_suppressed turn=%d me=%s other=%s n=1",
+            game.info.turn, player_name(pplayer), player_name(other));
   }
   if (dof_suppressed[me][him] < 65000) {
     dof_suppressed[me][him]++;
@@ -967,6 +1101,9 @@ void dof_journal_declare(struct player *pplayer, const struct player *other,
     return;
   }
 
+  if (player_index(pplayer) >= 0 && player_index(pplayer) < MAX_NUM_PLAYERS) {
+    dof_declares_seat[player_index(pplayer)]++;
+  }
   dof_log("declare turn=%d declarer=%s target=%s declarer_dof=%d reason=%d%s",
           game.info.turn, player_name(pplayer), player_name(other),
           dof_enabled(pplayer) ? 1 : 0, reason,
@@ -1124,6 +1261,68 @@ void dof_player_console(struct player *pplayer, const char *cmd)
   dof_log("console me=%s arg=%s enabled=%s policy=%s barb_marks=%d barb_rules=%d",
           player_name(pplayer), verb, dof_enabled(pplayer) ? "yes" : "no",
           dof_policy_spec(), dof_barb_marks, dof_barb_rules);
+}
+
+/**********************************************************************//**
+  End-of-game totals: one line per seat, all counters in one place.
+
+  The journal is a stream of events and a reader has to sample it (the first
+  40 declarations, the first 40 attacks); these totals are complete and are
+  what a report should cite for counters. Called once from server/srv_main.c
+  in srv_scores(), where every player's score has been recalculated.
+**************************************************************************/
+void dof_totals_report(void)
+{
+  if (dof_totals_done) {
+    return;
+  }
+  dof_totals_done = TRUE;
+
+  players_iterate(plr) {
+    int me = player_index(plr);
+    int live = 0;
+    int i;
+
+    if (me < 0 || me >= MAX_NUM_PLAYERS) {
+      continue;
+    }
+
+    for (i = 0; i < DOF_MAX_INCIDENTS; i++) {
+      const struct dof_incident *inc = &dof_incidents[i];
+
+      if (inc->used && !inc->on_source && inc->owner == me
+          && dof_incident_live(inc)) {
+        live++;
+      }
+    }
+
+    dof_log("totals turn=%d me=%s idx=%d dof=%d ai=%d alive=%d score=%d "
+            "cities=%d pop_k=%d techs=%d techout=%d gold=%d bulbs=%d "
+            "units=%d land=%d declares=%d blocked_attempts=%d "
+            "blocked_unique=%d blocked_declare=%d blocked_attack=%d "
+            "supp_pairs=%d supp_events=%d on_source=%d marks=%d "
+            "marks_live=%d gone=%d rules=%d barb_marks=%d barb_rules=%d",
+            game.info.turn, player_name(plr), me, dof_enabled(plr) ? 1 : 0,
+            is_ai(plr) ? 1 : 0, plr->is_alive ? 1 : 0, plr->score.game,
+            plr->score.cities, plr->score.population, plr->score.techs,
+            plr->score.techout, plr->economic.gold, plr->server.bulbs_last_turn,
+            plr->score.units, plr->score.landarea, dof_declares_seat[me],
+            dof_blk_att_seat[me], dof_blk_uniq_seat[me],
+            dof_blk_att[DOF_BLOCK_DECLARE], dof_blk_att[DOF_BLOCK_ATTACK],
+            dof_supp_pairs_seat[me], dof_supp_events_seat[me],
+            dof_on_source_seat[me], dof_marks_seat[me], live,
+            dof_gone_seat[me], dof_rules_seat[me], dof_barb_marks,
+            dof_barb_rules);
+  } players_iterate_end;
+
+  dof_log("totals_global turn=%d blocked_attempts_declare=%d "
+          "blocked_unique_declare=%d blocked_attempts_attack=%d "
+          "blocked_unique_attack=%d supp_pairs=%d supp_events=%d "
+          "on_source=%d barb_marks=%d barb_rules=%d",
+          game.info.turn, dof_blk_att[DOF_BLOCK_DECLARE],
+          dof_blk_uniq[DOF_BLOCK_DECLARE], dof_blk_att[DOF_BLOCK_ATTACK],
+          dof_blk_uniq[DOF_BLOCK_ATTACK], dof_supp_pairs, dof_supp_events,
+          dof_attacks_on_source, dof_barb_marks, dof_barb_rules);
 }
 
 /**********************************************************************//**

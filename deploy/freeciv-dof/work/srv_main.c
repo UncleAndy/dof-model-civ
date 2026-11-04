@@ -3257,6 +3257,12 @@ static void srv_scores(void)
   log_civ_score_now();
 
   report_final_scores(NULL);
+
+  /* DOF: complete counters for the report. A reader samples the event stream
+   * (first N declarations, first N attacks); these totals are complete and are
+   * written here, after the scores the report cites have been recalculated. */
+  dof_totals_report();
+
   show_map_to_all();
   notify_player(NULL, NULL, E_GAME_END, ftc_server,
                 _("The game is over..."));

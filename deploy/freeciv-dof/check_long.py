@@ -17,7 +17,10 @@ RE_SRC_BARB = re.compile(r"\[DOF\] unit_source_barb turn=(\d+) unit=(-?\d+) utyp
 RE_GONE = re.compile(r"\[DOF\] unit_gone turn=(\d+) unit=(-?\d+) owner=")
 RE_DECL = re.compile(r"\[DOF\] declare turn=(\d+) declarer=(.+) target=(.+) declarer_dof=(\d)(.*)$")
 RE_RULE = re.compile(r"\[DOF\] rule turn=(\d+) me=.+? other=(.+) what=([a-z_]+)( barb=1)?$")
-RE_BLOCK = re.compile(r"\[DOF\] blocked turn=(\d+) me=.+? other=(.+) what=([a-z_]+)( barb=1)?$")
+# Строка отказа несёт юнит (P0: один отказ на пару «юнит, цель, ход»), поэтому
+# хвост ` unit=ID` стал обязательным до варварской пометки.
+RE_BLOCK = re.compile(r"\[DOF\] blocked turn=(\d+) me=.+? other=(.+) "
+                      r"what=([a-z_]+)( unit=\d+)?( barb=1)?$")
 
 
 def read(tag, idx):

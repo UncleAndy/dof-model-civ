@@ -77,6 +77,44 @@ RX = {
 }
 
 
+def parse_totals(text):
+    """Строки `[DOF] totals` из журнала → счётчики по местам.
+
+    Движок пишет их один раз в конце партии (server/srv_main.c, srv_scores).
+    Это полные счётчики: журнал событий читатель вынужден сэмплировать
+    (первые 40 объявлений и атак), итог — нет.
+    """
+    seats, glob = {}, None
+    for line in text.splitlines():
+        if not line.startswith("[DOF] totals"):
+            continue
+        if line.startswith("[DOF] totals_global"):
+            m = re.match(r"\[DOF\] totals_global turn=(\d+) (.*)$", line)
+            if not m:
+                continue
+            body = m.group(2)
+            row = {"turn": int(m.group(1))}
+        else:
+            m = re.match(r"\[DOF\] totals turn=(\d+) me=(.*?) idx=(\d+) (.*)$", line)
+            if not m:
+                continue
+            body = m.group(4)
+            row = {"turn": int(m.group(1)), "me": m.group(2), "idx": int(m.group(3))}
+        for part in body.split():
+            if "=" not in part:
+                continue
+            k, v = part.split("=", 1)
+            try:
+                row[k] = int(v)
+            except ValueError:
+                row[k] = v
+        if line.startswith("[DOF] totals_global"):
+            glob = row
+        else:
+            seats[row["me"]] = row
+    return {"seats": seats, "global": glob}
+
+
 def sh(cmd, check=False):
     """docker exec без shell на стороне хоста: аргументы уходят списком."""
     r = subprocess.run(["docker", "exec", CONTAINER, "sh", "-lc", cmd],
@@ -228,7 +266,8 @@ def parse_log(path):
     text = sh(f"grep -a -h -E '\\[DOF\\]|Removing player' "
               f"{d}/stdout.txt {d}/game.log 2>/dev/null").stdout
     info = {"roster": None, "policy": None, "declares": [], "news": [],
-            "blocked": 0, "suppressed": 0, "removed": [], "seats": {}}
+            "blocked": 0, "suppressed": 0, "removed": [], "seats": {},
+            "totals": {"seats": {}, "global": None}}
     for line in text.splitlines():
         if m := re.search(r"Removing player (\S+)\.", line):
             info["removed"].append(m.group(1))
@@ -249,6 +288,7 @@ def parse_log(path):
             info["blocked"] += 1
         elif RX["suppressed"].search(line):
             info["suppressed"] += 1
+    info["totals"] = parse_totals(text)
     return info
 
 
@@ -312,6 +352,7 @@ def run_game(tag, idx, args, lock, fh):
         "dof_news_dof_violator": sum(1 for d in log["news"] if d[3] == 1),
         "dof_blocked": log["blocked"],
         "dof_suppressed": log["suppressed"],
+        "totals": log["totals"],
         "nations": free,
     }
     with lock:

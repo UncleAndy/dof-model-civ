@@ -110,6 +110,12 @@ void dof_ledger_note(int type, const struct action *paction,
 /* AI console: "/aicmd <player> dof on|off|status". */
 void dof_player_console(struct player *pplayer, const char *cmd);
 
+/* End-of-game totals: one journal line per seat with every counter
+ * (attempts and unique events for blocked acts, suppressed pairs and events,
+ * marks, declares). Complete where the event stream is sampled. Called once
+ * from server/srv_main.c in srv_scores(). */
+void dof_totals_report(void);
+
 /* Current policy spec, for logging/reporting. */
 const char *dof_policy_spec(void);
 

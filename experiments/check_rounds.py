@@ -34,15 +34,22 @@ FAKE_ENGINE = {"binary_md5": "f" * 32, "binary_path": "/x/freeciv-web",
                "sources_match_local": True, "image_tag": "img:1", "image_id": "sha256:0"}
 
 
-def expected_dof(policy):
-    """Сколько мест с dof=1 должно быть в партии при такой политике."""
+def expected_dof(policy, seats):
+    """Сколько мест с dof=1 должно быть в партии при такой политике.
+
+    seats — индексы мест партии: even/odd в движке выбирают по чётности
+    индекса, поэтому на карте с 8 местами это 4, а не 5.
+    """
     p = (policy or "").strip()
+    n = len(seats)
     if p == "none":
         return 0
     if p == "all":
-        return 10
-    if p in ("even", "odd"):
-        return 5
+        return n
+    if p == "even":
+        return sum(1 for i in seats if i % 2 == 0)
+    if p == "odd":
+        return sum(1 for i in seats if i % 2 == 1)
     if re.fullmatch(r"rot\d+", p):
         return int(p[3:])
     if re.fullmatch(r"\d+(,\d+)*", p):
@@ -89,9 +96,10 @@ def check_section(rep, where, arm, sec, params, legacy=False):
         rep.warn_(where, "нет росписи мест (dof_roster)")
     else:
         seats = {int(i): int(v) for i, v in ROSTER_RX.findall(roster)}
-        if len(seats) != 10:
-            rep.fail(where, f"в росписи {len(seats)} мест вместо 10: {roster!r}")
-        want = expected_dof(sec.get("policy"))
+        aifill = sec.get("aifill") or params.get("aifill") or 10
+        if len(seats) != aifill:
+            rep.fail(where, f"в росписи {len(seats)} мест, в партии aifill={aifill}: {roster!r}")
+        want = expected_dof(sec.get("policy"), list(seats))
         have = sum(1 for v in seats.values() if v == 1)
         if want is None:
             rep.warn_(where, f"неизвестная политика {sec.get('policy')!r}")
@@ -115,15 +123,33 @@ def check_section(rep, where, arm, sec, params, legacy=False):
         rep.fail(where, "в разделе нет наций")
         return
     t = sec.get("totals") or {}
+    seats = [n for n in nations if (n.get("id") or 0) < 10]
+    split = [n for n in nations if (n.get("id") or 0) >= 10]
     checks = {
-        "nations": len(nations),
-        "score_sum": sum(n.get("score") or 0 for n in nations),
-        "cities_sum": sum(n.get("ncities") or 0 for n in nations),
-        "population_sum": sum(n.get("population_real") or 0 for n in nations),
+        "score_sum": sum(n.get("score") or 0 for n in seats),
+        "cities_sum": sum(n.get("ncities") or 0 for n in seats),
+        "population_sum": sum(n.get("population_real") or 0 for n in seats),
+        "splinters": len(split),
+        "splinters_score_sum": sum(n.get("score") or 0 for n in split),
     }
-    for k, v in checks.items():
-        if t.get(k) != v:
-            rep.fail(where, f"totals.{k}={t.get(k)} не сходится с нациями ({v})")
+    if t.get("totals_schema") != 2:
+        # старая схема: агрегаты считались по всем нациям вместе с отколовшимися
+        if t.get("score_sum") != sum(n.get("score") or 0 for n in nations):
+            rep.fail(where, "totals.score_sum не сходится с нациями (старая схема)")
+    else:
+        for k, v in checks.items():
+            if t.get(k) != v:
+                rep.fail(where, f"totals.{k}={t.get(k)} не сходится с местами ({v})")
+        if t.get("nations") != len(nations):
+            rep.fail(where, f"totals.nations={t.get('nations')} против {len(nations)} наций")
+
+    et = sec.get("engine_totals") or {}
+    for name, row in et.items():
+        if row.get("blocked_unique", 0) > row.get("blocked_attempts", 0):
+            rep.fail(where, f"у {name} blocked_unique > blocked_attempts "
+                            f"({row.get('blocked_unique')} > {row.get('blocked_attempts')})")
+        if row.get("supp_pairs", 0) > row.get("supp_events", 0):
+            rep.fail(where, f"у {name} supp_pairs > supp_events")
     rep.checked += 1
 
 
@@ -298,14 +324,20 @@ def self_test():
         # агрегаты: варвары не входят
         section = {"units_killed": 3, "units_lost": 2, "alive": 2, "players": 2,
                    "dof_declares": 5, "dof_news": 7,
-                   "nations": [{"score": 10, "ncities": 1, "population_real": 4, "techs": 2,
-                                "bulbs_last_turn": 3, "science_rate": 50},
-                               {"score": 20, "ncities": 2, "population_real": 6, "techs": 4,
-                                "bulbs_last_turn": 5, "science_rate": 60},
-                               {"score": 999, "is_barbarian": True, "ncities": 9}]}
+                   "nations": [{"id": 0, "score": 10, "ncities": 1, "population_real": 4,
+                                "techs": 2, "bulbs_last_turn": 3, "science_rate": 50},
+                               {"id": 3, "score": 20, "ncities": 2, "population_real": 6,
+                                "techs": 4, "bulbs_last_turn": 5, "science_rate": 60},
+                               {"id": 11, "score": 500, "ncities": 5, "population_real": 9,
+                                "techs": 9, "bulbs_last_turn": 9, "science_rate": 70},
+                               {"id": 12, "score": 999, "is_barbarian": True, "ncities": 9}]}
         t = drv.totals(section)
-        if (t["nations"], t["score_sum"], t["cities_sum"], t["population_sum"]) != (2, 30, 3, 10):
-            rep.fail("totals", f"варвары попали в агрегат: {t}")
+        if (t["nations"], t["seats"], t["splinters"]) != (3, 2, 1):
+            rep.fail("totals", f"состав посчитан неверно: {t}")
+        if (t["score_sum"], t["cities_sum"], t["population_sum"]) != (30, 3, 10):
+            rep.fail("totals", f"в средние попали варвары или отколовшиеся: {t}")
+        if (t["splinters_score_sum"], t["splinters_cities_sum"]) != (500, 5):
+            rep.fail("totals", f"отколовшиеся посчитаны неверно: {t}")
 
         # индекс пересобирается из файлов: порядок, отсутствие дублей, дыры не страшны
         with tempfile.TemporaryDirectory() as td:
