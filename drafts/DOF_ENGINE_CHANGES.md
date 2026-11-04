@@ -587,3 +587,46 @@ static void cai_data_phase_begin(struct player *pplayer, bool is_new_phase)
 **Проверка** (сид 120000, `half`, 200 ходов): на 105-м ходу, где раньше четыре DOF-места объявляли войну Mutsuhito, объявлений больше нет; в журнале видны `unit_source_on_source turn=101 unit=445 owner=Mutsuhito victim=Tadeusz` (6 записей за 150 ходов), счётчик `on_source` растёт, DOF-места объявляют войну только источникам.
 
 **Совместимость.** Данные M6 и M7 несравнимы: серия `experiments/dof-ab-3000-test-m6` снята на старом правиле и оставлена как срез; новая серия идёт на `ae11469b…`.
+
+## §14. P1: пресеты правил — политика как набор флагов, а не один выключатель
+
+**Зачем.** Серия «11 рук» показала дозу, но не разложение: непонятно, что даёт эффект —
+прямой запрет агрессии или доктрина целиком (наблюдаемый источник, ответ, солидарность,
+отказ от принуждения, мир без выкупа). Чтобы это разделить, нужен выключатель на каждое
+правило, а не один `dof on|off`.
+
+**Что сделано.** `struct dof_policy` получил `unsigned flags` (биты `DOF_F_*`), спецификация
+политики — форму `<выбор мест>[:<пресет>]`. Парсер делит спецификацию по первому `:`;
+`dof_preset_flags()` разворачивает имя в набор битов, неизвестное имя не меняет поведение
+молча (`log_error`, дальше `full`). `dof_flag(pplayer, bit)` — то, что читают гейты;
+`dof_enabled()` остался «место с политикой».
+
+**Гейты.** Каждый блок, который раньше проверял `dof_enabled()`, проверяет свой бит:
+
+| файл | место | флаг |
+|---|---|---|
+| `daidiplomacy.c` | `dai_war_desire()`, `dai_go_to_war()`, месть за обиду | `DOF_F_BAN` |
+| | космос (две вставки) | `DOF_F_SPACE` |
+| | «нет целей» | `DOF_F_NO_TARGET` |
+| | война за союзника | `DOF_F_ALLY_WAR` |
+| | no-mercy | `DOF_F_NO_MERCY` |
+| | ветка `DS_WAR`: перемирие без выкупа | `DOF_F_CEASEFIRE` |
+| | ветка войны ответа | `DOF_F_SELFDEF`, для третьего — `DOF_F_SOLIDARITY` |
+| `daiactions.c` | принуждение против не-источника | `DOF_F_COERCE` |
+| `unithand.c` | запрет атаки не-источника | `DOF_F_ATTACK` |
+| `daiunit.h` | `POTENTIALLY_HOSTILE_PLAYER` | `DOF_F_UNKNOWN` |
+| `daiunit.c` | `dai_rampage_want()` | `DOF_F_RAMPAGE` |
+| `srv_main.c` | истечение cease-fire → мир | `DOF_F_CEASEFIRE` |
+
+**Пресеты.** `ban` = BAN|ATTACK|UNKNOWN|SPACE|NO_TARGET|ALLY_WAR (только запрет начинать
+войны); `selfdef` = ban|SELFDEF|RAMPAGE; `solidarity` = selfdef|SOLIDARITY; `nocoerce` =
+solidarity|COERCE; `nowarblock` = full без BAN|ATTACK|UNKNOWN|SPACE|NO_TARGET|ALLY_WAR;
+`full` = все биты.
+
+**Совместимость.** `full` совпадает с прежним поведением байт-в-байт: партия `even` и
+`even:full` на одном сиде (200 ходов, 8 мест) дали одинаковые итоги по местам, включая
+счётчики отказов и убитых юнитов. Старые спецификации без `:` читаются как `full`.
+
+**Проверка различий** (тот же сид): `even:ban` — у DOF-мест 0 объявлений; `even:nowarblock` —
+у них же 25 объявлений, `blocked_attempts = 0`, `supp_events = 0`, то есть блок войны снят,
+остальные правила на месте.
