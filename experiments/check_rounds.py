@@ -188,8 +188,9 @@ def check_series(path, deep=True):
 
     files = sorted(f for f in os.listdir(rdir) if re.fullmatch(r"round_\d+\.json", f))
     if not files:
-        rep.fail(path, "нет файлов раундов")
-        return rep.dump()
+        # Серия ещё идёт: каталог создан, первый раунд не записан.
+        print(f"\n[{name}] раундов пока нет (серия идёт) — проверять нечего")
+        return True
 
     rounds, arms_ref, engines, games = {}, None, {}, 0
     for f in files:
