@@ -169,6 +169,17 @@ def check_section(rep, where, arm, sec, params, base_dir, legacy=False):
         rep.fail(where, "есть engine_totals, но нет config партии")
 
     et = sec.get("engine_totals") or {}
+    nat_by_name = {n.get("name"): n for n in (sec.get("nations") or [])}
+    for name, row in et.items():
+        n = nat_by_name.get(name)
+        if n is None:
+            # Варвары и пираты есть в итогах движка, но не в списке мест сейва.
+            continue
+        for field in ("score", "cities", "techs", "gold"):
+            a, b = row.get(field), n.get(field)
+            if a is not None and b is not None and a != b:
+                rep.fail(where, f"итоги движка расходятся с сейвом у {name}: "
+                                f"{field} {a} != {b}")
     for name, row in et.items():
         if row.get("blocked_unique", 0) > row.get("blocked_attempts", 0):
             rep.fail(where, f"у {name} blocked_unique > blocked_attempts "
