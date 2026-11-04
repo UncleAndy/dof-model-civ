@@ -84,7 +84,120 @@ def sh(cmd, timeout=300):
 
 def engine_md5():
     r = sh(f"docker exec {CONTAINER} md5sum {BIN}")
-    return r.stdout.split()[0] if r.stdout else "?"
+    return r.stdout.split()[0] if r.stdout.strip() else "?"
+
+
+ENGINE_SRC_DIR = "/docker/freeciv/freeciv/ai/default"
+ENGINE_SRC = ("dofpolicy.c", "dofpolicy.h")
+MARK_BEGIN = "<!-- engine:begin -->"
+MARK_END = "<!-- engine:end -->"
+_ENGINE_CACHE = None
+
+
+def _md5_file(path):
+    try:
+        with open(path, "rb") as f:
+            return hashlib.md5(f.read()).hexdigest()
+    except OSError:
+        return "?"
+
+
+def engine_facts(refresh=False):
+    """Версия движка: что именно играло.
+
+    Бинарник — то, что запускается; исходники политики — то, что в него собрано
+    (в контейнере и в репозитории, чтобы расхождение было видно); образ — тег и
+    id, чтобы прогон можно было повторить на том же стенде. Считается один раз
+    за процесс: вызов из потока раунда не должен ходить в docker на каждый раздел.
+    """
+    global _ENGINE_CACHE
+    if _ENGINE_CACHE is not None and not refresh:
+        return _ENGINE_CACHE
+    src_cont, src_local = {}, {}
+    for name in ENGINE_SRC:
+        r = sh(f"docker exec {CONTAINER} sh -lc 'md5sum {ENGINE_SRC_DIR}/{name}'")
+        src_cont[name] = r.stdout.split()[0] if r.stdout.strip() else "?"
+        src_local[name] = _md5_file(os.path.join(ROOT, "deploy", "freeciv-dof", "src", name))
+    r = sh("docker inspect --format '{{.Config.Image}} {{.Image}}' " + CONTAINER)
+    parts = r.stdout.split()
+    _ENGINE_CACHE = {
+        "binary_md5": engine_md5(),
+        "binary_path": BIN,
+        "sources_md5": src_cont,
+        "sources_local_md5": src_local,
+        "sources_match_local": src_cont == src_local,
+        "image_tag": parts[0] if parts else "?",
+        "image_id": parts[1] if len(parts) > 1 else "?",
+    }
+    return _ENGINE_CACHE
+
+
+def _engine_block(facts, extra=None):
+    src = ", ".join(f"`{k}` `{v}`" for k, v in sorted(facts["sources_md5"].items()))
+    loc = ", ".join(f"`{k}` `{v}`" for k, v in sorted(facts["sources_local_md5"].items()))
+    lines = [MARK_BEGIN, "## Версия движка (записано автоматически)", "",
+             f"* записано: {facts['recorded_utc']}",
+             f"* бинарник `{facts['binary_path']}`: md5 `{facts['binary_md5']}`",
+             f"* образ: `{facts['image_tag']}`, id `{facts['image_id']}`",
+             f"* исходники политики в контейнере: {src}",
+             "* исходники политики в репозитории: " + loc
+             + ("" if facts["sources_match_local"]
+                else " — **расходятся с контейнером: играл не тот код, что в репозитории**")]
+    if extra:
+        lines.append("* параметры старта: " + ", ".join(f"{k}={v}" for k, v in extra.items()))
+    lines.append(MARK_END)
+    return "\n".join(lines)
+
+
+def record_engine(out, args=None):
+    """Записать версию движка на старте серии: ENGINE.json + блок в SERIES.md.
+
+    Блок в SERIES.md идемпотентен (между маркерами), поэтому повторный старт
+    обновляет версию, а не копит абзацы; ручной текст файла не трогается.
+    """
+    facts = engine_facts(refresh=True)
+    facts["recorded_utc"] = now()
+    if args is not None:
+        facts["start"] = {"turns": getattr(args, "turns", None),
+                          "aifill": getattr(args, "aifill", None),
+                          "size": getattr(args, "size", None),
+                          "arms": getattr(args, "arms", None),
+                          "ports": getattr(args, "ports", None),
+                          "seed_base": getattr(args, "seed_base", None)}
+    os.makedirs(out, exist_ok=True)
+    path = os.path.join(out, "ENGINE.json")
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(facts, f, ensure_ascii=False, indent=1)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+    extra = None
+    if args is not None:
+        extra = {"ходов": getattr(args, "turns", None), "мест": getattr(args, "aifill", None),
+                 "карта": getattr(args, "size", None), "руки": getattr(args, "arms", None),
+                 "сид": getattr(args, "seed_base", None)}
+    block = _engine_block(facts, extra)
+    md = os.path.join(out, "SERIES.md")
+    text = ""
+    if os.path.exists(md):
+        with open(md, encoding="utf-8") as f:
+            text = f.read()
+    if MARK_BEGIN in text and MARK_END in text:
+        head, _, rest = text.partition(MARK_BEGIN)
+        _, _, tail = rest.partition(MARK_END)
+        text = head + block + tail
+    else:
+        if not text.strip():
+            text = "# Серия: " + (args.arms if args else "?") + "\n"
+        text = text.rstrip() + "\n\n" + block + "\n"
+    tmp = md + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(text)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, md)
+    return facts
 
 
 def stand_ready(timeout=240):
@@ -384,11 +497,21 @@ def _policy_of(arm, rnd=0):
     return "none"
 
 
+def _round_params(args):
+    """Параметры раунда: чем играли (версия движка) и как."""
+    facts = engine_facts()
+    return {"turns": args.turns, "aifill": args.aifill, "size": args.size,
+            "engine_md5": facts["binary_md5"],
+            "engine_sources_md5": facts["sources_md5"],
+            "engine_image": facts["image_tag"],
+            "engine_image_id": facts["image_id"],
+            "pool": args.par_games}
+
+
 def _assemble(rnd, seed, sections, args, alt):
     """Собрать раунд из трёх готовых разделов."""
     data = {"round": rnd, "seed": seed, "started_utc": now(),
-            "params": {"turns": args.turns, "aifill": args.aifill, "size": args.size,
-                       "engine_md5": engine_md5(), "pool": args.par_games},
+            "params": _round_params(args),
             "sections": sections}
     # сравнения — каждая рука с первой (эталон раунда) и все пары между собой
     names = [n for n in _arm_names() if n in sections]
@@ -503,6 +626,76 @@ def run_pool(args, out, done):
                         summarise(out)
 
 
+def _round_files(d):
+    """{номер раунда: имя файла} по каталогу раундов."""
+    out = {}
+    for name in (os.listdir(d) if os.path.isdir(d) else []):
+        m = re.match(r"round_(\d+)\.json$", name)
+        if m:
+            out[int(m.group(1))] = name
+    return out
+
+
+def _index_row(data, fallback_round=None):
+    sections = data.get("sections", {})
+    return {"round": data.get("round", fallback_round),
+            "seed": data.get("seed"),
+            "arms": sorted(sections),
+            "games": len(sections),
+            "engine_md5": (data.get("params") or {}).get("engine_md5"),
+            "finished_utc": data.get("finished_utc")}
+
+
+def write_index(out, changed=None):
+    """Пересобрать rounds.jsonl из rounds/*.json.
+
+    Индекс — производная от файлов раундов, а не второй источник правды:
+    строки удалённых/перезаписанных раундов выбрасываются, недостающие
+    дочитываются, поэтому обрыв прогона, повтор раунда и правка руками не
+    оставляют в индексе дыр и дублей.
+
+    Стоимость: список файлов плюс чтение только тех раундов, которых нет в
+    индексе или которые явно изменились (`changed`) — на серии из 1000 раундов
+    полная перечитка на каждый раунд была бы квадратичной.
+    """
+    d = os.path.join(out, "rounds")
+    ids = _round_files(d)
+    path = os.path.join(out, "rounds.jsonl")
+    rows = {}
+    if os.path.exists(path) and changed is None:
+        with open(path, encoding="utf-8") as f:
+            for ln in f:
+                ln = ln.strip()
+                if not ln:
+                    continue
+                try:
+                    r = json.loads(ln)
+                except Exception:
+                    continue
+                n = r.get("round")
+                # строка живёт, только если такой раунд есть и в файлах,
+                # и строка полная (старый формат индекса не переиспользуем)
+                if n in ids and r.get("arms") is not None and r.get("games") is not None:
+                    rows[n] = r
+    for n, name in sorted(ids.items()):
+        if n in rows and n != changed:
+            continue
+        try:
+            with open(os.path.join(d, name), encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            continue
+        rows[n] = _index_row(data, n)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        for n in sorted(rows):
+            f.write(json.dumps(rows[n], ensure_ascii=False) + "\n")
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+    return len(rows)
+
+
 def write_round(data, out):
     path = os.path.join(out, "rounds", f"round_{data['round']:04d}.json")
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -512,11 +705,7 @@ def write_round(data, out):
         f.flush()
         os.fsync(f.fileno())
     os.replace(tmp, path)
-    with open(os.path.join(out, "rounds.jsonl"), "a", encoding="utf-8") as f:
-        f.write(json.dumps({"round": data["round"], "seed": data["seed"],
-                            "comparison": data["comparison"],
-                            "finished_utc": data["finished_utc"]}, ensure_ascii=False) + "\n")
-        f.flush()
+    write_index(out, changed=data["round"])
 
 
 def load_done(out):
@@ -641,6 +830,10 @@ def main():
     log(f"старт: раунды {args.start}..{args.start + args.count - 1}, "
         f"сид {args.seed_base}+17*r, движок {engine_md5()}", out)
     done = load_done(out)
+    facts = record_engine(out, args)
+    log(f"версия движка записана: {facts['binary_md5']} (образ {facts['image_tag']}), "
+        f"исходники политики {'совпадают' if facts['sources_match_local'] else 'РАСХОДЯТСЯ'} "
+        f"с репозиторием; файлы: ENGINE.json, SERIES.md", out)
     log(f"уже готово раундов: {len(done)}", out)
     run_pool(args, out, done)
     log("ВСЕ ЗАПЛАНИРОВАННЫЕ РАУНДЫ ОБРАБОТАНЫ", out)

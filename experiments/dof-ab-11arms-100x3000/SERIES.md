@@ -57,3 +57,14 @@ DOF-мест меняется от раунда к раунду, чтобы пр
 `rounds/round_NNNN.json` (по 11 разделов), `rounds/saves/` (по 11 сейвов на
 раунд), `rounds.jsonl`, `summary.json`, `report.md`, `nohup.log`,
 `failed_rounds.log`.
+
+<!-- engine:begin -->
+## Версия движка (записано автоматически)
+
+* записано: 2026-11-04T17:58:35Z
+* бинарник `/home/docker/freeciv/bin/freeciv-web`: md5 `76fde78d945395ccd12c8c2a6e42516a`
+* образ: `civrealm/freeciv-web:1.4`, id `sha256:d4ce74d7eb7401ff2383761484f4ccb12b5cd0d9193f4cc4be3c8a0ab257f4a5`
+* исходники политики в контейнере: `dofpolicy.c` `4fe97989add9c10126b97ce523996f9c`, `dofpolicy.h` `4146eea3e1d559547fe10123f3632da4`
+* исходники политики в репозитории: `dofpolicy.c` `4fe97989add9c10126b97ce523996f9c`, `dofpolicy.h` `4146eea3e1d559547fe10123f3632da4`
+* параметры старта: ходов=3000, мест=10, карта=2, руки=d0:none;d1:rot1;d2:rot2;d3:rot3;d4:rot4;d5:rot5;d6:rot6;d7:rot7;d8:rot8;d9:rot9;d10:all, сид=200000
+<!-- engine:end -->
