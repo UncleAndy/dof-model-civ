@@ -869,6 +869,13 @@ def main():
     log(f"версия движка записана: {facts['binary_md5']} (образ {facts['image_tag']}), "
         f"исходники политики {'совпадают' if facts['sources_match_local'] else 'РАСХОДЯТСЯ'} "
         f"с репозиторием; файлы: ENGINE.json, SERIES.md", out)
+    # Длина партии — часть постановки. С включёнными победами партия кончается
+    # космосом/завоеванием на любом ходу, и score несравним между руками.
+    sets = " ".join(getattr(args, "set", None) or [])
+    if "endvictory disabled" not in sets or "endspaceship disabled" not in sets:
+        log("ВНИМАНИЕ: победы не отключены — нужны --set 'set endvictory disabled' "
+            "и --set 'set endspaceship disabled', иначе партии будут разной длины", out)
+
     log(f"уже готово раундов: {len(done)}", out)
     run_pool(args, out, done)
     log("ВСЕ ЗАПЛАНИРОВАННЫЕ РАУНДЫ ОБРАБОТАНЫ", out)

@@ -1,0 +1,9 @@
+set aifill 10
+set minp 0
+set endt 3000
+set size 2
+set autosaves GAMEOVER
+set savename dof-ab0002full-0
+set gameseed 300034
+set mapseed 300034
+start

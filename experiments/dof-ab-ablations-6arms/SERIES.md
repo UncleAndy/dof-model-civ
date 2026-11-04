@@ -25,7 +25,10 @@
 ## Параметры
 
 - 40 раундов, сиды `300000 + 17·r` (новые карты, не пересекаются с серией 11 рук);
-- 3000 ходов, `aifill 10`, `size 2`, победы отключены;
+- 3000 ходов, `aifill 10`, `size 2`, победы **явно** отключены:
+  `--set 'set endvictory disabled' --set 'set endspaceship disabled'`
+  (первый запуск шёл без этих флагов, партии кончались на ходах 326–3001 и были
+  забракованы целиком: `experiments/_scrapped/2026-11-04-ablations-victories-on/`);
 - пул из 4 партий (порты 8100/8200/8300/8400);
 - `--timeout 7200` на партию, до 3 повторов; отказ генерации карты — переигровка раунда;
 - драйвер: `flock -n experiments/abl.lock .venv/bin/python experiments/ab_rounds.py --arms "$(.venv/bin/python experiments/arms.py --spec)" …`.
@@ -48,3 +51,14 @@
 `rounds/round_NNNN.json` (по 6 разделов), `rounds/configs/<tag>/` (s.serv + policy.conf с
 sha256), `rounds.jsonl` (индекс), `summary.json`, `report.md`, `driver.log`,
 `failed_rounds.log`. Итоговые счётчики движка — в `engine_totals` каждого раздела.
+
+<!-- engine:begin -->
+## Версия движка (записано автоматически)
+
+* записано: 2026-11-04T20:09:33Z
+* бинарник `/home/docker/freeciv/bin/freeciv-web`: md5 `3f730485c7d15c1fc6633be3a35b6ad5`
+* образ: `civrealm/freeciv-web:1.4`, id `sha256:d4ce74d7eb7401ff2383761484f4ccb12b5cd0d9193f4cc4be3c8a0ab257f4a5`
+* исходники политики в контейнере: `dofpolicy.c` `17527dcea664d5c282bc36252d8a8019`, `dofpolicy.h` `855ad766352e65d329f6191369eb2143`
+* исходники политики в репозитории: `dofpolicy.c` `17527dcea664d5c282bc36252d8a8019`, `dofpolicy.h` `855ad766352e65d329f6191369eb2143`
+* параметры старта: ходов=3000, мест=10, карта=2, руки=none:none;ban:even:ban;selfdef:even:selfdef;solid:even:solidarity;nowarblock:even:nowarblock;full:even:full, сид=300000
+<!-- engine:end -->

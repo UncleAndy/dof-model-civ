@@ -242,6 +242,31 @@ def check_series(path, deep=True):
         rep.warn.insert(0, f"серия снята по старой схеме раздела ({legacy_n} партий): "
                           f"нет финального хода — это формат, а не порча данных")
 
+    # Длина партии: при отключённых победах каждый раздел обязан дойти до
+    # turns+1. Иначе руки мерились на разной длине, и score несравним.
+    for rnd, data in sorted(rounds.items()):
+        params = data.get("params") or {}
+        turns = params.get("turns")
+        for arm, sec in (data.get("sections") or {}).items():
+            if not isinstance(sec, dict):
+                continue
+            vs = sec.get("victory_settings") or {}
+            off = (str(vs.get("endvictory", "")).lower() == "disabled"
+                   and str(vs.get("endspaceship", "")).lower() == "disabled")
+            ft = sec.get("final_turn")
+            if off and turns and ft != turns + 1:
+                rep.fail(f"round_{rnd:04d}:{arm}",
+                         f"победы отключены, а партия кончилась на ходу {ft} "
+                         f"(ожидался {turns + 1}) — score несравним")
+
+    finals = {sec.get("final_turn") for data in rounds.values()
+              for sec in (data.get("sections") or {}).values()
+              if isinstance(sec, dict) and sec.get("final_turn")}
+    if len(finals) > 1:
+        rep.warn_("длина партии", f"партии кончались на разных ходах "
+                                  f"({min(finals)}…{max(finals)}): score между руками "
+                                  f"сравнивать нельзя, пока длина не выровнена")
+
     if len(engines) > 1:
         parts = "; ".join(f"{k}: раунды {v[0]}–{v[-1]} ({len(v)})" for k, v in engines.items())
         rep.warn_("движок", f"внутри серии менялся, данные несравнимы: {parts}")
