@@ -87,7 +87,25 @@ class Report:
 # ---------------------------------------------------------------- серия
 
 
-def check_section(rep, where, arm, sec, params, legacy=False):
+def verify_config(rep, where, base_dir, cfg):
+    """Конфиги партии лежат рядом с раундом и должны совпадать по sha256."""
+    d = os.path.join(base_dir, cfg.get("dir") or "")
+    for name, key in (("s.serv", "s_serv_sha256"), ("policy.conf", "policy_file_sha256")):
+        want = cfg.get(key)
+        path = os.path.join(d, name)
+        if not want or want == "?":
+            rep.fail(where, f"в конфиге нет {key}")
+            continue
+        if not os.path.exists(path):
+            rep.warn_(where, f"файл конфига {name} отсутствует в артефактах")
+            continue
+        import hashlib
+        got = hashlib.sha256(open(path, "rb").read()).hexdigest()
+        if got != want:
+            rep.fail(where, f"sha256 {name} не совпадает с записанным в разделе")
+
+
+def check_section(rep, where, arm, sec, params, base_dir, legacy=False):
     if not isinstance(sec, dict):
         rep.fail(where, "раздел руки не объект")
         return
@@ -143,6 +161,13 @@ def check_section(rep, where, arm, sec, params, legacy=False):
         if t.get("nations") != len(nations):
             rep.fail(where, f"totals.nations={t.get('nations')} против {len(nations)} наций")
 
+    cfg = sec.get("config") or {}
+    if cfg:
+        verify_config(rep, where, base_dir, cfg)
+    elif sec.get("engine_totals"):
+        # новая схема (P0): итоги движка есть, а конфиг партии не сохранён
+        rep.fail(where, "есть engine_totals, но нет config партии")
+
     et = sec.get("engine_totals") or {}
     for name, row in et.items():
         if row.get("blocked_unique", 0) > row.get("blocked_attempts", 0):
@@ -193,7 +218,7 @@ def check_series(path, deep=True):
             for arm in arms:
                 sec = sections[arm]
                 legacy = isinstance(sec, dict) and "final_turn" not in sec
-                check_section(rep, f"{f}:{arm}", arm, sec, params, legacy=legacy)
+                check_section(rep, f"{f}:{arm}", arm, sec, params, path, legacy=legacy)
 
     if not rounds:
         return rep.dump()
