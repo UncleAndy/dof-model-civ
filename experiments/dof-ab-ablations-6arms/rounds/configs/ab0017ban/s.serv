@@ -1,0 +1,11 @@
+set aifill 10
+set minp 0
+set endt 3000
+set size 2
+set autosaves GAMEOVER
+set savename dof-ab0017ban-0
+set gameseed 300289
+set mapseed 300289
+set endvictory disabled
+set endspaceship disabled
+start
